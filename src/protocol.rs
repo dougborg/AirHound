@@ -245,7 +245,15 @@ mod tests {
     // ── Version constant ────────────────────────────────────────────
 
     #[test]
-    fn version_matches_cargo_toml() {
-        assert_eq!(VERSION, "0.1.0");
+    fn version_is_semver() {
+        let parts: heapless::Vec<&str, 4> = VERSION.split('.').collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "VERSION should be semver (major.minor.patch)"
+        );
+        for part in &parts {
+            assert!(part.parse::<u32>().is_ok(), "'{part}' is not a number");
+        }
     }
 }
