@@ -6,6 +6,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 USER esp
 
+# Build tools used by CI and local dev (espflash ships in base image)
+RUN cargo install just --locked
+
 # Ensure toolchain env is sourced for interactive shells
 RUN echo '. /home/esp/export-esp.sh' >> /home/esp/.bashrc
 
