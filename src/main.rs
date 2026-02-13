@@ -99,7 +99,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     // ESP32-S3 needs more heap for coex; ESP32 is tighter on DRAM.
     #[cfg(feature = "esp32")]
     {
-        esp_alloc::heap_allocator!(size: 72 * 1024);
+        esp_alloc::heap_allocator!(size: 64 * 1024);
     }
     #[cfg(not(feature = "esp32"))]
     {
@@ -125,6 +125,14 @@ async fn main(spawner: embassy_executor::Spawner) {
     spawner.spawn(output_serial_task()).unwrap();
     spawner.spawn(status_task()).unwrap();
     spawner.spawn(command_task()).unwrap();
+
+    // Hold power on (M5StickC Plus2 needs GPIO4 HIGH to stay powered)
+    #[cfg(feature = "m5stickc")]
+    let _power_hold = esp_hal::gpio::Output::new(
+        peripherals.GPIO4,
+        esp_hal::gpio::Level::High,
+        esp_hal::gpio::OutputConfig::default(),
+    );
 
     // Display + buzzer tasks (M5StickC only)
     #[cfg(feature = "m5stickc")]

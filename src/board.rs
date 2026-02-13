@@ -27,6 +27,9 @@ mod hw {
     pub const BUZZER_PIN: u8 = 2;
     pub const BOARD_NAME: &str = "m5stickc_plus2";
 
+    /// GPIO4 must be held HIGH to keep the device powered on
+    pub const POWER_HOLD_PIN: u8 = 4;
+
     // Display SPI pins (ST7789V2) — reference only; peripherals are passed by type
     #[allow(dead_code)]
     pub const DISPLAY_MOSI: u8 = 15;

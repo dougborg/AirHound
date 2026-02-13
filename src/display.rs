@@ -24,6 +24,8 @@ use mipidsi::models::ST7789;
 use mipidsi::options::{ColorInversion, ColorOrder, Orientation, Rotation};
 use mipidsi::Builder;
 
+use static_cell::StaticCell;
+
 use embassy_time::{Duration, Instant, Timer};
 
 use crate::board;
@@ -49,41 +51,63 @@ pub async fn display_task(
     rst_pin: esp_hal::peripherals::GPIO12<'static>,
     bl_pin: esp_hal::peripherals::GPIO27<'static>,
 ) {
-    // Turn on backlight
-    let _bl = Output::new(bl_pin, Level::High, OutputConfig::default());
+    log::info!("Display task starting");
+
+    // Manual hardware reset before anything else
+    let mut rst_out = Output::new(rst_pin, Level::High, OutputConfig::default());
+    let delay = Delay::new();
+    rst_out.set_low();
+    delay.delay_millis(20);
+    rst_out.set_high();
+    delay.delay_millis(120);
+    log::info!("Display RST toggled");
 
     // Configure SPI bus (40 MHz, Mode 0)
     let spi_config = SpiConfig::default()
         .with_frequency(Rate::from_mhz(board::DISPLAY_SPI_FREQ_MHZ))
         .with_mode(Mode::_0);
-    let spi = Spi::new(spi2, spi_config)
-        .unwrap()
-        .with_sck(clk)
-        .with_mosi(mosi);
+    let spi = match Spi::new(spi2, spi_config) {
+        Ok(spi) => spi.with_sck(clk).with_mosi(mosi),
+        Err(e) => {
+            log::error!("SPI init failed: {:?}", e);
+            return;
+        }
+    };
+    log::info!("SPI bus configured");
 
     // Wrap SpiBus + CS into SpiDevice
     let cs = Output::new(cs_pin, Level::High, OutputConfig::default());
     let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
 
-    // Create mipidsi SPI interface (buffer on task stack)
+    // Create mipidsi SPI interface (buffer in static to avoid stack overflow)
     let dc = Output::new(dc_pin, Level::Low, OutputConfig::default());
-    let mut buffer = [0u8; 512];
-    let di = SpiInterface::new(spi_device, dc, &mut buffer);
+    static SPI_BUF: StaticCell<[u8; 512]> = StaticCell::new();
+    let buffer = SPI_BUF.init([0u8; 512]);
+    let di = SpiInterface::new(spi_device, dc, buffer);
 
     // Build display: ST7789V2, 135x240, landscape, inverted colors
-    let rst = Output::new(rst_pin, Level::High, OutputConfig::default());
-    let mut delay = Delay::new();
-    let mut display = Builder::new(ST7789, di)
+    // We already did the hardware reset manually above, so don't pass reset_pin
+    // to avoid a second reset. mipidsi's init will send SLPOUT + init commands.
+    let mut delay2 = Delay::new();
+    let mut display = match Builder::new(ST7789, di)
         .display_size(135, 240)
         .display_offset(52, 40)
         .invert_colors(ColorInversion::Inverted)
         .color_order(ColorOrder::Bgr)
         .orientation(Orientation::new().rotate(Rotation::Deg90))
-        .reset_pin(rst)
-        .init(&mut delay)
-        .unwrap();
-
+        .init(&mut delay2)
+    {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Display init failed: {:?}", e);
+            return;
+        }
+    };
     log::info!("Display initialized (240x135 landscape)");
+
+    // Turn on backlight AFTER display init (active high on M5StickC Plus2)
+    let _bl = Output::new(bl_pin, Level::High, OutputConfig::default());
+    log::info!("Backlight on");
 
     // Splash screen
     draw_splash(&mut display);
