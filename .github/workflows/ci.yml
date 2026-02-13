@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  commitlint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo test --lib --no-default-features
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.DEV_IMAGE || 'ghcr.io/dougborg/airhound-dev:latest' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      matrix:
+        include:
+          - name: xiao
+            target: xtensa-esp32s3-none-elf
+            chip: esp32s3
+          - name: m5stickc
+            target: xtensa-esp32-none-elf
+            chip: esp32
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.name }}
+        run: |
+          . /home/esp/export-esp.sh
+          just build-${{ matrix.name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elf-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/airhound
+          retention-days: 7
+
+  # Wokwi simulation smoke test — enable by adding WOKWI_CLI_TOKEN secret
+  wokwi:
+    needs: build
+    runs-on: ubuntu-latest
+    if: false # Enable when WOKWI_CLI_TOKEN secret is configured
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: elf-m5stickc
+          path: target/xtensa-esp32-none-elf/release/
+
+      - name: Install Wokwi CLI
+        run: curl -L https://wokwi.com/ci/install.sh | sh
+
+      - name: Run Wokwi simulation
+        run: wokwi-cli --timeout 10000 --expect-text "Scanning started"
+        env:
+          WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+
+  preview-binaries:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.DEV_IMAGE || 'ghcr.io/dougborg/airhound-dev:latest' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      matrix:
+        include:
+          - name: xiao
+            target: xtensa-esp32s3-none-elf
+            chip: esp32s3
+          - name: m5stickc
+            target: xtensa-esp32-none-elf
+            chip: esp32
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: elf-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/
+
+      - name: Create flashable binary
+        run: |
+          . /home/esp/export-esp.sh
+          espflash save-image --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.name }}
+          path: airhound-${{ matrix.name }}.bin
+          retention-days: 14
+
+  preview-comment:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    needs: preview-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          message: |
+            ### Preview Binaries
+
+            Flashable firmware binaries are available as artifacts from this workflow run.
+
+            | Board | Chip | Artifact |
+            |-------|------|----------|
+            | XIAO ESP32-S3 | esp32s3 | `bin-xiao` |
+            | M5StickC Plus2 | esp32 | `bin-m5stickc` |
+
+            Download from the [Actions tab](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).

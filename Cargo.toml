@@ -8,8 +8,21 @@ description = "RF wardriving companion device for ESP32"
 [features]
 default = ["xiao"]
 
-# Chip-level features
+# Non-chip-specific firmware deps (enabled by chip features)
+firmware = [
+    "dep:trouble-host",
+    "dep:embassy-executor",
+    "dep:embassy-time",
+    "dep:embassy-sync",
+    "dep:embassy-futures",
+    "dep:static_cell",
+    "dep:critical-section",
+    "dep:esp-alloc",
+]
+
+# Chip-level features (each enables ESP deps for that chip + firmware meta-feature)
 esp32 = [
+    "firmware",
     "esp-hal/esp32",
     "esp-radio/esp32",
     "esp-rtos/esp32",
@@ -18,6 +31,7 @@ esp32 = [
     "esp-bootloader-esp-idf/esp32",
 ]
 esp32s3 = [
+    "firmware",
     "esp-hal/esp32s3",
     "esp-radio/esp32s3",
     "esp-rtos/esp32s3",
@@ -31,40 +45,10 @@ xiao = ["esp32s3"]
 m5stickc = ["esp32", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus"]
 
 [dependencies]
-# Core HAL — from esp-hal main branch for latest fixes
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["unstable"] }
-
-# Embassy async runtime
-esp-rtos = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
-embassy-executor = "~0.9.1"
-embassy-time = "~0.5.0"
-embassy-sync = "~0.7.0"
-embassy-futures = "~0.1.1"
-
-# Radio: WiFi + BLE
-esp-radio = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["wifi", "ble", "coex", "sniffer", "unstable", "log-04"] }
-
-# Heap allocator (pulled in by esp-rtos via esp-alloc feature)
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main" }
-
-# Logging and panic handling
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["panic-handler", "println"] }
-esp-println = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["log-04"] }
-
-# Bootloader
-esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main" }
+# ── Always available (host + firmware) ────────────────────────────────
 
 # 802.11 frame parsing (zero-copy, no_std)
 ieee80211 = { version = "~0.5.9", default-features = false }
-
-# BLE host stack — 0.6.0 now compatible with bt-hci 0.8 from esp-radio main
-trouble-host = { version = "~0.6.0", features = [
-    "peripheral", "central", "scan", "gatt", "derive",
-    "default-packet-pool", "default-packet-pool-mtu-255", "log",
-] }
-
-# Static storage for radio resources
-static_cell = "~2.1.0"
 
 # no_std collections
 heapless = { version = "~0.9.0", features = ["serde"] }
@@ -73,14 +57,50 @@ heapless = { version = "~0.9.0", features = ["serde"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde-json-core = "~0.6.0"
 
+# Logging facade
+log = "~0.4.0"
+
+# ── Firmware deps (optional — enabled by chip/board features) ─────────
+
+# Core HAL — from esp-hal main branch for latest fixes
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["unstable"], optional = true }
+
+# Embassy async runtime
+esp-rtos = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["embassy", "esp-alloc", "esp-radio", "log-04"], optional = true }
+embassy-executor = { version = "~0.9.1", optional = true }
+embassy-time = { version = "~0.5.0", optional = true }
+embassy-sync = { version = "~0.7.0", optional = true }
+embassy-futures = { version = "~0.1.1", optional = true }
+
+# Radio: WiFi + BLE
+esp-radio = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["wifi", "ble", "coex", "sniffer", "unstable", "log-04"], optional = true }
+
+# Heap allocator (pulled in by esp-rtos via esp-alloc feature)
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", optional = true }
+
+# Logging and panic handling
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["panic-handler", "println"], optional = true }
+esp-println = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["log-04"], optional = true }
+
+# Bootloader
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", optional = true }
+
+# BLE host stack — 0.6.0 now compatible with bt-hci 0.8 from esp-radio main
+trouble-host = { version = "~0.6.0", features = [
+    "peripheral", "central", "scan", "gatt", "derive",
+    "default-packet-pool", "default-packet-pool-mtu-255", "log",
+], optional = true }
+
+# Static storage for radio resources
+static_cell = { version = "~2.1.0", optional = true }
+
+# Critical section for shared state
+critical-section = { version = "~1.2.0", optional = true }
+
 # Display driver for ST7789V2 (M5StickC Plus2)
 mipidsi = { version = "~0.9.0", default-features = false, optional = true }
 embedded-graphics = { version = "~0.8.1", optional = true }
 embedded-hal-bus = { version = "~0.3.0", optional = true }
-
-# Utilities
-critical-section = "~1.2.0"
-log = "~0.4.0"
 
 [profile.dev]
 opt-level = "s"
