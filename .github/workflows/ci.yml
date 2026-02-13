@@ -61,7 +61,7 @@ jobs:
           . /home/esp/export-esp.sh
           just build-${{ matrix.name }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: elf-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/airhound
@@ -117,7 +117,7 @@ jobs:
           . /home/esp/export-esp.sh
           espflash save-image --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bin-${{ matrix.name }}
           path: airhound-${{ matrix.name }}.bin
