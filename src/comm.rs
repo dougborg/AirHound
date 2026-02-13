@@ -5,7 +5,7 @@
 /// from either transport.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Receiver};
+use embassy_sync::channel::Channel;
 
 use trouble_host::prelude::*;
 
@@ -14,7 +14,6 @@ use crate::protocol::{DeviceMessage, HostCommand, MsgBuffer, MAX_MSG_LEN};
 
 /// Output channel for filtered scan results to be sent to companion
 pub type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
-pub type OutputReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, MsgBuffer, 8>;
 
 /// BLE output channel — receives cloned messages from the serial output task
 /// for forwarding as BLE GATT notifications.
@@ -40,9 +39,6 @@ pub mod ble_uuids {
 
 /// BLE advertising name
 pub const BLE_ADV_NAME: &str = "AirHound";
-
-/// Serial baud rate
-pub const SERIAL_BAUD: u32 = 115200;
 
 /// Maximum BLE notification payload (MTU-3)
 pub const BLE_MAX_NOTIFY: usize = 20;

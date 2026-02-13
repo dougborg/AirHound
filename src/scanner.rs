@@ -23,12 +23,6 @@ pub const WIFI_CHANNELS: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 /// Full cycle: 13 channels × 120ms = 1.56s.
 pub const DEFAULT_DWELL_MS: u64 = 120;
 
-/// Default BLE scan interval in milliseconds
-pub const DEFAULT_BLE_SCAN_INTERVAL_MS: u64 = 5000;
-
-/// Default BLE scan window duration in milliseconds
-pub const DEFAULT_BLE_SCAN_WINDOW_MS: u64 = 2000;
-
 /// A parsed WiFi frame event
 #[derive(Debug, Clone)]
 pub struct WiFiEvent {

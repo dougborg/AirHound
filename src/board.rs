@@ -3,6 +3,9 @@
 /// Each board module defines pin assignments and capabilities
 /// selected at compile time via feature flags.
 
+// Pin assignments and capability flags are defined for hardware reference
+// even when not yet wired up in code — peripherals are passed by type.
+#[allow(dead_code)]
 #[cfg(feature = "xiao")]
 mod hw {
     pub const LED_PIN: u8 = 9; // WS2812 addressable LED
@@ -15,6 +18,7 @@ mod hw {
     pub const BOARD_NAME: &str = "xiao_esp32s3";
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "m5stickc")]
 mod hw {
     pub const LED_PIN: u8 = 10; // Built-in LED
@@ -30,18 +34,12 @@ mod hw {
     /// GPIO4 must be held HIGH to keep the device powered on
     pub const POWER_HOLD_PIN: u8 = 4;
 
-    // Display SPI pins (ST7789V2) — reference only; peripherals are passed by type
-    #[allow(dead_code)]
+    // Display SPI pins (ST7789V2) — peripherals are passed by type
     pub const DISPLAY_MOSI: u8 = 15;
-    #[allow(dead_code)]
     pub const DISPLAY_CLK: u8 = 13;
-    #[allow(dead_code)]
     pub const DISPLAY_CS: u8 = 5;
-    #[allow(dead_code)]
     pub const DISPLAY_DC: u8 = 14;
-    #[allow(dead_code)]
     pub const DISPLAY_RST: u8 = 12;
-    #[allow(dead_code)]
     pub const DISPLAY_BL: u8 = 27;
     pub const DISPLAY_SPI_FREQ_MHZ: u32 = 40;
 
