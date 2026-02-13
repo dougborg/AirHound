@@ -1,0 +1,22 @@
+{
+  "name": "AirHound ESP32",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/home/esp/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/home/esp/workspace",
+  "remoteUser": "esp",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "rust-analyzer.check.allTargets": false,
+        "rust-analyzer.check.targets": ["xtensa-esp32s3-none-elf"],
+        "rust-analyzer.cargo.features": ["xiao"]
+      }
+    }
+  }
+}

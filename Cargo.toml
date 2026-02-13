@@ -1,0 +1,90 @@
+[package]
+name = "airhound"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "RF wardriving companion device for ESP32"
+
+[features]
+default = ["xiao"]
+
+# Chip-level features
+esp32 = [
+    "esp-hal/esp32",
+    "esp-radio/esp32",
+    "esp-rtos/esp32",
+    "esp-backtrace/esp32",
+    "esp-println/esp32",
+    "esp-bootloader-esp-idf/esp32",
+]
+esp32s3 = [
+    "esp-hal/esp32s3",
+    "esp-radio/esp32s3",
+    "esp-rtos/esp32s3",
+    "esp-backtrace/esp32s3",
+    "esp-println/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+]
+
+# Board-level features
+xiao = ["esp32s3"]
+m5stickc = ["esp32"]
+
+[dependencies]
+# Core HAL — from esp-hal main branch for latest fixes
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["unstable"] }
+
+# Embassy async runtime
+esp-rtos = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["embassy", "esp-alloc", "esp-radio", "log-04"] }
+embassy-executor = "~0.9.1"
+embassy-time = "~0.5.0"
+embassy-sync = "~0.7.0"
+embassy-futures = "~0.1.1"
+
+# Radio: WiFi + BLE
+esp-radio = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["wifi", "ble", "coex", "sniffer", "unstable", "log-04"] }
+
+# Heap allocator (pulled in by esp-rtos via esp-alloc feature)
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main" }
+
+# Logging and panic handling
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["panic-handler", "println"] }
+esp-println = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main", features = ["log-04"] }
+
+# Bootloader
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", branch = "main" }
+
+# 802.11 frame parsing (zero-copy, no_std)
+ieee80211 = { version = "~0.5.9", default-features = false }
+
+# BLE host stack — 0.6.0 now compatible with bt-hci 0.8 from esp-radio main
+trouble-host = { version = "~0.6.0", features = [
+    "peripheral", "central", "scan", "gatt", "derive",
+    "default-packet-pool", "default-packet-pool-mtu-255", "log",
+] }
+
+# Static storage for radio resources
+static_cell = "~2.1.0"
+
+# no_std collections
+heapless = { version = "~0.9.0", features = ["serde"] }
+
+# JSON serialization
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde-json-core = "~0.6.0"
+
+# Utilities
+critical-section = "~1.2.0"
+log = "~0.4.0"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "thin"
+opt-level = 3
+overflow-checks = false
