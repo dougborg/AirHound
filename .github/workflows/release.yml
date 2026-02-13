@@ -41,7 +41,7 @@ jobs:
             target: xtensa-esp32-none-elf
             chip: esp32
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build ${{ matrix.name }}
         run: |
