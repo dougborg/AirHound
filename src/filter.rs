@@ -3,12 +3,11 @@
 /// Evaluates scan results against compiled-in defaults and runtime config.
 /// Any filter match causes the result to be emitted. No scoring or state tracking —
 /// that's the companion app's job.
-
 use heapless::Vec;
 
 use crate::defaults::{
-    self, BLE_MANUFACTURER_IDS, BLE_NAME_PATTERNS, BLE_SERVICE_UUIDS_16, MAC_PREFIXES,
-    SSID_EXACT, SSID_KEYWORDS, SSID_PATTERNS, WIFI_NAME_KEYWORDS,
+    self, BLE_MANUFACTURER_IDS, BLE_NAME_PATTERNS, BLE_SERVICE_UUIDS_16, MAC_PREFIXES, SSID_EXACT,
+    SSID_KEYWORDS, SSID_PATTERNS, WIFI_NAME_KEYWORDS,
 };
 use crate::protocol::{MatchDetail, MatchReason};
 
@@ -330,10 +329,7 @@ mod tests {
         };
         let result = filter_wifi(&input, &config);
         assert!(result.matched);
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.filter_type == "ssid_exact"));
+        assert!(result.matches.iter().any(|m| m.filter_type == "ssid_exact"));
     }
 
     #[test]
@@ -423,10 +419,7 @@ mod tests {
         };
         let result = filter_ble(&input, &config);
         assert!(result.matched);
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.filter_type == "ble_name"));
+        assert!(result.matches.iter().any(|m| m.filter_type == "ble_name"));
     }
 
     #[test]
@@ -484,10 +477,7 @@ mod tests {
         };
         let result = filter_ble(&input, &config);
         assert!(result.matched);
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.filter_type == "ble_uuid"));
+        assert!(result.matches.iter().any(|m| m.filter_type == "ble_uuid"));
     }
 
     #[test]

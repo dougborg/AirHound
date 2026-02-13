@@ -6,7 +6,6 @@
 ///
 /// Hardware-specific code (sniffer callback, channel hopping, BLE event handler)
 /// lives in the firmware binary (`main.rs`).
-
 use heapless::Vec;
 
 use ieee80211::match_frames;
@@ -384,10 +383,8 @@ mod tests {
         // Structure 3: 16-bit UUID 0x3100
         let ad_data = [
             // Name
-            0x03, 0x09, b'F', b'S',
-            // Manufacturer
-            0x03, 0xFF, 0xC8, 0x09,
-            // UUID
+            0x03, 0x09, b'F', b'S', // Manufacturer
+            0x03, 0xFF, 0xC8, 0x09, // UUID
             0x03, 0x03, 0x00, 0x31,
         ];
         let event = BleAdvParser::parse(&addr, -45, &ad_data);

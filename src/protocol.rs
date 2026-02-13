@@ -2,7 +2,6 @@
 ///
 /// All messages are newline-delimited JSON (NDJSON).
 /// Uses `heapless` types for no_std/no-alloc operation.
-
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
@@ -216,7 +215,7 @@ mod tests {
         assert!(json.contains(r#""type":"ble""#));
         assert!(json.contains(r#""name":"FS Ext Battery""#));
         assert!(json.contains(r#""mfr":2504"#)); // 0x09C8 = 2504
-        // uuid should be omitted when None
+                                                 // uuid should be omitted when None
         assert!(!json.contains("uuid"));
     }
 

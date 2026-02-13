@@ -3,7 +3,6 @@
 /// Uses the LEDC peripheral to drive a passive buzzer on GPIO2 at 2700 Hz.
 /// The buzzer task waits for signals on `BUZZER_SIGNAL` and produces a short
 /// beep when a surveillance device match is detected.
-
 use core::sync::atomic::Ordering;
 
 use embassy_time::{Duration, Timer};

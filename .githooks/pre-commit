@@ -10,7 +10,7 @@ fi
 # 2. Auto-format all staged .rs files and re-stage them
 STAGED_RS=$(git diff --cached --name-only --diff-filter=d | grep '\.rs$' || true)
 if [ -n "$STAGED_RS" ]; then
-    echo "$STAGED_RS" | xargs cargo fmt --
+    echo "$STAGED_RS" | RUSTUP_TOOLCHAIN=nightly xargs cargo fmt --
     echo "$STAGED_RS" | xargs git add
 fi
 

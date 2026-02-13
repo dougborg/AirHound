@@ -2,7 +2,6 @@
 ///
 /// Pure protocol logic with no hardware or OS dependencies.
 /// BLE GATT definitions and channel types are in the firmware binary (`main.rs`).
-
 use crate::filter::FilterConfig;
 use crate::protocol::{DeviceMessage, HostCommand, RawCommand, MAX_MSG_LEN};
 
@@ -61,8 +60,12 @@ pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
         "start" => Some(HostCommand::Start),
         "stop" => Some(HostCommand::Stop),
         "status" => Some(HostCommand::GetStatus),
-        "set_rssi" => raw.min_rssi.map(|min_rssi| HostCommand::SetRssi { min_rssi }),
-        "set_buzzer" => raw.enabled.map(|enabled| HostCommand::SetBuzzer { enabled }),
+        "set_rssi" => raw
+            .min_rssi
+            .map(|min_rssi| HostCommand::SetRssi { min_rssi }),
+        "set_buzzer" => raw
+            .enabled
+            .map(|enabled| HostCommand::SetBuzzer { enabled }),
         _ => None,
     }
 }
@@ -97,10 +100,7 @@ pub fn handle_command(
             None
         }
         HostCommand::SetBuzzer { enabled } => {
-            log::info!(
-                "Buzzer {}",
-                if *enabled { "enabled" } else { "disabled" }
-            );
+            log::info!("Buzzer {}", if *enabled { "enabled" } else { "disabled" });
             Some(*enabled)
         }
     }
@@ -162,7 +162,9 @@ fn trim_trailing_whitespace(data: &[u8]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{DeviceMessage, HostCommand, MacString, MatchReason, NameString, VERSION};
+    use crate::protocol::{
+        DeviceMessage, HostCommand, MacString, MatchReason, NameString, VERSION,
+    };
     use heapless::Vec;
 
     // ── serialize_message tests ─────────────────────────────────────

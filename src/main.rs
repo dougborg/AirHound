@@ -26,7 +26,7 @@ mod display;
 pub(crate) use airhound::{board, comm, defaults, filter, protocol, scanner};
 
 use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -259,25 +259,22 @@ async fn main(spawner: embassy_executor::Spawner) {
     // BLE must be initialized BEFORE WiFi for coexistence to work
     // (especially on ESP32-S3).
 
-    let connector = esp_radio::ble::controller::BleConnector::new(
-        peripherals.BT,
-        Default::default(),
-    )
-    .expect("BLE connector init failed");
+    let connector =
+        esp_radio::ble::controller::BleConnector::new(peripherals.BT, Default::default())
+            .expect("BLE connector init failed");
 
     log::info!("BLE connector initialized");
 
     // ── WiFi sniffer initialization ─────────────────────────────────────
 
-    let (_wifi_controller, wifi_interfaces) = esp_radio::wifi::new(
-        peripherals.WIFI,
-        Default::default(),
-    )
-    .expect("WiFi init failed");
+    let (_wifi_controller, wifi_interfaces) =
+        esp_radio::wifi::new(peripherals.WIFI, Default::default()).expect("WiFi init failed");
 
     let mut sniffer = wifi_interfaces.sniffer;
     sniffer.set_receive_cb(wifi_sniffer_callback);
-    sniffer.set_promiscuous_mode(true).expect("Promiscuous mode failed");
+    sniffer
+        .set_promiscuous_mode(true)
+        .expect("Promiscuous mode failed");
 
     spawner.spawn(wifi_channel_hop_task()).unwrap();
 
@@ -290,8 +287,7 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     let address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xab]);
 
-    let stack = trouble_host::new(controller, resources)
-        .set_random_address(address);
+    let stack = trouble_host::new(controller, resources).set_random_address(address);
     let Host {
         mut peripheral,
         central,
@@ -302,12 +298,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     log::info!("BLE radio initialized");
 
     // Create GATT server
-    let server = AirHoundServer::new_with_config(
-        GapConfig::Peripheral(PeripheralConfig {
-            name: comm::BLE_ADV_NAME,
-            appearance: &appearance::UNKNOWN,
-        }),
-    )
+    let server = AirHoundServer::new_with_config(GapConfig::Peripheral(PeripheralConfig {
+        name: comm::BLE_ADV_NAME,
+        appearance: &appearance::UNKNOWN,
+    }))
     .expect("GATT server init failed");
 
     // Event handler for BLE advertisement reports
@@ -433,12 +427,7 @@ async fn handle_gatt_connection<'s, P: PacketPool>(
     let mut line_reader = LineReader::new();
 
     loop {
-        match embassy_futures::select::select(
-            ble_rx.receive(),
-            conn.next(),
-        )
-        .await
-        {
+        match embassy_futures::select::select(ble_rx.receive(), conn.next()).await {
             embassy_futures::select::Either::First(msg) => {
                 // Chunk the NDJSON message into BLE_MAX_NOTIFY-sized pieces.
                 // Pad with newlines so the companion NDJSON parser sees
