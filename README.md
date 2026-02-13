@@ -8,54 +8,66 @@ AirHound is a **thin sensor/relay**. It scans, filters, and emits. The companion
 
 ## Supported Hardware
 
-| Board | Chip | Target | Feature Flag |
-|-------|------|--------|-------------|
-| Seeed XIAO ESP32-S3 | ESP32-S3 | `xtensa-esp32s3-none-elf` | `xiao` |
-| M5StickC Plus2 | ESP32 (PICO-V3) | `xtensa-esp32-none-elf` | `m5stickc` |
+| Board | Chip | Target | Feature Flag | Extras |
+|-------|------|--------|-------------|--------|
+| Seeed XIAO ESP32-S3 | ESP32-S3 | `xtensa-esp32s3-none-elf` | `xiao` | PSRAM, GPS header |
+| M5StickC Plus2 | ESP32 (PICO-V3) | `xtensa-esp32-none-elf` | `m5stickc` | TFT display, buzzer |
+
+### M5StickC Plus2 Features
+
+- **135x240 TFT display** (ST7789V2) — status screen with match counts, uptime, and last detection
+- **Passive buzzer** (GPIO2) — short alert beep on surveillance device match, togglable via BLE command
 
 ## Tech Stack
 
 - **Language:** Rust (`no_std`)
-- **HAL:** esp-hal 1.0 (Espressif official)
+- **HAL:** esp-hal (Espressif official, git main)
 - **Radio:** esp-radio (WiFi sniffer + BLE + coex)
 - **BLE Host:** TrouBLE (trouble-host, Embassy ecosystem)
 - **Async Runtime:** Embassy (via esp-rtos)
+- **Display:** mipidsi + embedded-graphics (M5StickC only)
 - **JSON:** serde + serde-json-core (no-alloc)
 
 ## Building
 
-### Prerequisites
+### Docker (recommended)
+
+No local ESP toolchain needed. Requires Docker and [`just`](https://github.com/casey/just).
 
 ```bash
-# Install Rust ESP32 toolchain
-cargo install espup --locked
-espup install
+cargo install just
 
-# Install flash tool
+just docker-build            # Both targets
+just docker-build-xiao       # XIAO ESP32-S3 only
+just docker-build-m5stickc   # M5StickC Plus2 only
+just docker-clean            # Clean (required after dependency changes)
+```
+
+### Native
+
+Requires the ESP Rust toolchain (`espup install`) and `espflash`.
+
+```bash
+# Install toolchain
+cargo install espup --locked && espup install
 cargo install espflash --locked
-
-# Source the ESP environment (add to shell profile)
 . ~/export-esp.sh
+
+# Build
+just build-xiao
+just build-m5stickc
 ```
 
-### Build Commands
+### Flash
 
 ```bash
-# XIAO ESP32-S3 (default)
-cargo build --features xiao --release --target xtensa-esp32s3-none-elf
+# Flash pre-built binaries (espflash auto-detects serial port)
+espflash flash --chip esp32s3 target/xtensa-esp32s3-none-elf/release/airhound
+espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/airhound
 
-# M5StickC Plus2
-cargo build --features m5stickc --release --target xtensa-esp32-none-elf
-```
-
-### Flash and Monitor
-
-```bash
-# XIAO ESP32-S3
-cargo run --features xiao --release --target xtensa-esp32s3-none-elf
-
-# M5StickC Plus2
-cargo run --features m5stickc --release --target xtensa-esp32-none-elf
+# Or build + flash + monitor in one step (native only)
+just flash-xiao
+just flash-m5stickc
 ```
 
 ## Protocol
@@ -86,13 +98,14 @@ AirHound communicates using newline-delimited JSON (NDJSON) over BLE GATT notifi
 {"cmd":"stop"}
 {"cmd":"status"}
 {"cmd":"set_rssi","min_rssi":-80}
+{"cmd":"set_buzzer","enabled":false}
 ```
 
 ### BLE GATT Service
 
 | Attribute | UUID | Properties |
 |-----------|------|-----------|
-| Service | `4a690001-1c4a-4e3c-b5d8-f47b2e1c0a9d` | — |
+| Service | `4a690001-1c4a-4e3c-b5d8-f47b2e1c0a9d` | -- |
 | TX (results) | `4a690002-1c4a-4e3c-b5d8-f47b2e1c0a9d` | Notify |
 | RX (commands) | `4a690003-1c4a-4e3c-b5d8-f47b2e1c0a9d` | Write |
 
@@ -101,7 +114,7 @@ AirHound communicates using newline-delimited JSON (NDJSON) over BLE GATT notifi
 ```
 ┌─────────────────┐    ┌──────────────────┐
 │  WiFi Sniffer   │    │   BLE Scanner    │
-│  (22-ch hop)    │    │  (periodic scan) │
+│  (13-ch hop)    │    │  (periodic scan) │
 └────────┬────────┘    └────────┬─────────┘
          │ ScanEvent            │ ScanEvent
          └──────────┬───────────┘
@@ -111,23 +124,23 @@ AirHound communicates using newline-delimited JSON (NDJSON) over BLE GATT notifi
           │ MAC/SSID/BLE/UUID│
           └────────┬────────┘
                    │ NDJSON
-         ┌─────────┴─────────┐
-         ▼                   ▼
-┌─────────────────┐  ┌──────────────┐
-│  BLE GATT TX    │  │  Serial TX   │
-│  (notify)       │  │  (115200)    │
-└─────────────────┘  └──────────────┘
+         ┌─────────┼─────────┐
+         ▼         ▼         ▼
+┌──────────┐ ┌──────────┐ ┌──────────────┐
+│ BLE GATT │ │ Serial   │ │ Display/Buzz │
+│ (notify) │ │ (115200) │ │ (M5StickC)   │
+└──────────┘ └──────────┘ └──────────────┘
 ```
 
 ## Filter Data
 
 Compiled-in filter data merged from multiple open-source surveillance detection projects:
 
-- **108 MAC OUI prefixes** — Flock Safety, Silicon Labs, Axis, Hanwha, FLIR, Mobotix, and other surveillance vendors
-- **SSID patterns** — `Flock-XXXXXX`, `Penguin-XXXXXXXXXX`, `FS Ext Battery`
-- **BLE name patterns** — Flock, Penguin, FS Ext Battery, Pigvision
-- **Raven BLE service UUIDs** — 0x3100-0x3500 (custom), 0x180A/0x1809/0x1819 (standard)
-- **Manufacturer IDs** — 0x09C8 (XUNTONG / Flock Safety)
+- **108 MAC OUI prefixes** -- Flock Safety, Silicon Labs, Axis, Hanwha, FLIR, Mobotix, and other surveillance vendors
+- **SSID patterns** -- `Flock-XXXXXX`, `Penguin-XXXXXXXXXX`, `FS Ext Battery`
+- **BLE name patterns** -- Flock, Penguin, FS Ext Battery, Pigvision
+- **Raven BLE service UUIDs** -- 0x3100-0x3500 (custom), 0x180A/0x1809/0x1819 (standard)
+- **Manufacturer IDs** -- 0x09C8 (XUNTONG / Flock Safety)
 
 ## License
 
