@@ -1,14 +1,15 @@
 /// Display driver for M5StickC Plus2 (ST7789V2, 135x240, SPI).
 ///
-/// Renders a status screen showing AirHound state, match counts, and
-/// recent detections. Refreshes every 500ms via direct SPI writes (no
-/// framebuffer — the 64KB required would exceed ESP32's heap).
+/// Renders screens via direct SPI writes (no framebuffer — the 64KB
+/// required would exceed ESP32's heap). Uses the [`Screen`] renderer
+/// to lay out text rows flicker-free: each row is padded to full display
+/// width and drawn with an explicit `background_color`, so every pixel
+/// is overwritten in a single pass with no intermediate blank frame.
 
-use core::fmt::Write;
 use core::sync::atomic::Ordering;
 
 use embedded_graphics::mono_font::ascii::FONT_6X10;
-use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::{MonoTextStyle, MonoTextStyleBuilder};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
@@ -31,15 +32,189 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::board;
 use crate::protocol::VERSION;
 
-/// Landscape width after 90-degree rotation
-const W: i32 = 240;
+// ── Display geometry ──────────────────────────────────────────────────
 
-/// Colors
+/// Landscape dimensions after 90° rotation.
+const W: i32 = 240;
+const H: i32 = 135;
+
+/// Row height — FONT_6X10 is 10px tall; 14px gives 4px gap between rows.
+const ROW_H: i32 = 14;
+
+/// Characters per line — FONT_6X10 is 6px wide, 240 / 6 = 40.
+const LINE_W: usize = (W / 6) as usize;
+
+// ── Color palette ─────────────────────────────────────────────────────
+
 const BG: Rgb565 = Rgb565::BLACK;
 const HEADER_BG: Rgb565 = Rgb565::new(2, 4, 12);
-const TEXT: Rgb565 = Rgb565::WHITE;
+const FG: Rgb565 = Rgb565::WHITE;
 const ACCENT: Rgb565 = Rgb565::new(0, 50, 0);
 const DIM: Rgb565 = Rgb565::new(12, 24, 12);
+
+// ── Flicker-free screen renderer ──────────────────────────────────────
+//
+// Text is drawn with MonoTextStyle's background_color set, so each
+// character writes both foreground and background pixels simultaneously.
+// Rows are padded to LINE_W (40 chars = 240px) so the text draw covers
+// every pixel — no separate fill/clear needed, no flicker.
+
+/// Reusable screen renderer. Tracks a Y cursor and owns a shared
+/// line buffer. Any screen function can create one, call row/centered/
+/// divider/etc., and the cursor advances automatically.
+struct Screen<'a, D> {
+    display: &'a mut D,
+    y: i32,
+    buf: heapless::String<40>,
+}
+
+impl<'a, D: DrawTarget<Color = Rgb565>> Screen<'a, D> {
+    fn new(display: &'a mut D) -> Self {
+        Self { display, y: 0, buf: heapless::String::new() }
+    }
+
+    /// Clear the entire display to BG and reset cursor to top.
+    fn clear(&mut self) {
+        let _ = self.display.clear(BG);
+        self.y = 0;
+    }
+
+    /// Advance the cursor without drawing anything.
+    fn skip(&mut self, pixels: i32) {
+        self.y += pixels;
+    }
+
+    /// Fill a full-width band at the current Y. Does NOT advance cursor —
+    /// use for one-time background painting (e.g. header bg at startup).
+    fn fill_band(&mut self, height: i32, color: Rgb565) {
+        let _ = Rectangle::new(Point::new(0, self.y), Size::new(W as u32, height as u32))
+            .into_styled(PrimitiveStyle::with_fill(color))
+            .draw(self.display);
+    }
+
+    /// Draw a left-aligned, full-width padded row. Advances cursor.
+    fn row(&mut self, color: Rgb565, args: core::fmt::Arguments<'_>) {
+        self.buf.clear();
+        let _ = core::fmt::write(&mut self.buf, args);
+        self.pad();
+        self.emit(color, BG, 0);
+        self.y += ROW_H;
+    }
+
+    /// Draw centered text (no padding — caller should clear first). Advances cursor.
+    fn centered(&mut self, color: Rgb565, args: core::fmt::Arguments<'_>) {
+        self.buf.clear();
+        let _ = core::fmt::write(&mut self.buf, args);
+        let x = (W - self.buf.len() as i32 * 6) / 2;
+        self.emit(color, BG, x);
+        self.y += ROW_H;
+    }
+
+    /// Draw a header row with a right-aligned indicator. Advances cursor.
+    /// The header background gap (between text cells and row edges) must
+    /// be painted once at startup via [`fill_band`].
+    fn header(&mut self, title_args: core::fmt::Arguments<'_>, indicator: &str, indicator_color: Rgb565) {
+        self.buf.clear();
+        let _ = core::fmt::write(&mut self.buf, title_args);
+        self.emit(FG, HEADER_BG, 0);
+
+        let x = W - indicator.len() as i32 * 6 - 2;
+        let _ = Text::new(indicator, Point::new(x, self.y + 10),
+            Self::text_style(indicator_color, HEADER_BG)).draw(self.display);
+        self.y += ROW_H;
+    }
+
+    /// Draw a 1px horizontal divider. Advances cursor.
+    fn divider(&mut self) {
+        let _ = Rectangle::new(Point::new(0, self.y), Size::new(W as u32, 1))
+            .into_styled(PrimitiveStyle::with_fill(DIM))
+            .draw(self.display);
+        self.y += 3;
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────
+
+    fn pad(&mut self) {
+        while self.buf.len() < LINE_W {
+            let _ = self.buf.push(' ');
+        }
+    }
+
+    fn emit(&mut self, fg: Rgb565, bg: Rgb565, x: i32) {
+        let _ = Text::new(&self.buf, Point::new(x, self.y + 10),
+            Self::text_style(fg, bg)).draw(self.display);
+    }
+
+    fn text_style(fg: Rgb565, bg: Rgb565) -> MonoTextStyle<'static, Rgb565> {
+        MonoTextStyleBuilder::new()
+            .font(&FONT_6X10)
+            .text_color(fg)
+            .background_color(bg)
+            .build()
+    }
+}
+
+/// Convenience: `row!(screen, COLOR, "fmt {}", args);`
+macro_rules! row {
+    ($s:expr, $color:expr, $($arg:tt)*) => {
+        $s.row($color, format_args!($($arg)*))
+    };
+}
+
+/// Convenience: `centered!(screen, COLOR, "fmt {}", args);`
+macro_rules! centered {
+    ($s:expr, $color:expr, $($arg:tt)*) => {
+        $s.centered($color, format_args!($($arg)*))
+    };
+}
+
+// ── Screen implementations ────────────────────────────────────────────
+
+fn draw_splash(display: &mut impl DrawTarget<Color = Rgb565>) {
+    let mut s = Screen::new(display);
+    s.clear();
+    s.skip(42);
+    centered!(s, FG, "AIRHOUND");
+    centered!(s, ACCENT, "v{}", VERSION);
+    s.skip(12);
+    centered!(s, DIM, "RF Companion");
+}
+
+fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
+    let mut s = Screen::new(display);
+
+    let scanning = crate::SCANNING.load(Ordering::Relaxed);
+    s.header(
+        format_args!(" AIRHOUND v{}", VERSION),
+        if scanning { "[SCAN]" } else { "[STOP]" },
+        if scanning { Rgb565::GREEN } else { Rgb565::RED },
+    );
+
+    row!(s, FG, " WiFi: {}    BLE: {}",
+        crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
+        crate::BLE_MATCH_COUNT.load(Ordering::Relaxed));
+
+    let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
+    if !last.is_empty() {
+        row!(s, Rgb565::GREEN, " Last: {}", last);
+    } else {
+        row!(s, DIM, " Last: ---");
+    }
+
+    s.divider();
+
+    let clients = crate::BLE_CLIENTS.load(Ordering::Relaxed);
+    let up = (Instant::now().as_millis() / 1000) as u32;
+    row!(s, DIM, " BLE: {} client{}  Up: {:02}:{:02}:{:02}",
+        clients, if clients == 1 { "" } else { "s" },
+        up / 3600, (up % 3600) / 60, up % 60);
+
+    let buzzer = if crate::BUZZER_ENABLED.load(Ordering::Relaxed) { "ON" } else { "OFF" };
+    row!(s, DIM, " Heap: {}K free  Buzzer: {}",
+        esp_alloc::HEAP.free() / 1024, buzzer);
+}
+
+// ── Display task (hardware init + render loop) ────────────────────────
 
 #[embassy_executor::task]
 pub async fn display_task(
@@ -85,9 +260,8 @@ pub async fn display_task(
     let buffer = SPI_BUF.init([0u8; 512]);
     let di = SpiInterface::new(spi_device, dc, buffer);
 
-    // Build display: ST7789V2, 135x240, landscape, inverted colors
-    // We already did the hardware reset manually above, so don't pass reset_pin
-    // to avoid a second reset. mipidsi's init will send SLPOUT + init commands.
+    // Build display: ST7789V2, 135x240, landscape, inverted colors.
+    // Hardware reset was done manually above, so no reset_pin here.
     let mut delay2 = Delay::new();
     let mut display = match Builder::new(ST7789, di)
         .display_size(135, 240)
@@ -103,7 +277,7 @@ pub async fn display_task(
             return;
         }
     };
-    log::info!("Display initialized (240x135 landscape)");
+    log::info!("Display initialized ({}x{} landscape)", W, H);
 
     // Turn on backlight AFTER display init (active high on M5StickC Plus2)
     let _bl = Output::new(bl_pin, Level::High, OutputConfig::default());
@@ -113,96 +287,17 @@ pub async fn display_task(
     draw_splash(&mut display);
     Timer::after(Duration::from_secs(2)).await;
 
-    // Status loop — refresh every 500ms
+    // Prepare for status loop: clear splash, paint header bg once.
+    // The header text draw covers the middle 10px each frame via
+    // background_color, but the 4px row-edge gap needs a one-time fill.
+    {
+        let mut s = Screen::new(&mut display);
+        s.clear();
+        s.fill_band(ROW_H, HEADER_BG);
+    }
+
     loop {
         draw_status(&mut display);
         Timer::after(Duration::from_millis(500)).await;
     }
-}
-
-fn draw_splash(display: &mut impl DrawTarget<Color = Rgb565>) {
-    let _ = display.clear(BG);
-
-    let style = MonoTextStyle::new(&FONT_6X10, TEXT);
-    let accent = MonoTextStyle::new(&FONT_6X10, ACCENT);
-
-    // Center "AIRHOUND" (8 chars × 6px = 48px)
-    let _ = Text::new("AIRHOUND", Point::new((W - 48) / 2, 55), style).draw(display);
-
-    // Version below
-    let mut ver = heapless::String::<20>::new();
-    let _ = write!(ver, "v{}", VERSION);
-    let vw = ver.len() as i32 * 6;
-    let _ = Text::new(&ver, Point::new((W - vw) / 2, 70), accent).draw(display);
-
-    // Tagline
-    let tag = "RF Companion";
-    let tw = tag.len() as i32 * 6;
-    let _ = Text::new(tag, Point::new((W - tw) / 2, 95), MonoTextStyle::new(&FONT_6X10, DIM)).draw(display);
-}
-
-fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
-    let _ = display.clear(BG);
-
-    let white = MonoTextStyle::new(&FONT_6X10, TEXT);
-    let green = MonoTextStyle::new(&FONT_6X10, Rgb565::GREEN);
-    let dim = MonoTextStyle::new(&FONT_6X10, DIM);
-
-    // ── Header bar ──────────────────────────────────────────────────────
-    let _ = Rectangle::new(Point::zero(), Size::new(W as u32, 14))
-        .into_styled(PrimitiveStyle::with_fill(HEADER_BG))
-        .draw(display);
-
-    let mut header = heapless::String::<40>::new();
-    let _ = write!(header, " AIRHOUND v{}", VERSION);
-    let _ = Text::new(&header, Point::new(0, 10), white).draw(display);
-
-    let scanning = crate::SCANNING.load(Ordering::Relaxed);
-    let indicator = if scanning { "[SCAN]" } else { "[STOP]" };
-    let indicator_style = if scanning { green } else { MonoTextStyle::new(&FONT_6X10, Rgb565::RED) };
-    let _ = Text::new(indicator, Point::new(W - 6 * indicator.len() as i32 - 2, 10), indicator_style).draw(display);
-
-    // ── Match counts ────────────────────────────────────────────────────
-    let wifi_count = crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed);
-    let ble_count = crate::BLE_MATCH_COUNT.load(Ordering::Relaxed);
-
-    let mut line = heapless::String::<40>::new();
-    let _ = write!(line, " WiFi: {}    BLE: {}", wifi_count, ble_count);
-    let _ = Text::new(&line, Point::new(0, 32), white).draw(display);
-
-    // ── Last match ──────────────────────────────────────────────────────
-    let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
-    if !last.is_empty() {
-        let mut last_line = heapless::String::<40>::new();
-        let _ = write!(last_line, " Last: {}", last);
-        let _ = Text::new(&last_line, Point::new(0, 48), green).draw(display);
-    } else {
-        let _ = Text::new(" Last: ---", Point::new(0, 48), dim).draw(display);
-    }
-
-    // ── Divider ─────────────────────────────────────────────────────────
-    let _ = Rectangle::new(Point::new(0, 58), Size::new(W as u32, 1))
-        .into_styled(PrimitiveStyle::with_fill(DIM))
-        .draw(display);
-
-    // ── Status info ─────────────────────────────────────────────────────
-    let ble_clients = crate::BLE_CLIENTS.load(Ordering::Relaxed);
-    let uptime_secs = (Instant::now().as_millis() / 1000) as u32;
-    let hours = uptime_secs / 3600;
-    let mins = (uptime_secs % 3600) / 60;
-    let secs = uptime_secs % 60;
-
-    let mut status1 = heapless::String::<40>::new();
-    let _ = write!(status1, " BLE: {} client{}  Up: {:02}:{:02}:{:02}",
-        ble_clients, if ble_clients == 1 { "" } else { "s" },
-        hours, mins, secs);
-    let _ = Text::new(&status1, Point::new(0, 76), dim).draw(display);
-
-    let heap_free = esp_alloc::HEAP.free() as u32;
-    let heap_k = heap_free / 1024;
-
-    let mut status2 = heapless::String::<40>::new();
-    let buzzer = if crate::BUZZER_ENABLED.load(Ordering::Relaxed) { "ON" } else { "OFF" };
-    let _ = write!(status2, " Heap: {}K free  Buzzer: {}", heap_k, buzzer);
-    let _ = Text::new(&status2, Point::new(0, 92), dim).draw(display);
 }
