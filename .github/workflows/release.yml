@@ -28,6 +28,9 @@ jobs:
     container:
       image: espressif/idf-rust:${{ matrix.chip }}_latest
       options: --user root
+      env:
+        RUSTUP_HOME: /home/esp/.rustup
+        CARGO_HOME: /home/esp/.cargo
     strategy:
       matrix:
         include:
@@ -44,11 +47,13 @@ jobs:
 
       - name: Build ${{ matrix.name }}
         run: |
+          export PATH="/home/esp/.cargo/bin:$PATH"
           . /home/esp/export-esp.sh
           cargo build --no-default-features --features ${{ matrix.features }} --release --target ${{ matrix.target }} -Z build-std=core,alloc
 
       - name: Create flashable binary
         run: |
+          export PATH="/home/esp/.cargo/bin:$PATH"
           . /home/esp/export-esp.sh
           espflash save-image --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
 
