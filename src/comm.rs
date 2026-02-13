@@ -32,16 +32,12 @@ pub const BLE_MAX_NOTIFY: usize = 20;
 /// Returns the number of bytes written, or None if serialization failed.
 pub fn serialize_message(msg: &DeviceMessage, buf: &mut [u8]) -> Option<usize> {
     match serde_json_core::to_slice(msg, buf) {
-        Ok(len) => {
+        Ok(len) if len < buf.len() => {
             // Append newline for NDJSON
-            if len < buf.len() {
-                buf[len] = b'\n';
-                Some(len + 1)
-            } else {
-                Some(len)
-            }
+            buf[len] = b'\n';
+            Some(len + 1)
         }
-        Err(_) => None,
+        _ => None,
     }
 }
 
@@ -191,6 +187,21 @@ mod tests {
     }
 
     #[test]
+    fn serialize_returns_none_when_buffer_too_small() {
+        let msg = DeviceMessage::Status {
+            scanning: true,
+            uptime: 60,
+            heap_free: 32000,
+            ble_clients: 0,
+            board: "test",
+            version: VERSION,
+        };
+        // Buffer too small for JSON + newline
+        let mut buf = [0u8; 10];
+        assert!(serialize_message(&msg, &mut buf).is_none());
+    }
+
+    #[test]
     fn serialize_wifi_scan_is_valid_json() {
         let mac = MacString::try_from("AA:BB:CC:DD:EE:FF").unwrap();
         let ssid = NameString::try_from("TestSSID").unwrap();
@@ -263,6 +274,32 @@ mod tests {
     fn parse_command_rejects_empty_input() {
         assert!(parse_command(b"").is_none());
         assert!(parse_command(b"   \n").is_none());
+    }
+
+    #[test]
+    fn parse_command_rejects_unknown_command() {
+        assert!(parse_command(br#"{"cmd":"restart"}"#).is_none());
+        assert!(parse_command(br#"{"cmd":"reboot"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_set_rssi_missing_field_returns_none() {
+        assert!(parse_command(br#"{"cmd":"set_rssi"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_set_buzzer_missing_field_returns_none() {
+        assert!(parse_command(br#"{"cmd":"set_buzzer"}"#).is_none());
+    }
+
+    #[test]
+    fn round_trip_parse_then_handle() {
+        let cmd = parse_command(br#"{"cmd":"set_rssi","min_rssi":-75}"#).unwrap();
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        handle_command(&cmd, &mut config, &mut scanning);
+        assert_eq!(config.min_rssi, -75);
+        assert!(scanning); // set_rssi should not change scanning state
     }
 
     // ── handle_command tests ────────────────────────────────────────

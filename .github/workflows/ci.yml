@@ -73,15 +73,20 @@ jobs:
   wokwi:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
     steps:
-      - uses: actions/checkout@v6
+      - if: env.WOKWI_CLI_TOKEN != ''
+        uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v7
+      - if: env.WOKWI_CLI_TOKEN != ''
+        uses: actions/download-artifact@v7
         with:
           name: elf-m5stickc
           path: target/xtensa-esp32-none-elf/release/
 
       - name: Simulate firmware
+        if: env.WOKWI_CLI_TOKEN != ''
         uses: wokwi/wokwi-ci-action@v1
         with:
           token: ${{ secrets.WOKWI_CLI_TOKEN }}
@@ -100,7 +105,7 @@ jobs:
           - name: m5stickc
             chip: esp32
     steps:
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@v1
 
       - name: Install espflash
         run: cargo binstall espflash --no-confirm

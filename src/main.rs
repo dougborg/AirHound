@@ -672,16 +672,20 @@ async fn command_task() {
         let cmd = cmd_rx.receive().await;
         let is_status_request = matches!(cmd, HostCommand::GetStatus);
 
-        // Handle buzzer side effect (M5StickC only)
-        #[cfg(feature = "m5stickc")]
-        if let HostCommand::SetBuzzer { enabled } = &cmd {
-            BUZZER_ENABLED.store(*enabled, Ordering::Relaxed);
-        }
-
         let mut config = get_filter_config();
         let mut scanning = SCANNING.load(Ordering::Relaxed);
 
-        let _ = comm::handle_command(&cmd, &mut config, &mut scanning);
+        let buzzer_state = comm::handle_command(&cmd, &mut config, &mut scanning);
+
+        // Apply buzzer side effect (M5StickC only)
+        #[cfg(feature = "m5stickc")]
+        if let Some(enabled) = buzzer_state {
+            BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
+        }
+
+        // Suppress unused variable warning on boards without buzzer
+        #[cfg(not(feature = "m5stickc"))]
+        let _ = buzzer_state;
 
         // Write back updated state
         critical_section::with(|cs| FILTER_CONFIG.borrow(cs).set(config));
