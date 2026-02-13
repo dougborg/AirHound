@@ -7,7 +7,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  packages: read
 
 jobs:
   release-please:
@@ -27,26 +26,25 @@ jobs:
     if: needs.release-please.outputs.release_created
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.DEV_IMAGE || 'ghcr.io/dougborg/airhound-dev:latest' }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      image: espressif/idf-rust:${{ matrix.chip }}_latest
     strategy:
       matrix:
         include:
           - name: xiao
             target: xtensa-esp32s3-none-elf
             chip: esp32s3
+            features: xiao
           - name: m5stickc
             target: xtensa-esp32-none-elf
             chip: esp32
+            features: m5stickc
     steps:
       - uses: actions/checkout@v6
 
       - name: Build ${{ matrix.name }}
         run: |
           . /home/esp/export-esp.sh
-          just build-${{ matrix.name }}
+          cargo build --no-default-features --features ${{ matrix.features }} --release --target ${{ matrix.target }} -Z build-std=core,alloc
 
       - name: Create flashable binary
         run: |
