@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: elf-m5stickc
           path: target/xtensa-esp32-none-elf/release/
@@ -107,7 +107,7 @@ jobs:
             target: xtensa-esp32-none-elf
             chip: esp32
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: elf-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/
