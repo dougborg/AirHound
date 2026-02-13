@@ -67,11 +67,10 @@ jobs:
           path: target/${{ matrix.target }}/release/airhound
           retention-days: 7
 
-  # Wokwi simulation smoke test — enable by adding WOKWI_CLI_TOKEN secret
+  # Wokwi simulation smoke test — add WOKWI_CLI_TOKEN repo secret to enable
   wokwi:
     needs: build
     runs-on: ubuntu-latest
-    if: false # Enable when WOKWI_CLI_TOKEN secret is configured
     steps:
       - uses: actions/checkout@v6
 
@@ -80,13 +79,12 @@ jobs:
           name: elf-m5stickc
           path: target/xtensa-esp32-none-elf/release/
 
-      - name: Install Wokwi CLI
-        run: curl -L https://wokwi.com/ci/install.sh | sh
-
-      - name: Run Wokwi simulation
-        run: wokwi-cli --timeout 10000 --expect-text "Scanning started"
-        env:
-          WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
+      - name: Simulate firmware
+        uses: wokwi/wokwi-ci-action@v1
+        with:
+          token: ${{ secrets.WOKWI_CLI_TOKEN }}
+          timeout: 10000
+          expect_text: "AirHound v"
 
   preview-binaries:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft

@@ -58,25 +58,6 @@ jobs:
           name: release-bin-${{ matrix.name }}
           path: airhound-${{ matrix.name }}.bin
 
-  # QEMU boot test — enable when espressif/qemu container is configured
-  qemu-boot-test:
-    needs: build-release
-    runs-on: ubuntu-latest
-    if: false # Enable when QEMU ESP32 support is configured
-    steps:
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: release-bin-*
-          merge-multiple: true
-
-      - name: Boot test
-        run: |
-          # TODO: Set up espressif/qemu container
-          # - Boot each firmware in QEMU
-          # - Verify no panic/abort within 5 seconds
-          # - Check for heap init log message
-          echo "QEMU boot test placeholder"
-
   publish-release:
     needs: [release-please, build-release]
     runs-on: ubuntu-latest
