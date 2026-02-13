@@ -12,7 +12,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v6
@@ -20,7 +20,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -31,7 +31,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo test --lib --no-default-features
         env:
@@ -54,14 +54,14 @@ jobs:
             target: xtensa-esp32-none-elf
             chip: esp32
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build ${{ matrix.name }}
         run: |
           . /home/esp/export-esp.sh
           just build-${{ matrix.name }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: elf-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/airhound
@@ -73,9 +73,9 @@ jobs:
     runs-on: ubuntu-latest
     if: false # Enable when WOKWI_CLI_TOKEN secret is configured
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: elf-m5stickc
           path: target/xtensa-esp32-none-elf/release/
@@ -107,7 +107,7 @@ jobs:
             target: xtensa-esp32-none-elf
             chip: esp32
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: elf-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/
@@ -117,7 +117,7 @@ jobs:
           . /home/esp/export-esp.sh
           espflash save-image --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bin-${{ matrix.name }}
           path: airhound-${{ matrix.name }}.bin
