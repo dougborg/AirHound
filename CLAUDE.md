@@ -8,7 +8,7 @@ AirHound is a `no_std` Rust firmware for ESP32 devices that acts as an RF wardri
 
 ## Build Commands
 
-The project builds inside Docker (no local ESP toolchain needed). Install `just` (`cargo install just`).
+The project builds inside Docker using chip-specific Espressif images (no local ESP toolchain needed). Install `just` (`cargo install just`).
 
 ```bash
 just docker-build            # Both targets
@@ -93,3 +93,5 @@ The project is split into a library crate (`src/lib.rs`) and a binary crate (`sr
 ## Dependencies
 
 All `esp-*` crates are from **git main branch** (`https://github.com/esp-rs/esp-hal.git`). Docker named volumes cache the cargo registry/git — run `just docker-clean` after switching dependency sources. `trouble-host 0.6.0` is the BLE host stack.
+
+Docker recipes use chip-specific images (`espressif/idf-rust:esp32s3_latest`, `esp32_latest`) for builds. The devcontainer (`.devcontainer/`) uses `all_latest` for interactive use (`just docker-shell`) and VS Code / Codespaces.
