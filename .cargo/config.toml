@@ -8,6 +8,3 @@ rustflags = [
 
 [env]
 ESP_LOG = "info"
-
-[unstable]
-build-std = ["core", "alloc"]

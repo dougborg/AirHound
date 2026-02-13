@@ -16,16 +16,14 @@ use esp_backtrace as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-mod board;
+// Hardware-specific modules (binary crate only)
 #[cfg(feature = "m5stickc")]
 mod buzzer;
-mod comm;
-mod defaults;
 #[cfg(feature = "m5stickc")]
 mod display;
-mod filter;
-mod protocol;
-mod scanner;
+
+// Re-export library modules so binary submodules (display, buzzer) can use crate::*
+pub(crate) use airhound::{board, comm, defaults, filter, protocol, scanner};
 
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
@@ -39,19 +37,54 @@ use static_cell::StaticCell;
 
 use trouble_host::prelude::*;
 
-use crate::comm::{BleOutputChannel, LineReader};
-use crate::filter::{filter_ble, filter_wifi, format_mac, BleScanInput, FilterConfig, WiFiScanInput};
-use crate::protocol::{DeviceMessage, MacString, VERSION};
-use crate::scanner::{BleEvent, ScanChannel, ScanEvent, ScanEventHandler, WiFiEvent};
+use comm::LineReader;
+use filter::{filter_ble, filter_wifi, format_mac, BleScanInput, FilterConfig, WiFiScanInput};
+use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
+use scanner::{BleEvent, ScanEvent, WiFiEvent};
+
+// ── BLE GATT server definition ──────────────────────────────────────
+//
+// Moved from comm.rs — proc macros depend on trouble-host which is
+// firmware-only. The UUID constants in comm::ble_uuids are the canonical
+// source; proc macros require string literals.
+
+#[gatt_service(uuid = "4a690001-1c4a-4e3c-b5d8-f47b2e1c0a9d")]
+struct AirHoundGattService {
+    /// TX — filtered scan results, notify-only.
+    /// Messages are chunked into BLE_MAX_NOTIFY-sized pieces.
+    /// The companion accumulates until it sees '\n' (NDJSON delimiter).
+    #[characteristic(uuid = "4a690002-1c4a-4e3c-b5d8-f47b2e1c0a9d", notify)]
+    tx: [u8; 20],
+
+    /// RX — host commands, write-only.
+    /// Companion sends NDJSON commands which are accumulated via LineReader.
+    #[characteristic(uuid = "4a690003-1c4a-4e3c-b5d8-f47b2e1c0a9d", write)]
+    rx: [u8; 20],
+}
+
+/// Top-level AirHound GATT server.
+#[gatt_server]
+struct AirHoundServer {
+    airhound_service: AirHoundGattService,
+}
+
+// ── Channel type aliases ──────────────────────────────────────────────
+
+type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
+type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
+type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
+type CommandChannel = Channel<CriticalSectionRawMutex, HostCommand, 4>;
+
+// ── Static channels and shared state ─────────────────────────────────
 
 /// Static channel for scan events from WiFi sniffer ISR + BLE scan task
 pub(crate) static SCAN_CHANNEL: ScanChannel = Channel::new();
 
 /// Static channel for serialized output messages
-static OUTPUT_CHANNEL: comm::OutputChannel = Channel::new();
+static OUTPUT_CHANNEL: OutputChannel = Channel::new();
 
 /// Static channel for host commands
-static CMD_CHANNEL: comm::CommandChannel = Channel::new();
+static CMD_CHANNEL: CommandChannel = Channel::new();
 
 /// Static channel for BLE output — serial task clones messages here
 /// for the GATT server to send as notifications.
@@ -63,7 +96,7 @@ static BLE_OUTPUT_CHANNEL: BleOutputChannel = Channel::new();
 static FILTER_CONFIG: Mutex<Cell<FilterConfig>> = Mutex::new(Cell::new(FilterConfig::new()));
 
 /// Whether scanning is active (toggled by host Start/Stop commands)
-static SCANNING: AtomicBool = AtomicBool::new(true);
+pub(crate) static SCANNING: AtomicBool = AtomicBool::new(true);
 
 /// Number of connected BLE clients
 static BLE_CLIENTS: AtomicU8 = AtomicU8::new(0);
@@ -88,6 +121,61 @@ pub(crate) static BUZZER_SIGNAL: Channel<CriticalSectionRawMutex, (), 1> = Chann
 fn get_filter_config() -> FilterConfig {
     critical_section::with(|cs| FILTER_CONFIG.borrow(cs).get())
 }
+
+// ── WiFi sniffer (moved from scanner.rs — references SCAN_CHANNEL) ──
+
+/// WiFi sniffer callback — called from ISR context by the esp-radio sniffer.
+///
+/// Parses raw 802.11 frames using `parse_wifi_frame()` (ieee80211 crate)
+/// and pushes matching events to the scan channel via `try_send` (non-blocking).
+fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
+    let rssi = pkt.rx_cntl.rssi as i8;
+    let channel = pkt.rx_cntl.channel as u8;
+    if let Some(event) = scanner::parse_wifi_frame(pkt.data, rssi, channel) {
+        let _ = SCAN_CHANNEL.try_send(ScanEvent::WiFi(event));
+    }
+}
+
+// FFI binding for WiFi channel control.
+// The symbol is linked via esp-radio's WiFi driver.
+unsafe extern "C" {
+    fn esp_wifi_set_channel(primary: u8, second: u32) -> i32;
+}
+
+/// WiFi channel hop task — cycles through 2.4 GHz channels to capture
+/// traffic across all channels.
+#[embassy_executor::task]
+async fn wifi_channel_hop_task() {
+    loop {
+        for &ch in scanner::WIFI_CHANNELS {
+            unsafe {
+                esp_wifi_set_channel(ch, 0);
+            }
+            Timer::after(Duration::from_millis(scanner::DEFAULT_DWELL_MS)).await;
+        }
+    }
+}
+
+// ── BLE scan event handler (moved from scanner.rs) ──────────────────
+
+/// EventHandler for BLE advertisement reports from trouble-host.
+///
+/// Receives advertisement reports from the BLE stack runner, parses them
+/// using `BleAdvParser`, and pushes results to the scan channel.
+/// Called synchronously from the runner — must not block.
+struct ScanEventHandler;
+
+impl EventHandler for ScanEventHandler {
+    fn on_adv_reports(&self, mut it: LeAdvReportsIter<'_>) {
+        while let Some(Ok(report)) = it.next() {
+            let addr_bytes: &[u8; 6] = report.addr.raw().try_into().unwrap();
+            let event = scanner::BleAdvParser::parse(addr_bytes, report.rssi, report.data);
+            let _ = SCAN_CHANNEL.try_send(ScanEvent::Ble(event));
+        }
+    }
+}
+
+// ── Entry point ──────────────────────────────────────────────────────
 
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) {
@@ -188,10 +276,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     .expect("WiFi init failed");
 
     let mut sniffer = wifi_interfaces.sniffer;
-    sniffer.set_receive_cb(scanner::wifi_sniffer_callback);
+    sniffer.set_receive_cb(wifi_sniffer_callback);
     sniffer.set_promiscuous_mode(true).expect("Promiscuous mode failed");
 
-    spawner.spawn(scanner::wifi_channel_hop_task()).unwrap();
+    spawner.spawn(wifi_channel_hop_task()).unwrap();
 
     log::info!("WiFi sniffer initialized in promiscuous mode");
 
@@ -214,7 +302,7 @@ async fn main(spawner: embassy_executor::Spawner) {
     log::info!("BLE radio initialized");
 
     // Create GATT server
-    let server = comm::AirHoundServer::new_with_config(
+    let server = AirHoundServer::new_with_config(
         GapConfig::Peripheral(PeripheralConfig {
             name: comm::BLE_ADV_NAME,
             appearance: &appearance::UNKNOWN,
@@ -339,7 +427,7 @@ async fn main(spawner: embassy_executor::Spawner) {
 /// and process incoming writes as host commands.
 async fn handle_gatt_connection<'s, P: PacketPool>(
     conn: &GattConnection<'_, 's, P>,
-    server: &'s comm::AirHoundServer<'_>,
+    server: &'s AirHoundServer<'_>,
 ) {
     let ble_rx = BLE_OUTPUT_CHANNEL.receiver();
     let mut line_reader = LineReader::new();
@@ -430,7 +518,7 @@ async fn filter_task() {
 async fn handle_wifi_event(
     wifi: &WiFiEvent,
     config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, protocol::MsgBuffer, 8>,
+    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
 ) {
     let input = WiFiScanInput {
         mac: &wifi.mac,
@@ -473,8 +561,8 @@ async fn handle_wifi_event(
         ts,
     };
 
-    let mut buf = protocol::MsgBuffer::new();
-    buf.resize_default(protocol::MAX_MSG_LEN).ok();
+    let mut buf = MsgBuffer::new();
+    buf.resize_default(MAX_MSG_LEN).ok();
     if let Some(len) = comm::serialize_message(&msg, &mut buf) {
         buf.truncate(len);
         let _ = output_tx.try_send(buf);
@@ -484,7 +572,7 @@ async fn handle_wifi_event(
 async fn handle_ble_event(
     ble: &BleEvent,
     config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, protocol::MsgBuffer, 8>,
+    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
 ) {
     let input = BleScanInput {
         mac: &ble.mac,
@@ -529,8 +617,8 @@ async fn handle_ble_event(
         ts,
     };
 
-    let mut buf = protocol::MsgBuffer::new();
-    buf.resize_default(protocol::MAX_MSG_LEN).ok();
+    let mut buf = MsgBuffer::new();
+    buf.resize_default(MAX_MSG_LEN).ok();
     if let Some(len) = comm::serialize_message(&msg, &mut buf) {
         buf.truncate(len);
         let _ = output_tx.try_send(buf);
@@ -575,8 +663,8 @@ async fn status_task() {
             version: VERSION,
         };
 
-        let mut buf = protocol::MsgBuffer::new();
-        buf.resize_default(protocol::MAX_MSG_LEN).ok();
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
         if let Some(len) = comm::serialize_message(&msg, &mut buf) {
             buf.truncate(len);
             let _ = OUTPUT_CHANNEL.try_send(buf);
@@ -593,12 +681,18 @@ async fn command_task() {
 
     loop {
         let cmd = cmd_rx.receive().await;
-        let is_status_request = matches!(cmd, protocol::HostCommand::GetStatus);
+        let is_status_request = matches!(cmd, HostCommand::GetStatus);
+
+        // Handle buzzer side effect (M5StickC only)
+        #[cfg(feature = "m5stickc")]
+        if let HostCommand::SetBuzzer { enabled } = &cmd {
+            BUZZER_ENABLED.store(*enabled, Ordering::Relaxed);
+        }
 
         let mut config = get_filter_config();
         let mut scanning = SCANNING.load(Ordering::Relaxed);
 
-        comm::handle_command(cmd, &mut config, &mut scanning);
+        let _ = comm::handle_command(&cmd, &mut config, &mut scanning);
 
         // Write back updated state
         critical_section::with(|cs| FILTER_CONFIG.borrow(cs).set(config));
@@ -616,8 +710,8 @@ async fn command_task() {
                 version: VERSION,
             };
 
-            let mut buf = protocol::MsgBuffer::new();
-            buf.resize_default(protocol::MAX_MSG_LEN).ok();
+            let mut buf = MsgBuffer::new();
+            buf.resize_default(MAX_MSG_LEN).ok();
             if let Some(len) = comm::serialize_message(&msg, &mut buf) {
                 buf.truncate(len);
                 let _ = output_tx.try_send(buf);
