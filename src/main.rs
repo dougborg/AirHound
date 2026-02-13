@@ -17,14 +17,18 @@ use esp_backtrace as _;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 mod board;
+#[cfg(feature = "m5stickc")]
+mod buzzer;
 mod comm;
 mod defaults;
+#[cfg(feature = "m5stickc")]
+mod display;
 mod filter;
 mod protocol;
 mod scanner;
 
-use core::cell::Cell;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -63,6 +67,22 @@ static SCANNING: AtomicBool = AtomicBool::new(true);
 
 /// Number of connected BLE clients
 static BLE_CLIENTS: AtomicU8 = AtomicU8::new(0);
+
+/// Match counters for display
+pub(crate) static WIFI_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
+pub(crate) static BLE_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Last match description for display
+pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
+    Mutex::new(RefCell::new(heapless::String::new()));
+
+/// Whether the buzzer is enabled (M5StickC only)
+#[cfg(feature = "m5stickc")]
+pub(crate) static BUZZER_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Signal channel for buzzer beeps (M5StickC only)
+#[cfg(feature = "m5stickc")]
+pub(crate) static BUZZER_SIGNAL: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 
 /// Get a snapshot of the current filter config.
 fn get_filter_config() -> FilterConfig {
@@ -105,6 +125,28 @@ async fn main(spawner: embassy_executor::Spawner) {
     spawner.spawn(output_serial_task()).unwrap();
     spawner.spawn(status_task()).unwrap();
     spawner.spawn(command_task()).unwrap();
+
+    // Display + buzzer tasks (M5StickC only)
+    #[cfg(feature = "m5stickc")]
+    {
+        spawner
+            .spawn(display::display_task(
+                peripherals.SPI2,
+                peripherals.GPIO15,
+                peripherals.GPIO13,
+                peripherals.GPIO5,
+                peripherals.GPIO14,
+                peripherals.GPIO12,
+                peripherals.GPIO27,
+            ))
+            .unwrap();
+        log::info!("Display task spawned");
+
+        spawner
+            .spawn(buzzer::buzzer_task(peripherals.LEDC, peripherals.GPIO2))
+            .unwrap();
+        log::info!("Buzzer task spawned");
+    }
 
     log::info!(
         "Build target: {}",
@@ -393,6 +435,21 @@ async fn handle_wifi_event(
         return;
     }
 
+    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // Update last match description for display
+    if let Some(first) = result.matches.first() {
+        critical_section::with(|cs| {
+            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
+            s.clear();
+            let _ = s.push_str(&first.detail);
+        });
+    }
+
+    // Trigger buzzer beep
+    #[cfg(feature = "m5stickc")]
+    let _ = BUZZER_SIGNAL.try_send(());
+
     let mut mac_str = MacString::new();
     format_mac(&wifi.mac, &mut mac_str);
 
@@ -433,6 +490,21 @@ async fn handle_ble_event(
     if !result.matched {
         return;
     }
+
+    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    // Update last match description for display
+    if let Some(first) = result.matches.first() {
+        critical_section::with(|cs| {
+            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
+            s.clear();
+            let _ = s.push_str(&first.detail);
+        });
+    }
+
+    // Trigger buzzer beep
+    #[cfg(feature = "m5stickc")]
+    let _ = BUZZER_SIGNAL.try_send(());
 
     let mut mac_str = MacString::new();
     format_mac(&ble.mac, &mut mac_str);

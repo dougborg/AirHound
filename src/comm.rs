@@ -124,6 +124,12 @@ pub fn handle_command(cmd: HostCommand, config: &mut FilterConfig, scanning: &mu
             log::info!("RSSI threshold set to {}", min_rssi);
             None
         }
+        HostCommand::SetBuzzer { enabled } => {
+            #[cfg(feature = "m5stickc")]
+            crate::BUZZER_ENABLED.store(enabled, core::sync::atomic::Ordering::Relaxed);
+            log::info!("Buzzer {}", if enabled { "enabled" } else { "disabled" });
+            None
+        }
     }
 }
 

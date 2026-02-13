@@ -101,6 +101,9 @@ pub enum HostCommand {
         /// Minimum RSSI (negative dBm value)
         min_rssi: i8,
     },
+    /// Enable or disable the buzzer (M5StickC only)
+    #[serde(rename = "set_buzzer")]
+    SetBuzzer { enabled: bool },
 }
 
 /// Firmware version string

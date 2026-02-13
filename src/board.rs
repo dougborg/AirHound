@@ -26,6 +26,25 @@ mod hw {
     pub const DISPLAY_HEIGHT: u16 = 240;
     pub const BUZZER_PIN: u8 = 2;
     pub const BOARD_NAME: &str = "m5stickc_plus2";
+
+    // Display SPI pins (ST7789V2) — reference only; peripherals are passed by type
+    #[allow(dead_code)]
+    pub const DISPLAY_MOSI: u8 = 15;
+    #[allow(dead_code)]
+    pub const DISPLAY_CLK: u8 = 13;
+    #[allow(dead_code)]
+    pub const DISPLAY_CS: u8 = 5;
+    #[allow(dead_code)]
+    pub const DISPLAY_DC: u8 = 14;
+    #[allow(dead_code)]
+    pub const DISPLAY_RST: u8 = 12;
+    #[allow(dead_code)]
+    pub const DISPLAY_BL: u8 = 27;
+    pub const DISPLAY_SPI_FREQ_MHZ: u32 = 40;
+
+    // Buzzer config
+    pub const BUZZER_FREQ_HZ: u32 = 2700;
+    pub const BUZZER_BEEP_MS: u64 = 150;
 }
 
 #[cfg(not(any(feature = "xiao", feature = "m5stickc")))]
