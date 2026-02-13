@@ -1,12 +1,6 @@
 FROM espressif/idf-rust:all_latest
 
-USER root
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libudev-dev \
-    && rm -rf /var/lib/apt/lists/*
-USER esp
-
-# Build tools used by CI and local dev (espflash ships in base image)
+# just is the only addition — espflash ships in the base image
 RUN cargo install just --locked
 
 # Ensure toolchain env is sourced for interactive shells
