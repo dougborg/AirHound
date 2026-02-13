@@ -44,6 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: espressif/idf-rust:${{ matrix.chip }}_latest
+      options: --user root
     strategy:
       matrix:
         include:
