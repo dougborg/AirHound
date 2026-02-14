@@ -8,7 +8,7 @@ AirHound is a `no_std` Rust firmware for ESP32 devices that acts as an RF wardri
 
 ## Build Commands
 
-The project builds inside Docker (no local ESP toolchain needed). Install `just` (`cargo install just`).
+The project builds inside Docker using chip-specific Espressif images (no local ESP toolchain needed). Install `just` (`cargo install just`).
 
 ```bash
 just docker-build            # Both targets
@@ -24,7 +24,15 @@ espflash flash --chip esp32s3 target/xtensa-esp32s3-none-elf/release/airhound
 espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/airhound
 ```
 
-There are no tests or linter configured. The project uses `build-std = ["core", "alloc"]` (set in `.cargo/config.toml`).
+Tests and formatting:
+```bash
+just docker-test             # Run unit tests (in container)
+just test                    # Run unit tests (requires nightly on host)
+cargo fmt --check            # Check formatting (requires nightly on host)
+just setup-hooks             # Configure git pre-commit + commit-msg hooks
+```
+
+The project uses `build-std = ["core", "alloc"]` (passed via justfile, not `.cargo/config.toml`). Commits must follow [Conventional Commits](https://www.conventionalcommits.org/) format.
 
 ## Feature Flags
 
@@ -46,17 +54,24 @@ Pipeline: `WiFi Sniffer / BLE Scanner → SCAN_CHANNEL → filter_task → OUTPU
 
 Shared state uses atomics (`SCANNING`, `BLE_CLIENTS`, `WIFI_MATCH_COUNT`, `BLE_MATCH_COUNT`, `BUZZER_ENABLED`) and `critical_section::Mutex<Cell<T>>` for larger types (`FILTER_CONFIG`, `LAST_MATCH`).
 
+### Crate Structure
+
+The project is split into a library crate (`src/lib.rs`) and a binary crate (`src/main.rs`). The library contains all pure-logic modules testable on host (`cargo test --lib --no-default-features`). The binary contains ESP-specific code (ISR callbacks, embassy tasks, hardware init). Library uses `#![cfg_attr(not(test), no_std)]` — `no_std` for firmware, `std` for tests.
+
 ### Module Responsibilities
 
-- **`main.rs`** — Entry point, heap setup, peripheral init, task spawning, filter task, BLE GATT server task, serial output task, command handler. Owns all static channels and shared state.
-- **`scanner.rs`** — WiFi/BLE event types, 802.11 frame parsing (via `ieee80211` crate), BLE advertisement parsing (`BleAdvParser`), WiFi channel hop loop, BLE scan task.
+**Library modules** (`src/lib.rs` re-exports):
+- **`scanner.rs`** — WiFi/BLE event types, 802.11 frame parsing (`parse_wifi_frame()`), BLE advertisement parsing (`BleAdvParser`). Pure functions — ISR callbacks and channel hop task live in `main.rs`.
 - **`filter.rs`** — Stateless filter engine. `filter_wifi()` and `filter_ble()` evaluate inputs against compiled-in defaults plus runtime `FilterConfig`. Returns up to 4 `MatchReason`s per result.
 - **`defaults.rs`** — All compiled-in filter data: MAC OUI prefixes, SSID patterns, BLE names, service UUIDs, manufacturer IDs.
 - **`protocol.rs`** — Serde-based NDJSON message types using `heapless` strings. `DeviceMessage` (wifi/ble/status) and `HostCommand` (start/stop/status/set_rssi/set_buzzer).
-- **`comm.rs`** — BLE GATT service definition (trouble-host proc macros), channel type aliases, JSON serialization/deserialization, `LineReader` NDJSON accumulator, command handler.
-- **`board.rs`** — Compile-time hardware constants per board (pin assignments, capabilities). Constants are `#[allow(dead_code)]` reference documentation; peripherals are passed by type.
-- **`display.rs`** (m5stickc only) — ST7789V2 display driver. Uses a `Screen` renderer struct for flicker-free text layout (MonoTextStyle with background_color, rows padded to full width). `row!` and `centered!` macros for declarative screen definitions.
-- **`buzzer.rs`** (m5stickc only) — LEDC-driven passive buzzer. Waits on `BUZZER_SIGNAL`, beeps at 2700 Hz for 150ms.
+- **`comm.rs`** — JSON serialization/deserialization, `LineReader` NDJSON accumulator, command handler. BLE GATT service definition and channel type aliases live in `main.rs`.
+- **`board.rs`** — Compile-time hardware constants per board (pin assignments, capabilities).
+
+**Binary modules** (`src/main.rs`):
+- Entry point, heap setup, peripheral init, task spawning, WiFi sniffer callback, channel hop task, BLE scan task, BLE GATT server, serial output task. Owns all static channels, shared state, and ESP-specific types.
+- **`display.rs`** (m5stickc only) — ST7789V2 display driver. `Screen` renderer with `row!` and `centered!` macros.
+- **`buzzer.rs`** (m5stickc only) — LEDC-driven passive buzzer.
 
 ## Key Constraints
 
@@ -78,3 +93,5 @@ Shared state uses atomics (`SCANNING`, `BLE_CLIENTS`, `WIFI_MATCH_COUNT`, `BLE_M
 ## Dependencies
 
 All `esp-*` crates are from **git main branch** (`https://github.com/esp-rs/esp-hal.git`). Docker named volumes cache the cargo registry/git — run `just docker-clean` after switching dependency sources. `trouble-host 0.6.0` is the BLE host stack.
+
+Docker recipes use chip-specific images (`espressif/idf-rust:esp32s3_latest`, `esp32_latest`) for builds. The devcontainer (`.devcontainer/`) uses `all_latest` for interactive use (`just docker-shell`) and VS Code / Codespaces.

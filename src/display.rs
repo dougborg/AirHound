@@ -5,7 +5,6 @@
 /// to lay out text rows flicker-free: each row is padded to full display
 /// width and drawn with an explicit `background_color`, so every pixel
 /// is overwritten in a single pass with no intermediate blank frame.
-
 use core::sync::atomic::Ordering;
 
 use embedded_graphics::mono_font::ascii::FONT_6X10;
@@ -70,7 +69,11 @@ struct Screen<'a, D> {
 
 impl<'a, D: DrawTarget<Color = Rgb565>> Screen<'a, D> {
     fn new(display: &'a mut D) -> Self {
-        Self { display, y: 0, buf: heapless::String::new() }
+        Self {
+            display,
+            y: 0,
+            buf: heapless::String::new(),
+        }
     }
 
     /// Clear the entire display to BG and reset cursor to top.
@@ -113,14 +116,23 @@ impl<'a, D: DrawTarget<Color = Rgb565>> Screen<'a, D> {
     /// Draw a header row with a right-aligned indicator. Advances cursor.
     /// The header background gap (between text cells and row edges) must
     /// be painted once at startup via [`fill_band`].
-    fn header(&mut self, title_args: core::fmt::Arguments<'_>, indicator: &str, indicator_color: Rgb565) {
+    fn header(
+        &mut self,
+        title_args: core::fmt::Arguments<'_>,
+        indicator: &str,
+        indicator_color: Rgb565,
+    ) {
         self.buf.clear();
         let _ = core::fmt::write(&mut self.buf, title_args);
         self.emit(FG, HEADER_BG, 0);
 
         let x = W - indicator.len() as i32 * 6 - 2;
-        let _ = Text::new(indicator, Point::new(x, self.y + 10),
-            Self::text_style(indicator_color, HEADER_BG)).draw(self.display);
+        let _ = Text::new(
+            indicator,
+            Point::new(x, self.y + 10),
+            Self::text_style(indicator_color, HEADER_BG),
+        )
+        .draw(self.display);
         self.y += ROW_H;
     }
 
@@ -141,8 +153,12 @@ impl<'a, D: DrawTarget<Color = Rgb565>> Screen<'a, D> {
     }
 
     fn emit(&mut self, fg: Rgb565, bg: Rgb565, x: i32) {
-        let _ = Text::new(&self.buf, Point::new(x, self.y + 10),
-            Self::text_style(fg, bg)).draw(self.display);
+        let _ = Text::new(
+            &self.buf,
+            Point::new(x, self.y + 10),
+            Self::text_style(fg, bg),
+        )
+        .draw(self.display);
     }
 
     fn text_style(fg: Rgb565, bg: Rgb565) -> MonoTextStyle<'static, Rgb565> {
@@ -190,9 +206,13 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         if scanning { Rgb565::GREEN } else { Rgb565::RED },
     );
 
-    row!(s, FG, " WiFi: {}    BLE: {}",
+    row!(
+        s,
+        FG,
+        " WiFi: {}    BLE: {}",
         crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
-        crate::BLE_MATCH_COUNT.load(Ordering::Relaxed));
+        crate::BLE_MATCH_COUNT.load(Ordering::Relaxed)
+    );
 
     let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
     if !last.is_empty() {
@@ -205,13 +225,29 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
 
     let clients = crate::BLE_CLIENTS.load(Ordering::Relaxed);
     let up = (Instant::now().as_millis() / 1000) as u32;
-    row!(s, DIM, " BLE: {} client{}  Up: {:02}:{:02}:{:02}",
-        clients, if clients == 1 { "" } else { "s" },
-        up / 3600, (up % 3600) / 60, up % 60);
+    row!(
+        s,
+        DIM,
+        " BLE: {} client{}  Up: {:02}:{:02}:{:02}",
+        clients,
+        if clients == 1 { "" } else { "s" },
+        up / 3600,
+        (up % 3600) / 60,
+        up % 60
+    );
 
-    let buzzer = if crate::BUZZER_ENABLED.load(Ordering::Relaxed) { "ON" } else { "OFF" };
-    row!(s, DIM, " Heap: {}K free  Buzzer: {}",
-        esp_alloc::HEAP.free() / 1024, buzzer);
+    let buzzer = if crate::BUZZER_ENABLED.load(Ordering::Relaxed) {
+        "ON"
+    } else {
+        "OFF"
+    };
+    row!(
+        s,
+        DIM,
+        " Heap: {}K free  Buzzer: {}",
+        esp_alloc::HEAP.free() / 1024,
+        buzzer
+    );
 }
 
 // ── Display task (hardware init + render loop) ────────────────────────

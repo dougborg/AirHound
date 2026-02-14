@@ -1,32 +1,15 @@
-/// Communication layer — BLE GATT server and serial NDJSON transport.
+/// Communication helpers — NDJSON serialization, command parsing, line reader.
 ///
-/// The device streams filtered scan results as newline-delimited JSON
-/// over both BLE notifications and serial. Commands can be received
-/// from either transport.
-
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
-
-use trouble_host::prelude::*;
-
+/// Pure protocol logic with no hardware or OS dependencies.
+/// BLE GATT definitions and channel types are in the firmware binary (`main.rs`).
 use crate::filter::FilterConfig;
-use crate::protocol::{DeviceMessage, HostCommand, MsgBuffer, MAX_MSG_LEN};
-
-/// Output channel for filtered scan results to be sent to companion
-pub type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
-
-/// BLE output channel — receives cloned messages from the serial output task
-/// for forwarding as BLE GATT notifications.
-pub type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
-
-/// Command channel for host commands received via BLE or serial
-pub type CommandChannel = Channel<CriticalSectionRawMutex, HostCommand, 4>;
+use crate::protocol::{DeviceMessage, HostCommand, RawCommand, MAX_MSG_LEN};
 
 /// BLE GATT service UUIDs for AirHound.
 ///
 /// These duplicate the string literals in the `#[gatt_service]` and `#[characteristic]`
-/// proc macro attributes below — Rust proc macros require string literals, so we can't
-/// reference these constants there. Kept here as the canonical source of truth.
+/// proc macro attributes in the firmware binary — Rust proc macros require string literals,
+/// so we can't reference these constants there. Kept here as the canonical source of truth.
 #[allow(dead_code)]
 pub mod ble_uuids {
     /// AirHound primary service UUID
@@ -43,63 +26,55 @@ pub const BLE_ADV_NAME: &str = "AirHound";
 /// Maximum BLE notification payload (MTU-3)
 pub const BLE_MAX_NOTIFY: usize = 20;
 
-// ── GATT server definition (trouble-host proc macros) ──────────────────
-
-/// AirHound BLE GATT service.
-///
-/// TX: scan result notifications (device → companion)
-/// RX: host command writes (companion → device)
-#[gatt_service(uuid = "4a690001-1c4a-4e3c-b5d8-f47b2e1c0a9d")]
-pub struct AirHoundGattService {
-    /// TX — filtered scan results, notify-only.
-    /// Messages are chunked into BLE_MAX_NOTIFY-sized pieces.
-    /// The companion accumulates until it sees '\n' (NDJSON delimiter).
-    #[characteristic(uuid = "4a690002-1c4a-4e3c-b5d8-f47b2e1c0a9d", notify)]
-    pub tx: [u8; 20],
-
-    /// RX — host commands, write-only.
-    /// Companion sends NDJSON commands which are accumulated via LineReader.
-    #[characteristic(uuid = "4a690003-1c4a-4e3c-b5d8-f47b2e1c0a9d", write)]
-    pub rx: [u8; 20],
-}
-
-/// Top-level AirHound GATT server.
-#[gatt_server]
-pub struct AirHoundServer {
-    pub airhound_service: AirHoundGattService,
-}
-
 // ── Serialization helpers ──────────────────────────────────────────────
 
 /// Serialize a DeviceMessage to JSON bytes and write to the output buffer.
 /// Returns the number of bytes written, or None if serialization failed.
 pub fn serialize_message(msg: &DeviceMessage, buf: &mut [u8]) -> Option<usize> {
     match serde_json_core::to_slice(msg, buf) {
-        Ok(len) => {
+        Ok(len) if len < buf.len() => {
             // Append newline for NDJSON
-            if len < buf.len() {
-                buf[len] = b'\n';
-                Some(len + 1)
-            } else {
-                Some(len)
-            }
+            buf[len] = b'\n';
+            Some(len + 1)
         }
-        Err(_) => None,
+        _ => None,
     }
 }
 
 /// Deserialize a HostCommand from a JSON byte slice.
+///
+/// Uses [`RawCommand`] as an intermediate because `serde_json_core` does not
+/// support internally tagged enums (no `deserialize_any`).
 pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
     // Strip trailing newline/whitespace
     let trimmed = trim_trailing_whitespace(data);
     if trimmed.is_empty() {
         return None;
     }
-    serde_json_core::from_slice::<HostCommand>(trimmed).ok().map(|(cmd, _)| cmd)
+    let (raw, _) = serde_json_core::from_slice::<RawCommand>(trimmed).ok()?;
+    match raw.cmd.as_str() {
+        "start" => Some(HostCommand::Start),
+        "stop" => Some(HostCommand::Stop),
+        "status" => Some(HostCommand::GetStatus),
+        "set_rssi" => raw
+            .min_rssi
+            .map(|min_rssi| HostCommand::SetRssi { min_rssi }),
+        "set_buzzer" => raw
+            .enabled
+            .map(|enabled| HostCommand::SetBuzzer { enabled }),
+        _ => None,
+    }
 }
 
 /// Process a received host command and update state accordingly.
-pub fn handle_command(cmd: HostCommand, config: &mut FilterConfig, scanning: &mut bool) -> Option<DeviceMessage<'static>> {
+///
+/// Updates `config` and `scanning` as directed. Returns `Some(enabled)` for
+/// `SetBuzzer` commands so the caller can apply hardware-specific side effects.
+pub fn handle_command(
+    cmd: &HostCommand,
+    config: &mut FilterConfig,
+    scanning: &mut bool,
+) -> Option<bool> {
     match cmd {
         HostCommand::Start => {
             *scanning = true;
@@ -116,15 +91,13 @@ pub fn handle_command(cmd: HostCommand, config: &mut FilterConfig, scanning: &mu
             None
         }
         HostCommand::SetRssi { min_rssi } => {
-            config.min_rssi = min_rssi;
+            config.min_rssi = *min_rssi;
             log::info!("RSSI threshold set to {}", min_rssi);
             None
         }
         HostCommand::SetBuzzer { enabled } => {
-            #[cfg(feature = "m5stickc")]
-            crate::BUZZER_ENABLED.store(enabled, core::sync::atomic::Ordering::Relaxed);
-            log::info!("Buzzer {}", if enabled { "enabled" } else { "disabled" });
-            None
+            log::info!("Buzzer {}", if *enabled { "enabled" } else { "disabled" });
+            Some(*enabled)
         }
     }
 }
@@ -171,8 +144,287 @@ impl LineReader {
 
 fn trim_trailing_whitespace(data: &[u8]) -> &[u8] {
     let mut end = data.len();
-    while end > 0 && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r' || data[end - 1] == b'\t') {
+    while end > 0
+        && (data[end - 1] == b' '
+            || data[end - 1] == b'\n'
+            || data[end - 1] == b'\r'
+            || data[end - 1] == b'\t')
+    {
         end -= 1;
     }
     &data[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{
+        DeviceMessage, HostCommand, MacString, MatchReason, NameString, VERSION,
+    };
+    use heapless::Vec;
+
+    // ── serialize_message tests ─────────────────────────────────────
+
+    #[test]
+    fn serialize_produces_ndjson() {
+        let msg = DeviceMessage::Status {
+            scanning: true,
+            uptime: 60,
+            heap_free: 32000,
+            ble_clients: 0,
+            board: "test",
+            version: VERSION,
+        };
+        let mut buf = [0u8; 512];
+        let len = serialize_message(&msg, &mut buf).unwrap();
+        assert!(len > 0);
+        // Must end with newline (NDJSON)
+        assert_eq!(buf[len - 1], b'\n');
+        // Must be valid JSON before the newline
+        let json = core::str::from_utf8(&buf[..len - 1]).unwrap();
+        assert!(json.starts_with('{'));
+        assert!(json.ends_with('}'));
+    }
+
+    #[test]
+    fn serialize_returns_none_when_buffer_too_small() {
+        let msg = DeviceMessage::Status {
+            scanning: true,
+            uptime: 60,
+            heap_free: 32000,
+            ble_clients: 0,
+            board: "test",
+            version: VERSION,
+        };
+        // Buffer too small for JSON + newline
+        let mut buf = [0u8; 10];
+        assert!(serialize_message(&msg, &mut buf).is_none());
+    }
+
+    #[test]
+    fn serialize_wifi_scan_is_valid_json() {
+        let mac = MacString::try_from("AA:BB:CC:DD:EE:FF").unwrap();
+        let ssid = NameString::try_from("TestSSID").unwrap();
+        let matches = Vec::<MatchReason, 4>::new();
+        let msg = DeviceMessage::WiFiScan {
+            mac: &mac,
+            ssid: &ssid,
+            rssi: -50,
+            ch: 1,
+            frame: "beacon",
+            matches: &matches,
+            ts: 100,
+        };
+        let mut buf = [0u8; 512];
+        let len = serialize_message(&msg, &mut buf).unwrap();
+        let json = core::str::from_utf8(&buf[..len - 1]).unwrap();
+        assert!(json.contains("\"type\":\"wifi\""));
+    }
+
+    // ── parse_command tests ─────────────────────────────────────────
+
+    #[test]
+    fn parse_start_command() {
+        let cmd = parse_command(br#"{"cmd":"start"}"#).unwrap();
+        assert!(matches!(cmd, HostCommand::Start));
+    }
+
+    #[test]
+    fn parse_stop_command() {
+        let cmd = parse_command(br#"{"cmd":"stop"}"#).unwrap();
+        assert!(matches!(cmd, HostCommand::Stop));
+    }
+
+    #[test]
+    fn parse_status_command() {
+        let cmd = parse_command(br#"{"cmd":"status"}"#).unwrap();
+        assert!(matches!(cmd, HostCommand::GetStatus));
+    }
+
+    #[test]
+    fn parse_set_rssi_command() {
+        let cmd = parse_command(br#"{"cmd":"set_rssi","min_rssi":-80}"#).unwrap();
+        match cmd {
+            HostCommand::SetRssi { min_rssi } => assert_eq!(min_rssi, -80),
+            _ => panic!("Expected SetRssi"),
+        }
+    }
+
+    #[test]
+    fn parse_set_buzzer_command() {
+        let cmd = parse_command(br#"{"cmd":"set_buzzer","enabled":true}"#).unwrap();
+        match cmd {
+            HostCommand::SetBuzzer { enabled } => assert!(enabled),
+            _ => panic!("Expected SetBuzzer"),
+        }
+    }
+
+    #[test]
+    fn parse_command_strips_trailing_whitespace() {
+        let cmd = parse_command(b"{\"cmd\":\"start\"}\n  \r\n").unwrap();
+        assert!(matches!(cmd, HostCommand::Start));
+    }
+
+    #[test]
+    fn parse_command_rejects_malformed_json() {
+        assert!(parse_command(b"not json at all").is_none());
+    }
+
+    #[test]
+    fn parse_command_rejects_empty_input() {
+        assert!(parse_command(b"").is_none());
+        assert!(parse_command(b"   \n").is_none());
+    }
+
+    #[test]
+    fn parse_command_rejects_unknown_command() {
+        assert!(parse_command(br#"{"cmd":"restart"}"#).is_none());
+        assert!(parse_command(br#"{"cmd":"reboot"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_set_rssi_missing_field_returns_none() {
+        assert!(parse_command(br#"{"cmd":"set_rssi"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_set_buzzer_missing_field_returns_none() {
+        assert!(parse_command(br#"{"cmd":"set_buzzer"}"#).is_none());
+    }
+
+    #[test]
+    fn round_trip_parse_then_handle() {
+        let cmd = parse_command(br#"{"cmd":"set_rssi","min_rssi":-75}"#).unwrap();
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        handle_command(&cmd, &mut config, &mut scanning);
+        assert_eq!(config.min_rssi, -75);
+        assert!(scanning); // set_rssi should not change scanning state
+    }
+
+    // ── handle_command tests ────────────────────────────────────────
+
+    #[test]
+    fn handle_start_sets_scanning_true() {
+        let cmd = HostCommand::Start;
+        let mut config = FilterConfig::new();
+        let mut scanning = false;
+        let result = handle_command(&cmd, &mut config, &mut scanning);
+        assert!(scanning);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn handle_stop_sets_scanning_false() {
+        let cmd = HostCommand::Stop;
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        let result = handle_command(&cmd, &mut config, &mut scanning);
+        assert!(!scanning);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn handle_set_rssi_updates_config() {
+        let cmd = HostCommand::SetRssi { min_rssi: -75 };
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        handle_command(&cmd, &mut config, &mut scanning);
+        assert_eq!(config.min_rssi, -75);
+    }
+
+    #[test]
+    fn handle_set_buzzer_returns_state() {
+        let cmd = HostCommand::SetBuzzer { enabled: false };
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        let result = handle_command(&cmd, &mut config, &mut scanning);
+        assert_eq!(result, Some(false));
+
+        let cmd = HostCommand::SetBuzzer { enabled: true };
+        let result = handle_command(&cmd, &mut config, &mut scanning);
+        assert_eq!(result, Some(true));
+    }
+
+    #[test]
+    fn handle_get_status_returns_none() {
+        let cmd = HostCommand::GetStatus;
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        let result = handle_command(&cmd, &mut config, &mut scanning);
+        assert!(result.is_none());
+        // Should not modify state
+        assert!(scanning);
+    }
+
+    // ── LineReader tests ────────────────────────────────────────────
+
+    #[test]
+    fn line_reader_yields_on_newline() {
+        let mut reader = LineReader::new();
+        assert!(reader.feed(b'h').is_none());
+        assert!(reader.feed(b'i').is_none());
+        let line = reader.feed(b'\n').unwrap();
+        assert_eq!(line, b"hi");
+    }
+
+    #[test]
+    fn line_reader_yields_on_carriage_return() {
+        let mut reader = LineReader::new();
+        reader.feed(b'o');
+        reader.feed(b'k');
+        let line = reader.feed(b'\r').unwrap();
+        assert_eq!(line, b"ok");
+    }
+
+    #[test]
+    fn line_reader_skips_empty_lines() {
+        let mut reader = LineReader::new();
+        assert!(reader.feed(b'\n').is_none());
+        assert!(reader.feed(b'\r').is_none());
+        assert!(reader.feed(b'\n').is_none());
+    }
+
+    #[test]
+    fn line_reader_accumulates_json() {
+        let mut reader = LineReader::new();
+        let json = br#"{"cmd":"start"}"#;
+        for &byte in &json[..json.len() - 1] {
+            assert!(reader.feed(byte).is_none());
+        }
+        // Feed last byte
+        assert!(reader.feed(json[json.len() - 1]).is_none());
+        // Feed newline to yield
+        let line = reader.feed(b'\n').unwrap();
+        assert_eq!(line, &json[..]);
+    }
+
+    #[test]
+    fn line_reader_handles_overflow() {
+        let mut reader = LineReader::new();
+        // Fill the buffer completely (MAX_MSG_LEN = 512 bytes)
+        for i in 0..MAX_MSG_LEN {
+            reader.feed(b'A' + (i % 26) as u8);
+        }
+        // Next byte overflows — should discard
+        assert!(reader.feed(b'X').is_none());
+        // After overflow reset, newline on empty buffer yields nothing
+        assert!(reader.feed(b'\n').is_none());
+        // But new data works
+        reader.feed(b'o');
+        reader.feed(b'k');
+        let line = reader.feed(b'\n').unwrap();
+        assert_eq!(line, b"ok");
+    }
+
+    #[test]
+    fn line_reader_multiple_lines() {
+        let mut reader = LineReader::new();
+        for &b in b"line1\nline2\n" {
+            if let Some(line) = reader.feed(b) {
+                let s = core::str::from_utf8(line).unwrap();
+                assert!(s == "line1" || s == "line2");
+            }
+        }
+    }
 }

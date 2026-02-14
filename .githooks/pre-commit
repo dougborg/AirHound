@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+# 1. Check for accidental secrets (fast, run first)
+if git diff --cached --name-only | grep -qE '\.(env|pem|key)$'; then
+    echo "ERROR: Potentially sensitive file staged. Remove before committing."
+    exit 1
+fi
+
+# 2. Auto-format all staged .rs files and re-stage them
+STAGED_RS=$(git diff --cached --name-only --diff-filter=d | grep '\.rs$' || true)
+if [ -n "$STAGED_RS" ]; then
+    echo "$STAGED_RS" | RUSTUP_TOOLCHAIN=nightly xargs cargo fmt --
+    echo "$STAGED_RS" | xargs git add
+fi
+
+# 3. Run unit tests (can't auto-fix, must pass)
+cargo test --lib --no-default-features --quiet

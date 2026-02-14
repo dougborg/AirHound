@@ -10,7 +10,6 @@
 pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     // === Flock Safety ===
     ([0xB4, 0x1E, 0x52], "Flock Safety"),
-
     // === Silicon Labs OUI (FlockSquawk / flock-you) ===
     ([0x58, 0x8E, 0x81], "Silicon Labs"),
     ([0xCC, 0xCC, 0xCC], "Silicon Labs"),
@@ -32,16 +31,13 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0x9C, 0x2F, 0x9D], "Silicon Labs"),
     ([0x94, 0x08, 0x53], "Silicon Labs"),
     ([0xE4, 0xAA, 0xEA], "Silicon Labs"),
-
     // === Avigilon Alta ===
     ([0x70, 0x1A, 0xD5], "Avigilon Alta"),
-
     // === Axis Communications AB ===
     ([0x00, 0x40, 0x8C], "Axis Communications"),
     ([0xAC, 0xCC, 0x8E], "Axis Communications"),
     ([0xB8, 0xA4, 0x4F], "Axis Communications"),
     ([0xE8, 0x27, 0x25], "Axis Communications"),
-
     // === China Dragon Technology ===
     ([0x1C, 0x79, 0x2D], "China Dragon Technology"),
     ([0x3C, 0x3B, 0xAD], "China Dragon Technology"),
@@ -71,24 +67,19 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0xD0, 0xA4, 0x6F], "China Dragon Technology"),
     ([0xE0, 0x51, 0xD8], "China Dragon Technology"),
     ([0xE0, 0x75, 0x26], "China Dragon Technology"),
-
     // === FLIR ===
     ([0x00, 0x13, 0x56], "FLIR Radiation"),
     ([0x00, 0x40, 0x7F], "FLIR Systems"),
     ([0x00, 0x1B, 0xD8], "FLIR Systems"),
-
     // === GeoVision ===
     ([0x00, 0x13, 0xE2], "GeoVision"),
-
     // === Hanwha Vision ===
     ([0x44, 0xB4, 0x23], "Hanwha Vision"),
     ([0x8C, 0x1D, 0x55], "Hanwha Vision"),
     ([0xE4, 0x30, 0x22], "Hanwha Vision"),
-
     // === March Networks ===
     ([0x00, 0x10, 0xBE], "March Networks"),
     ([0x00, 0x12, 0x81], "March Networks"),
-
     // === Meta Platforms ===
     ([0x48, 0x05, 0x60], "Meta Platforms"),
     ([0x50, 0x99, 0x03], "Meta Platforms"),
@@ -102,10 +93,8 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0xCC, 0xA1, 0x74], "Meta Platforms"),
     ([0xD0, 0xB3, 0xC2], "Meta Platforms"),
     ([0xD4, 0xD6, 0x59], "Meta Platforms"),
-
     // === Mobotix ===
     ([0x00, 0x03, 0xC5], "Mobotix"),
-
     // === Shenzhen Bilian Electronic ===
     ([0x08, 0xEA, 0x40], "Shenzhen Bilian"),
     ([0x0C, 0x8C, 0x24], "Shenzhen Bilian"),
@@ -145,7 +134,6 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0x3C, 0x33, 0x00], "Shenzhen Bilian"),
     ([0x44, 0x33, 0x4C], "Shenzhen Bilian"),
     ([0xAC, 0xA2, 0x13], "Shenzhen Bilian"),
-
     // === Sunell Electronics ===
     ([0x00, 0x1C, 0x27], "Sunell Electronics"),
 ];
@@ -177,12 +165,7 @@ pub static SSID_KEYWORDS: &[&str] = &["flock", "penguin", "pigvision"];
 pub static WIFI_NAME_KEYWORDS: &[&str] = &["flock"];
 
 /// BLE device name patterns (case-insensitive substring match).
-pub static BLE_NAME_PATTERNS: &[&str] = &[
-    "Flock",
-    "Penguin",
-    "FS Ext Battery",
-    "Pigvision",
-];
+pub static BLE_NAME_PATTERNS: &[&str] = &["Flock", "Penguin", "FS Ext Battery", "Pigvision"];
 
 /// Raven custom BLE service UUIDs (16-bit short IDs).
 /// Full UUID: 0000XXXX-0000-1000-8000-00805f9b34fb

@@ -1,19 +1,15 @@
-/// WiFi sniffer and BLE scanning engine.
+/// WiFi and BLE scan event types and parsers.
 ///
-/// WiFi: Promiscuous mode with channel hopping, ieee80211 crate for frame parsing.
-/// BLE: trouble-host Scanner with EventHandler for advertisement reports.
+/// Pure parsing logic with no hardware or OS dependencies.
+/// WiFi: ieee80211 crate for 802.11 frame parsing.
+/// BLE: AD structure parser for advertisement data.
 ///
-/// Both scanners send parsed results through async channels to the filter task.
-
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
+/// Hardware-specific code (sniffer callback, channel hopping, BLE event handler)
+/// lives in the firmware binary (`main.rs`).
 use heapless::Vec;
 
 use ieee80211::match_frames;
 use ieee80211::mgmt_frame::{BeaconFrame, ProbeRequestFrame, ProbeResponseFrame};
-
-use trouble_host::prelude::*;
 
 /// WiFi channels to scan (2.4 GHz only — ESP32/ESP32-S3 promiscuous mode is 2.4 GHz)
 pub const WIFI_CHANNELS: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
@@ -34,7 +30,7 @@ pub struct WiFiEvent {
 }
 
 /// WiFi frame type classification
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameType {
     Beacon,
     ProbeRequest,
@@ -73,9 +69,6 @@ pub enum ScanEvent {
     WiFi(WiFiEvent),
     Ble(BleEvent),
 }
-
-/// Async channel type for scan events
-pub type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
 
 /// Parse a raw 802.11 frame into a WiFiEvent using the ieee80211 crate.
 ///
@@ -215,51 +208,207 @@ impl BleAdvParser {
     }
 }
 
-/// EventHandler for BLE advertisement reports from trouble-host.
-///
-/// Receives advertisement reports from the BLE stack runner, parses them
-/// using `BleAdvParser`, and pushes results to the scan channel.
-/// Called synchronously from the runner — must not block.
-pub struct ScanEventHandler;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl EventHandler for ScanEventHandler {
-    fn on_adv_reports(&self, mut it: LeAdvReportsIter<'_>) {
-        while let Some(Ok(report)) = it.next() {
-            let addr_bytes: &[u8; 6] = report.addr.raw().try_into().unwrap();
-            let event = BleAdvParser::parse(&addr_bytes, report.rssi, report.data);
-            let _ = crate::SCAN_CHANNEL.try_send(ScanEvent::Ble(event));
-        }
+    // ── FrameType tests ─────────────────────────────────────────────
+
+    #[test]
+    fn frame_type_as_str() {
+        assert_eq!(FrameType::Beacon.as_str(), "beacon");
+        assert_eq!(FrameType::ProbeRequest.as_str(), "probe_req");
+        assert_eq!(FrameType::ProbeResponse.as_str(), "probe_resp");
+        assert_eq!(FrameType::Data.as_str(), "data");
+        assert_eq!(FrameType::Other.as_str(), "other");
     }
-}
 
-/// WiFi sniffer callback — called from ISR context by the esp-radio sniffer.
-///
-/// Parses raw 802.11 frames using `parse_wifi_frame()` (ieee80211 crate)
-/// and pushes matching events to the scan channel via `try_send` (non-blocking).
-pub fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
-    let rssi = pkt.rx_cntl.rssi as i8;
-    let channel = pkt.rx_cntl.channel as u8;
-    if let Some(event) = parse_wifi_frame(pkt.data, rssi, channel) {
-        let _ = crate::SCAN_CHANNEL.try_send(ScanEvent::WiFi(event));
-    }
-}
+    // ── parse_wifi_frame tests ──────────────────────────────────────
 
-// FFI binding for WiFi channel control.
-// The symbol is linked via esp-radio's WiFi driver.
-unsafe extern "C" {
-    fn esp_wifi_set_channel(primary: u8, second: u32) -> i32;
-}
-
-/// WiFi channel hop task — cycles through 2.4 GHz channels to capture
-/// traffic across all channels.
-#[embassy_executor::task]
-pub async fn wifi_channel_hop_task() {
-    loop {
-        for &ch in WIFI_CHANNELS {
-            unsafe {
-                esp_wifi_set_channel(ch, 0);
-            }
-            Timer::after(Duration::from_millis(DEFAULT_DWELL_MS)).await;
+    // Minimal valid 802.11 beacon frame for testing.
+    // Frame control (2 bytes): 0x80, 0x00 = Beacon
+    // Duration (2): 0x00, 0x00
+    // Addr1/Dest (6): broadcast FF:FF:FF:FF:FF:FF
+    // Addr2/Source (6): B4:1E:52:01:02:03
+    // Addr3/BSSID (6): B4:1E:52:01:02:03
+    // Seq ctrl (2): 0x00, 0x00
+    // Timestamp (8): zeros
+    // Beacon interval (2): 0x64, 0x00
+    // Capability (2): 0x01, 0x00
+    // SSID IE: tag=0, len=4, "Test"
+    fn make_beacon_frame(ssid: &str, src_mac: &[u8; 6]) -> Vec<u8, 128> {
+        let mut frame = Vec::new();
+        // Frame control: beacon
+        let _ = frame.push(0x80);
+        let _ = frame.push(0x00);
+        // Duration
+        let _ = frame.push(0x00);
+        let _ = frame.push(0x00);
+        // Addr1 (destination): broadcast
+        for _ in 0..6 {
+            let _ = frame.push(0xFF);
         }
+        // Addr2 (source/transmitter)
+        for &b in src_mac {
+            let _ = frame.push(b);
+        }
+        // Addr3 (BSSID)
+        for &b in src_mac {
+            let _ = frame.push(b);
+        }
+        // Sequence control
+        let _ = frame.push(0x00);
+        let _ = frame.push(0x00);
+        // Timestamp (8 bytes)
+        for _ in 0..8 {
+            let _ = frame.push(0x00);
+        }
+        // Beacon interval
+        let _ = frame.push(0x64);
+        let _ = frame.push(0x00);
+        // Capability info
+        let _ = frame.push(0x01);
+        let _ = frame.push(0x00);
+        // SSID IE
+        let _ = frame.push(0x00); // tag: SSID
+        let _ = frame.push(ssid.len() as u8);
+        for &b in ssid.as_bytes() {
+            let _ = frame.push(b);
+        }
+        frame
+    }
+
+    #[test]
+    fn parse_beacon_frame() {
+        let mac = [0xB4, 0x1E, 0x52, 0x01, 0x02, 0x03];
+        let frame = make_beacon_frame("TestNet", &mac);
+        let event = parse_wifi_frame(&frame, -50, 6).unwrap();
+        assert_eq!(event.mac, mac);
+        assert_eq!(event.ssid.as_str(), "TestNet");
+        assert_eq!(event.rssi, -50);
+        assert_eq!(event.channel, 6);
+        assert_eq!(event.frame_type, FrameType::Beacon);
+    }
+
+    #[test]
+    fn parse_beacon_empty_ssid() {
+        let mac = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+        let frame = make_beacon_frame("", &mac);
+        let event = parse_wifi_frame(&frame, -70, 11).unwrap();
+        assert_eq!(event.ssid.as_str(), "");
+    }
+
+    #[test]
+    fn parse_too_short_frame_returns_none() {
+        // Less than 16 bytes — can't even extract MAC
+        let short = [0x80, 0x00, 0x00, 0x00, 0xFF, 0xFF];
+        assert!(parse_wifi_frame(&short, -50, 1).is_none());
+    }
+
+    #[test]
+    fn parse_data_frame_extracts_mac() {
+        // Build a minimal data frame (type = 2)
+        // Frame control: type=Data (0x08 = data frame, bits 2-3 = 10 = type 2)
+        let mut frame = [0u8; 24];
+        frame[0] = 0x08; // Frame control: Data
+        frame[1] = 0x00;
+        // Addr1 (6 bytes at offset 4)
+        frame[4..10].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        // Addr2 (6 bytes at offset 10) — the MAC we want to extract
+        frame[10..16].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33]);
+        let event = parse_wifi_frame(&frame, -60, 3).unwrap();
+        assert_eq!(event.mac, [0xAA, 0xBB, 0xCC, 0x11, 0x22, 0x33]);
+        assert_eq!(event.frame_type, FrameType::Data);
+        assert_eq!(event.ssid.as_str(), "");
+    }
+
+    // ── BleAdvParser tests ──────────────────────────────────────────
+
+    #[test]
+    fn ble_parse_empty_ad_data() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let event = BleAdvParser::parse(&addr, -50, &[]);
+        assert_eq!(event.mac, addr);
+        assert_eq!(event.rssi, -50);
+        assert!(event.name.is_empty());
+        assert!(event.service_uuids_16.is_empty());
+        assert_eq!(event.manufacturer_id, 0);
+    }
+
+    #[test]
+    fn ble_parse_complete_local_name() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // AD structure: len=6, type=0x09 (Complete Local Name), data="Flock"
+        let ad_data = [0x06, 0x09, b'F', b'l', b'o', b'c', b'k'];
+        let event = BleAdvParser::parse(&addr, -40, &ad_data);
+        assert_eq!(event.name.as_str(), "Flock");
+    }
+
+    #[test]
+    fn ble_parse_shortened_local_name() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // AD structure: len=3, type=0x08 (Shortened Local Name), data="FS"
+        let ad_data = [0x03, 0x08, b'F', b'S'];
+        let event = BleAdvParser::parse(&addr, -40, &ad_data);
+        assert_eq!(event.name.as_str(), "FS");
+    }
+
+    #[test]
+    fn ble_parse_service_uuids_16() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // AD structure: len=5, type=0x03 (Complete List 16-bit UUIDs)
+        // UUIDs: 0x3100, 0x180A (little-endian)
+        let ad_data = [0x05, 0x03, 0x00, 0x31, 0x0A, 0x18];
+        let event = BleAdvParser::parse(&addr, -50, &ad_data);
+        assert_eq!(event.service_uuids_16.len(), 2);
+        assert_eq!(event.service_uuids_16[0], 0x3100);
+        assert_eq!(event.service_uuids_16[1], 0x180A);
+    }
+
+    #[test]
+    fn ble_parse_manufacturer_data() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // AD structure: len=5, type=0xFF (Manufacturer Specific)
+        // Company ID: 0x09C8 (little-endian: 0xC8, 0x09), then 2 bytes payload
+        let ad_data = [0x05, 0xFF, 0xC8, 0x09, 0x01, 0x02];
+        let event = BleAdvParser::parse(&addr, -50, &ad_data);
+        assert_eq!(event.manufacturer_id, 0x09C8);
+    }
+
+    #[test]
+    fn ble_parse_multiple_ad_structures() {
+        let addr = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        // Structure 1: Complete local name "FS"
+        // Structure 2: Manufacturer ID 0x09C8
+        // Structure 3: 16-bit UUID 0x3100
+        let ad_data = [
+            // Name
+            0x03, 0x09, b'F', b'S', // Manufacturer
+            0x03, 0xFF, 0xC8, 0x09, // UUID
+            0x03, 0x03, 0x00, 0x31,
+        ];
+        let event = BleAdvParser::parse(&addr, -45, &ad_data);
+        assert_eq!(event.name.as_str(), "FS");
+        assert_eq!(event.manufacturer_id, 0x09C8);
+        assert_eq!(event.service_uuids_16.len(), 1);
+        assert_eq!(event.service_uuids_16[0], 0x3100);
+    }
+
+    #[test]
+    fn ble_parse_truncated_ad_structure_stops() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        // Structure claims len=10 but only 3 data bytes follow — should stop
+        let ad_data = [0x0A, 0x09, b'A', b'B', b'C'];
+        let event = BleAdvParser::parse(&addr, -50, &ad_data);
+        // Parser should stop, not crash
+        assert!(event.name.is_empty());
+    }
+
+    #[test]
+    fn ble_parse_zero_length_ad_stops() {
+        let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let ad_data = [0x00, 0x09, b'A'];
+        let event = BleAdvParser::parse(&addr, -50, &ad_data);
+        assert!(event.name.is_empty());
     }
 }
