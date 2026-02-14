@@ -1,10 +1,33 @@
 # AirHound
 
-RF wardriving companion device built in Rust for ESP32. Scans WiFi and BLE, filters against known surveillance device signatures, and relays matched results to a companion app over BLE GATT or serial.
+Open-protocol RF wardriving companion for ESP32. Scans WiFi and BLE, filters against known surveillance device signatures, and relays matched results over BLE GATT or serial using a documented NDJSON protocol that any companion app can integrate.
+
+## Why AirHound
+
+Surveillance cameras, ALPR systems, and related RF devices are proliferating in public spaces. Several community projects have built tools to detect them (see [Related Projects](#related-projects) below), each combining scanning, analysis, alerting, and UI into a single firmware.
+
+AirHound takes a different approach: **separation of concerns**. The firmware is a thin, dumb scanning dongle. It scans, filters against a compiled-in signature database, and emits matched results as structured NDJSON. All the smarts — GPS tagging, scoring, alerting, maps, storage — live in a companion app. This keeps the firmware small, portable across hardware, and app-agnostic: any app that speaks the protocol can use it.
+
+The goal is a community-maintained signature database and an open protocol that work across multiple hardware platforms and companion apps.
+
+## Related Projects
+
+AirHound builds on work by the surveillance detection community. These projects pioneered the techniques and published the device signatures that AirHound's filter database draws from:
+
+| Project | Author | Description |
+|---------|--------|-------------|
+| [Flock-You](https://github.com/colonelpanichacks/flock-you) | colonelpanichacks | BLE scanner for XIAO ESP32-S3 with web dashboard — pioneered open-source Flock Safety detection |
+| [FlockSquawk](https://github.com/f1yaw4y/FlockSquawk) | f1yaw4y | Multi-platform firmware with WiFi+BLE scanning, audio alerts, and display support across many ESP32 boards |
+| [FlockBack](https://github.com/NSM-Barii/flock-back) | NSM-Barii | Python wardriving toolkit for Linux with BLE and WiFi monitor-mode detection |
+| [ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder) | justcallmekoko | WiFi/Bluetooth security toolkit with Flock Sniff feature |
+| [DeFlock](https://deflock.org) | DeFlock community | Crowdsourced ALPR camera mapping platform and companion mobile app |
 
 ## Design Philosophy
 
-AirHound is a **thin sensor/relay**. It scans, filters, and emits. The companion app (DeFlock or similar) handles analysis, scoring, alerting, GPS tagging, and storage.
+- **Thin sensor/relay** — AirHound scans, filters, and emits. The companion app handles analysis, scoring, alerting, GPS tagging, and storage.
+- **App-agnostic** — Open NDJSON protocol over BLE GATT and serial. Any companion app that speaks the protocol can integrate.
+- **Multi-platform** — ESP32 today, with a path toward other MCUs and a Linux daemon for laptop/Raspberry Pi wardriving.
+- **Community signatures** — The filter database is designed to grow through contributions. See [Contributing](CONTRIBUTING.md).
 
 ## Supported Hardware
 
@@ -18,15 +41,23 @@ AirHound is a **thin sensor/relay**. It scans, filters, and emits. The companion
 - **135x240 TFT display** (ST7789V2) — status screen with match counts, uptime, and last detection
 - **Passive buzzer** (GPIO2) — short alert beep on surveillance device match, togglable via BLE command
 
-## Tech Stack
+## Quick Start
 
-- **Language:** Rust (`no_std`)
-- **HAL:** esp-hal (Espressif official, git main)
-- **Radio:** esp-radio (WiFi sniffer + BLE + coex)
-- **BLE Host:** TrouBLE (trouble-host, Embassy ecosystem)
-- **Async Runtime:** Embassy (via esp-rtos)
-- **Display:** mipidsi + embedded-graphics (M5StickC only)
-- **JSON:** serde + serde-json-core (no-alloc)
+Pre-built binaries are available on the [Releases](https://github.com/dougborg/AirHound/releases) page. To flash:
+
+```bash
+# 1. Install espflash
+cargo install espflash --locked
+
+# 2. Connect your board via USB and flash
+espflash flash --chip esp32s3 airhound-xiao.bin             # XIAO ESP32-S3
+espflash flash --chip esp32 airhound-m5stickc.bin           # M5StickC Plus2
+
+# 3. Connect from a companion app over BLE, or monitor serial output
+espflash monitor --speed 115200
+```
+
+AirHound starts scanning immediately on boot. Matched devices appear as NDJSON on both BLE GATT notifications and serial.
 
 ## Building
 
@@ -136,11 +167,27 @@ AirHound communicates using newline-delimited JSON (NDJSON) over BLE GATT notifi
 
 Compiled-in filter data merged from multiple open-source surveillance detection projects:
 
-- **108 MAC OUI prefixes** -- Flock Safety, Silicon Labs, Axis, Hanwha, FLIR, Mobotix, and other surveillance vendors
-- **SSID patterns** -- `Flock-XXXXXX`, `Penguin-XXXXXXXXXX`, `FS Ext Battery`
-- **BLE name patterns** -- Flock, Penguin, FS Ext Battery, Pigvision
-- **Raven BLE service UUIDs** -- 0x3100-0x3500 (custom), 0x180A/0x1809/0x1819 (standard)
-- **Manufacturer IDs** -- 0x09C8 (XUNTONG / Flock Safety)
+- **115 MAC OUI prefixes** — Flock Safety, Silicon Labs, Axis, Hanwha, FLIR, Mobotix, and other surveillance vendors
+- **SSID patterns** — `Flock-XXXXXX`, `Penguin-XXXXXXXXXX`, `FS Ext Battery`
+- **BLE name patterns** — Flock, Penguin, FS Ext Battery, Pigvision
+- **Raven BLE service UUIDs** — 0x3100-0x3500 (custom), 0x180A/0x1809/0x1819 (standard)
+- **Manufacturer IDs** — 0x09C8 (XUNTONG / Flock Safety)
+
+Know of a device that should be detected? See the [signature contribution guide](CONTRIBUTING.md#adding-device-signatures).
+
+## Roadmap
+
+Directions, not promises:
+
+- More ESP32 variants (C3, C6 RISC-V) and other MCU families (nRF52, RP2040)
+- Linux daemon for Raspberry Pi / laptop wardriving with monitor-mode WiFi
+- Over-the-air signature updates from companion app
+- Formalized signature format spec for cross-tool interoperability
+- Protocol versioning and expanded command set ([#9](https://github.com/dougborg/AirHound/issues/9))
+
+## Contributing
+
+Contributions are welcome — especially new device signatures. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on submitting signatures, adding board support, and development setup.
 
 ## License
 
