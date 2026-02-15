@@ -17,7 +17,6 @@ use esp_backtrace as _;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Hardware-specific modules (binary crate only)
-#[cfg(feature = "m5stickc")]
 mod buzzer;
 #[cfg(feature = "m5stickc")]
 mod display;
@@ -109,12 +108,10 @@ pub(crate) static BLE_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
     Mutex::new(RefCell::new(heapless::String::new()));
 
-/// Whether the buzzer is enabled (M5StickC only)
-#[cfg(feature = "m5stickc")]
+/// Whether the buzzer is enabled
 pub(crate) static BUZZER_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// Signal channel for buzzer beeps (M5StickC only)
-#[cfg(feature = "m5stickc")]
+/// Signal channel for buzzer beeps
 pub(crate) static BUZZER_SIGNAL: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
 
 /// Get a snapshot of the current filter config.
@@ -222,7 +219,7 @@ async fn main(spawner: embassy_executor::Spawner) {
         esp_hal::gpio::OutputConfig::default(),
     );
 
-    // Display + buzzer tasks (M5StickC only)
+    // Display task (M5StickC only)
     #[cfg(feature = "m5stickc")]
     {
         spawner
@@ -237,12 +234,18 @@ async fn main(spawner: embassy_executor::Spawner) {
             ))
             .unwrap();
         log::info!("Display task spawned");
-
-        spawner
-            .spawn(buzzer::buzzer_task(peripherals.LEDC, peripherals.GPIO2))
-            .unwrap();
-        log::info!("Buzzer task spawned");
     }
+
+    // Buzzer task
+    #[cfg(feature = "m5stickc")]
+    let buzzer_pin = peripherals.GPIO2;
+    #[cfg(feature = "xiao")]
+    let buzzer_pin = peripherals.GPIO3;
+
+    spawner
+        .spawn(buzzer::buzzer_task(peripherals.LEDC, buzzer_pin))
+        .unwrap();
+    log::info!("Buzzer task spawned");
 
     log::info!(
         "Build target: {}",
@@ -532,7 +535,6 @@ async fn handle_wifi_event(
     }
 
     // Trigger buzzer beep
-    #[cfg(feature = "m5stickc")]
     let _ = BUZZER_SIGNAL.try_send(());
 
     let mut mac_str = MacString::new();
@@ -588,7 +590,6 @@ async fn handle_ble_event(
     }
 
     // Trigger buzzer beep
-    #[cfg(feature = "m5stickc")]
     let _ = BUZZER_SIGNAL.try_send(());
 
     let mut mac_str = MacString::new();
@@ -677,15 +678,9 @@ async fn command_task() {
 
         let buzzer_state = comm::handle_command(&cmd, &mut config, &mut scanning);
 
-        // Apply buzzer side effect (M5StickC only)
-        #[cfg(feature = "m5stickc")]
         if let Some(enabled) = buzzer_state {
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
         }
-
-        // Suppress unused variable warning on boards without buzzer
-        #[cfg(not(feature = "m5stickc"))]
-        let _ = buzzer_state;
 
         // Write back updated state
         critical_section::with(|cs| FILTER_CONFIG.borrow(cs).set(config));

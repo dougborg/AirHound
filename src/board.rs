@@ -14,7 +14,10 @@ mod hw {
     pub const HAS_PSRAM: bool = true;
     pub const HAS_GPS_HEADER: bool = true;
     pub const HAS_DISPLAY: bool = false;
-    pub const HAS_BUZZER: bool = false;
+    pub const HAS_BUZZER: bool = true;
+    pub const BUZZER_PIN: u8 = 3;
+    pub const BUZZER_FREQ_HZ: u32 = 2000;
+    pub const BUZZER_BEEP_MS: u64 = 200;
     pub const BOARD_NAME: &str = "xiao_esp32s3";
 }
 
