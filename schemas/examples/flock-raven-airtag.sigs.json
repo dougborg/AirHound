@@ -1,0 +1,235 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v1.schema.json",
+  "version": 1,
+  "signatures": [
+    {
+      "id": "flock-safety-oui",
+      "type": "mac_oui",
+      "oui": "B4:1E:52",
+      "description": "Flock Safety registered OUI"
+    },
+    {
+      "id": "silabs-588e81",
+      "type": "mac_oui",
+      "oui": "58:8E:81",
+      "description": "Silicon Labs (used by Flock Safety hardware)"
+    },
+    {
+      "id": "silabs-cccccc",
+      "type": "mac_oui",
+      "oui": "CC:CC:CC",
+      "description": "Silicon Labs"
+    },
+    {
+      "id": "flock-ssid-prefix",
+      "type": "wifi_ssid",
+      "match": "regex",
+      "value": "^Flock-[0-9A-Fa-f]{6}$",
+      "description": "Flock Safety camera WiFi AP (e.g. Flock-A1B2C3)"
+    },
+    {
+      "id": "fs-ext-battery-ssid",
+      "type": "wifi_ssid",
+      "match": "exact",
+      "value": "FS Ext Battery",
+      "description": "Flock Safety external battery WiFi"
+    },
+    {
+      "id": "flock-ssid-keyword",
+      "type": "wifi_ssid",
+      "match": "contains",
+      "value": "flock",
+      "case_sensitive": false,
+      "description": "Any SSID containing 'flock'"
+    },
+    {
+      "id": "flock-ble-name",
+      "type": "ble_name",
+      "match": "contains",
+      "value": "Flock",
+      "case_sensitive": false,
+      "description": "BLE device with 'Flock' in name"
+    },
+    {
+      "id": "fs-ext-battery-ble",
+      "type": "ble_name",
+      "match": "exact",
+      "value": "FS Ext Battery",
+      "description": "Flock Safety external battery BLE"
+    },
+    {
+      "id": "xuntong-mfr",
+      "type": "ble_manufacturer_id",
+      "company_id": 2504,
+      "description": "XUNTONG Technology (associated with Flock Safety)"
+    },
+    {
+      "id": "raven-gps-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "3100",
+      "description": "Raven GPS service"
+    },
+    {
+      "id": "raven-power-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "3200",
+      "description": "Raven Power service"
+    },
+    {
+      "id": "raven-network-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "3300",
+      "description": "Raven Network service"
+    },
+    {
+      "id": "raven-upload-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "3400",
+      "description": "Raven Upload service"
+    },
+    {
+      "id": "raven-error-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "3500",
+      "description": "Raven Error service"
+    },
+    {
+      "id": "airtag-findmy-ad",
+      "type": "ble_ad_bytes",
+      "bytes": [
+        76,
+        0,
+        18,
+        25
+      ],
+      "offset": 0,
+      "description": "Apple FindMy / AirTag advertisement (company=Apple, type=0x12, len=0x19)"
+    },
+    {
+      "id": "flipper-zero-white",
+      "type": "ble_ad_bytes",
+      "bytes": [
+        128,
+        48
+      ],
+      "description": "Flipper Zero (White) BLE service data"
+    },
+    {
+      "id": "flipper-zero-black",
+      "type": "ble_ad_bytes",
+      "bytes": [
+        129,
+        48
+      ],
+      "description": "Flipper Zero (Black) BLE service data"
+    }
+  ],
+  "rules": [
+    {
+      "id": "flock-safety-camera",
+      "name": "Flock Safety Camera",
+      "description": "Flock Safety ALPR camera detected via WiFi or BLE",
+      "tags": [
+        "alpr",
+        "flock_safety"
+      ],
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "flock-safety-oui"
+          },
+          {
+            "sig": "silabs-588e81"
+          },
+          {
+            "sig": "silabs-cccccc"
+          },
+          {
+            "sig": "flock-ssid-prefix"
+          },
+          {
+            "sig": "fs-ext-battery-ssid"
+          },
+          {
+            "sig": "flock-ssid-keyword"
+          },
+          {
+            "sig": "flock-ble-name"
+          },
+          {
+            "sig": "fs-ext-battery-ble"
+          },
+          {
+            "allOf": [
+              {
+                "sig": "xuntong-mfr"
+              },
+              {
+                "sig": "flock-ble-name"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "raven-acoustic-sensor",
+      "name": "Raven Acoustic Sensor",
+      "description": "ShotSpotter/Raven gunshot detection device",
+      "tags": [
+        "acoustic_sensor",
+        "raven"
+      ],
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "raven-gps-uuid"
+          },
+          {
+            "sig": "raven-power-uuid"
+          },
+          {
+            "sig": "raven-network-uuid"
+          },
+          {
+            "sig": "raven-upload-uuid"
+          },
+          {
+            "sig": "raven-error-uuid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "apple-airtag",
+      "name": "Apple AirTag",
+      "description": "Apple AirTag or FindMy-compatible tracker",
+      "tags": [
+        "tracker",
+        "apple"
+      ],
+      "detect": {
+        "sig": "airtag-findmy-ad"
+      }
+    },
+    {
+      "id": "flipper-zero",
+      "name": "Flipper Zero",
+      "description": "Flipper Zero multi-tool device",
+      "tags": [
+        "multi_tool",
+        "flipper"
+      ],
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "flipper-zero-white"
+          },
+          {
+            "sig": "flipper-zero-black"
+          }
+        ]
+      }
+    }
+  ]
+}
