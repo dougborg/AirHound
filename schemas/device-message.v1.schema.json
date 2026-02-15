@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/device-message.v1.schema.json",
+  "title": "AirHound Device Message Protocol v1",
+  "description": "Validates a single Device→Host NDJSON line. Each line is a JSON object discriminated by the 'type' field. Emitted over BLE GATT notifications (chunked at 20 bytes) and serial UART (115200 baud). Maximum serialized size: 512 bytes including newline.",
+  "discriminator": {
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/wifi_scan"
+    },
+    {
+      "$ref": "#/$defs/ble_scan"
+    },
+    {
+      "$ref": "#/$defs/status_report"
+    }
+  ],
+  "$defs": {
+    "mac_address": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+      "maxLength": 18,
+      "description": "MAC address in uppercase colon-separated hex. Always 17 characters (e.g. \"B4:1E:52:AB:CD:EF\"). Backed by heapless::String<18>."
+    },
+    "ble_uuid_string": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "maxLength": 37,
+      "description": "128-bit BLE UUID in lowercase hyphenated form (e.g. \"00003100-0000-1000-8000-00805f9b34fb\"). Backed by heapless::String<37>. Only the primary service UUID is reported; 16-bit UUIDs are expanded to 128-bit form."
+    },
+    "uptime_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Device uptime in milliseconds (u32). Wraps at ~49.7 days. Used as 'ts' in scan events. Note: the 'uptime' field in status reports uses seconds, not milliseconds."
+    },
+    "wifi_frame_type": {
+      "type": "string",
+      "enum": [
+        "beacon",
+        "probe_req",
+        "probe_resp",
+        "data",
+        "other"
+      ],
+      "description": "WiFi 802.11 frame type classification. 'beacon' and 'probe_resp' contain SSIDs; 'probe_req' may contain SSIDs; 'data' frames are matched by MAC OUI only; 'other' is a catch-all for unrecognized frame types."
+    },
+    "match_reason_type": {
+      "type": "string",
+      "enum": [
+        "mac_oui",
+        "ssid_pattern",
+        "ssid_exact",
+        "ssid_keyword",
+        "wifi_name",
+        "ble_name",
+        "ble_uuid",
+        "ble_uuid_std",
+        "ble_mfr"
+      ],
+      "description": "Filter match type. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id."
+    },
+    "match_reason": {
+      "type": "object",
+      "description": "A single filter match reason. Each scan event contains 1–4 reasons explaining why the device matched.",
+      "required": [
+        "type",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/match_reason_type",
+          "description": "Which filter type produced this match."
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Human-readable detail (e.g. vendor name, matched keyword). Backed by heapless::String<32>; longer values are truncated."
+        }
+      }
+    },
+    "wifi_scan": {
+      "type": "object",
+      "description": "WiFi scan match. Emitted when a promiscuous-mode 802.11 frame matches at least one filter rule.",
+      "required": [
+        "type",
+        "mac",
+        "ssid",
+        "rssi",
+        "ch",
+        "frame",
+        "match",
+        "ts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "wifi"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "Transmitter MAC address (Address 2 from 802.11 header)."
+        },
+        "ssid": {
+          "type": "string",
+          "maxLength": 33,
+          "description": "Network SSID. Empty string for data frames or when SSID is not present. Backed by heapless::String<33>."
+        },
+        "rssi": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 0,
+          "description": "Received signal strength in dBm (i8)."
+        },
+        "ch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 14,
+          "description": "WiFi channel (2.4 GHz, 1–14). ESP32/ESP32-S3 are 2.4 GHz only."
+        },
+        "frame": {
+          "$ref": "#/$defs/wifi_frame_type",
+          "description": "802.11 frame type classification."
+        },
+        "match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/match_reason"
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "description": "Why this frame matched. At least one reason is always present (unmatched frames are not emitted). Note: field is named 'match' (not 'matches') — see v2 roadmap for planned rename."
+        },
+        "ts": {
+          "$ref": "#/$defs/uptime_ms",
+          "description": "Capture timestamp as device uptime in milliseconds."
+        }
+      }
+    },
+    "ble_scan": {
+      "type": "object",
+      "description": "BLE scan match. Emitted when a BLE advertisement matches at least one filter rule.",
+      "required": [
+        "type",
+        "mac",
+        "name",
+        "rssi",
+        "mfr",
+        "match",
+        "ts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ble"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "Advertiser MAC address."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 33,
+          "description": "BLE local name from advertisement. Empty string if not present. Backed by heapless::String<33>."
+        },
+        "rssi": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 0,
+          "description": "Received signal strength in dBm (i8)."
+        },
+        "uuid": {
+          "$ref": "#/$defs/ble_uuid_string",
+          "description": "Primary service UUID if detected. Omitted (not present in JSON) when no service UUID was found in the advertisement. See v2 evaluation: this is inconsistent with 'mfr' which uses 0 as sentinel instead of omission."
+        },
+        "mfr": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "BLE manufacturer company ID (u16). 0 when no manufacturer-specific data is present. See v2 evaluation: sentinel 0 is inconsistent with 'uuid' which is omitted when absent."
+        },
+        "match": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/match_reason"
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "description": "Why this advertisement matched. At least one reason is always present. Note: field is named 'match' (not 'matches') — see v2 roadmap for planned rename."
+        },
+        "ts": {
+          "$ref": "#/$defs/uptime_ms",
+          "description": "Capture timestamp as device uptime in milliseconds."
+        }
+      }
+    },
+    "status_report": {
+      "type": "object",
+      "description": "Device status report. Emitted in response to a {\"cmd\":\"status\"} command.",
+      "required": [
+        "type",
+        "scanning",
+        "uptime",
+        "heap_free",
+        "ble_clients",
+        "board",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "status"
+        },
+        "scanning": {
+          "type": "boolean",
+          "description": "Whether the device is actively scanning."
+        },
+        "uptime": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Device uptime in SECONDS (u32). Note: this is seconds, unlike 'ts' in scan events which is milliseconds."
+        },
+        "heap_free": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Free heap memory in bytes."
+        },
+        "ble_clients": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Number of connected BLE GATT clients (u8)."
+        },
+        "board": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "Board identifier. Current values: \"xiao_esp32s3\", \"m5stickc_plus2\", \"unknown\". Uses pattern (not enum) to allow future boards without schema change."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Firmware version in semver format (e.g. \"0.1.0\"). Sourced from Cargo.toml via env!(\"CARGO_PKG_VERSION\")."
+        }
+      }
+    }
+  }
+}
