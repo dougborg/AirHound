@@ -26,5 +26,21 @@ if [ -n "$STAGED_RS" ]; then
     echo "$STAGED_RS" | xargs git add
 fi
 
-# 4. Run unit tests (can't auto-fix, must pass)
+# 4. Auto-format all staged JSON files in schemas/ and re-stage them
+STAGED_JSON=$(git diff --cached --name-only --diff-filter=d | grep '^schemas/.*\.json$' || true)
+if [ -n "$STAGED_JSON" ]; then
+    echo "$STAGED_JSON" | while IFS= read -r f; do
+        python3 -c "
+import json
+with open('$f') as fh:
+    obj = json.load(fh)
+with open('$f', 'w') as fh:
+    json.dump(obj, fh, indent=2, ensure_ascii=False)
+    fh.write('\n')
+"
+    done
+    echo "$STAGED_JSON" | xargs git add
+fi
+
+# 5. Run unit tests (can't auto-fix, must pass)
 cargo test --lib --no-default-features --quiet

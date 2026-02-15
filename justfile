@@ -89,6 +89,104 @@ setup-hooks:
     chmod +x .githooks/*
     @echo "Git hooks configured."
 
+# ── Schemas ──────────────────────────────────────────────
+
+# Check JSON files are well-formed and consistently formatted (2-space indent)
+[group('schemas')]
+check-json:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail=0
+    while IFS= read -r -d '' f; do
+        if ! python3 -c "
+    import json, sys
+    with open('$f') as fh:
+        obj = json.load(fh)
+    formatted = json.dumps(obj, indent=2, ensure_ascii=False) + '\n'
+    with open('$f') as fh:
+        actual = fh.read()
+    if actual != formatted:
+        print('$f: not formatted (run just fmt-json)', file=sys.stderr)
+        sys.exit(1)
+    "; then
+            fail=1
+        fi
+    done < <(find schemas -name '*.json' -print0 2>/dev/null)
+    if [ "$fail" -eq 0 ]; then echo "All JSON files formatted."; fi
+    exit $fail
+
+# Auto-format all JSON files in schemas/ (2-space indent)
+[group('schemas')]
+fmt-json:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    while IFS= read -r -d '' f; do
+        python3 -c "
+    import json
+    with open('$f') as fh:
+        obj = json.load(fh)
+    with open('$f', 'w') as fh:
+        json.dump(obj, fh, indent=2, ensure_ascii=False)
+        fh.write('\n')
+    "
+        echo "Formatted $f"
+    done < <(find schemas -name '*.json' -print0 2>/dev/null)
+
+# Validate JSON Schema files are valid draft 2020-12 schemas (requires: pip install check-jsonschema)
+[group('schemas')]
+check-schemas:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v check-jsonschema &>/dev/null; then
+        echo "ERROR: check-jsonschema not found. Install with: pip install check-jsonschema"
+        exit 1
+    fi
+    fail=0
+    shopt -s nullglob
+    files=(schemas/*.schema.json)
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "No schema files found."
+        exit 0
+    fi
+    for f in "${files[@]}"; do
+        echo "Validating schema: $f"
+        if ! check-jsonschema --check-metaschema "$f"; then
+            fail=1
+        fi
+    done
+    exit $fail
+
+# Validate example files against their schemas (requires: pip install check-jsonschema)
+[group('schemas')]
+check-examples:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v check-jsonschema &>/dev/null; then
+        echo "ERROR: check-jsonschema not found. Install with: pip install check-jsonschema"
+        exit 1
+    fi
+    fail=0
+    for f in schemas/examples/*.json; do
+        [ -f "$f" ] || continue
+        # Extract schema reference from $schema field
+        schema=$(python3 -c "import json; print(json.load(open('$f')).get('\$schema',''))")
+        if [ -z "$schema" ]; then
+            echo "SKIP $f (no \$schema field)"
+            continue
+        fi
+        # Convert raw.githubusercontent URL to local path
+        local_schema=$(echo "$schema" | sed 's|https://raw.githubusercontent.com/dougborg/AirHound/main/||')
+        if [ -f "$local_schema" ]; then
+            echo "Validating $f against $local_schema"
+            if ! check-jsonschema --schemafile "$local_schema" "$f"; then
+                fail=1
+            fi
+        else
+            echo "SKIP $f (schema not found locally: $local_schema)"
+        fi
+    done
+    exit $fail
+
 # ── Docker ────────────────────────────────────────────────
 
 # Build the dev container image (interactive use / Codespaces)
