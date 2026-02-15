@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v1.schema.json",
+  "title": "Surveillance Device Signature Format v1",
+  "description": "Portable interchange format for RF surveillance device signatures. Designed for cross-tool interoperability between AirHound, FlockOff, ESP32 Marauder, FlockSquawk, Flock-You, FlockBack, and similar projects.",
+  "type": "object",
+  "required": [
+    "version",
+    "signatures"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional reference to this schema for editor validation."
+    },
+    "version": {
+      "const": 1,
+      "description": "Schema version. Must be 1 for this version of the format."
+    },
+    "signatures": {
+      "type": "array",
+      "description": "Array of atomic signature definitions. Each signature is a single, self-contained matching criterion. Implementations MUST validate that all signature id values are unique within this array.",
+      "items": {
+        "$ref": "#/$defs/signature"
+      },
+      "minItems": 1
+    },
+    "rules": {
+      "type": "array",
+      "description": "Array of detection rules. Each rule composes signatures with boolean logic into a named device detection. Implementations MUST validate that all rule id values are unique within this array.",
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    }
+  },
+  "$defs": {
+    "signature_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*[a-z0-9]$",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "Unique identifier. Lowercase alphanumeric with hyphens and underscores."
+    },
+    "signature": {
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/mac_oui"
+        },
+        {
+          "$ref": "#/$defs/wifi_ssid"
+        },
+        {
+          "$ref": "#/$defs/ble_name"
+        },
+        {
+          "$ref": "#/$defs/ble_service_uuid"
+        },
+        {
+          "$ref": "#/$defs/ble_manufacturer_id"
+        },
+        {
+          "$ref": "#/$defs/ble_ad_bytes"
+        }
+      ]
+    },
+    "mac_oui": {
+      "type": "object",
+      "description": "Match a device by the first 3 bytes (OUI) of its MAC address.",
+      "required": [
+        "id",
+        "type",
+        "oui"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "mac_oui"
+        },
+        "oui": {
+          "type": "string",
+          "pattern": "^[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}$",
+          "description": "3-byte OUI prefix in colon-separated uppercase hex, e.g. \"B4:1E:52\"."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "string_match": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "prefix",
+        "contains",
+        "regex"
+      ],
+      "description": "String matching strategy. \"regex\" uses ECMA-262 (JavaScript) regular expressions for maximum portability."
+    },
+    "wifi_ssid": {
+      "type": "object",
+      "description": "Match a WiFi network by its SSID.",
+      "required": [
+        "id",
+        "type",
+        "match",
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "wifi_ssid"
+        },
+        "match": {
+          "$ref": "#/$defs/string_match"
+        },
+        "value": {
+          "type": "string",
+          "description": "The SSID string or pattern to match against."
+        },
+        "case_sensitive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the match is case-sensitive. Default: true."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ble_name": {
+      "type": "object",
+      "description": "Match a BLE device by its advertised local name.",
+      "required": [
+        "id",
+        "type",
+        "match",
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "ble_name"
+        },
+        "match": {
+          "$ref": "#/$defs/string_match"
+        },
+        "value": {
+          "type": "string",
+          "description": "The BLE local name string or pattern to match against."
+        },
+        "case_sensitive": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the match is case-sensitive. Default: true."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ble_service_uuid": {
+      "type": "object",
+      "description": "Match a BLE device by an advertised service UUID.",
+      "required": [
+        "id",
+        "type",
+        "uuid"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "ble_service_uuid"
+        },
+        "uuid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{4}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "BLE service UUID in lowercase hex. 4 chars for 16-bit (e.g. \"3100\"), or full 128-bit form (e.g. \"00003100-0000-1000-8000-00805f9b34fb\")."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ble_manufacturer_id": {
+      "type": "object",
+      "description": "Match a BLE device by its manufacturer-specific data company ID.",
+      "required": [
+        "id",
+        "type",
+        "company_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "ble_manufacturer_id"
+        },
+        "company_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Bluetooth SIG assigned company identifier (16-bit). E.g. 2504 for XUNTONG."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "ble_ad_bytes": {
+      "type": "object",
+      "description": "Match a BLE device by a raw byte pattern in its advertisement payload. Supports wildcard bytes for partial matching.",
+      "required": [
+        "id",
+        "type",
+        "bytes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id"
+        },
+        "type": {
+          "const": "ble_ad_bytes"
+        },
+        "bytes": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minItems": 1,
+          "description": "Byte sequence to match. Integers (0-255) are exact; null is a wildcard matching any byte."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Fixed byte offset into the advertisement payload. If omitted, the pattern is searched anywhere in the payload."
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "description": "A detection rule that composes signatures into a named device detection using boolean logic.",
+      "required": [
+        "id",
+        "name",
+        "detect"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/signature_id",
+          "description": "Unique identifier for this rule."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable device name, e.g. \"Flock Safety Camera\"."
+        },
+        "description": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "uniqueItems": true,
+          "description": "Freeform tags for categorization, e.g. [\"alpr\", \"flock_safety\"]."
+        },
+        "detect": {
+          "$ref": "#/$defs/expr",
+          "description": "Boolean expression tree over signature references."
+        }
+      }
+    },
+    "expr": {
+      "description": "A boolean expression node. Leaf nodes reference a signature by ID. Interior nodes combine children with anyOf (OR), allOf (AND), or not (negation).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/expr_sig"
+        },
+        {
+          "$ref": "#/$defs/expr_any_of"
+        },
+        {
+          "$ref": "#/$defs/expr_all_of"
+        },
+        {
+          "$ref": "#/$defs/expr_not"
+        }
+      ]
+    },
+    "expr_sig": {
+      "type": "object",
+      "description": "Leaf: matches if the referenced signature matches the scan input.",
+      "required": [
+        "sig"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sig": {
+          "$ref": "#/$defs/signature_id",
+          "description": "References a signature by its id. Implementations MUST validate that this references a defined signature in the signatures array."
+        }
+      }
+    },
+    "expr_any_of": {
+      "type": "object",
+      "description": "Logical OR: matches if ANY child expression matches.",
+      "required": [
+        "anyOf"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "anyOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expr"
+          },
+          "minItems": 2
+        }
+      }
+    },
+    "expr_all_of": {
+      "type": "object",
+      "description": "Logical AND: matches if ALL child expressions match.",
+      "required": [
+        "allOf"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "allOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expr"
+          },
+          "minItems": 2
+        }
+      }
+    },
+    "expr_not": {
+      "type": "object",
+      "description": "Logical NOT: matches if the child expression does NOT match. Useful for excluding false positives.",
+      "required": [
+        "not"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "not": {
+          "$ref": "#/$defs/expr"
+        }
+      }
+    }
+  }
+}
