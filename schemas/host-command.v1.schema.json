@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/host-command.v1.schema.json",
+  "title": "AirHound Host Command Protocol v1",
+  "description": "Validates a single Host→Device NDJSON line. Each line is a JSON object discriminated by the 'cmd' field. Sent over BLE GATT write characteristic or serial UART. Parsed via serde_json_core with a flat RawCommand struct (no internally tagged enum support).",
+  "discriminator": {
+    "propertyName": "cmd"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/start_cmd"
+    },
+    {
+      "$ref": "#/$defs/stop_cmd"
+    },
+    {
+      "$ref": "#/$defs/status_cmd"
+    },
+    {
+      "$ref": "#/$defs/set_rssi_cmd"
+    },
+    {
+      "$ref": "#/$defs/set_buzzer_cmd"
+    }
+  ],
+  "$defs": {
+    "start_cmd": {
+      "type": "object",
+      "description": "Start WiFi and BLE scanning.",
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "start"
+        }
+      }
+    },
+    "stop_cmd": {
+      "type": "object",
+      "description": "Stop all scanning.",
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "stop"
+        }
+      }
+    },
+    "status_cmd": {
+      "type": "object",
+      "description": "Request a status report. Device responds with a {\"type\":\"status\",...} message.",
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "status"
+        }
+      }
+    },
+    "set_rssi_cmd": {
+      "type": "object",
+      "description": "Update the minimum RSSI threshold. Scan results weaker than this value are discarded before filtering.",
+      "required": [
+        "cmd",
+        "min_rssi"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "set_rssi"
+        },
+        "min_rssi": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 0,
+          "description": "Minimum RSSI in dBm (i8). Default: -90. More negative = more permissive."
+        }
+      }
+    },
+    "set_buzzer_cmd": {
+      "type": "object",
+      "description": "Enable or disable the buzzer on M5StickC Plus2. No-op on boards without a buzzer.",
+      "required": [
+        "cmd",
+        "enabled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "set_buzzer"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "true to enable, false to disable."
+        }
+      }
+    }
+  }
+}
