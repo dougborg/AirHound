@@ -14,13 +14,16 @@ The goal is a community-maintained signature database and an open protocol that 
 
 AirHound builds on work by the surveillance detection community. These projects pioneered the techniques and published the device signatures that AirHound's filter database draws from:
 
-| Project | Author | Description |
-|---------|--------|-------------|
-| [Flock-You](https://github.com/colonelpanichacks/flock-you) | colonelpanichacks | BLE scanner for XIAO ESP32-S3 with web dashboard — pioneered open-source Flock Safety detection |
-| [FlockSquawk](https://github.com/f1yaw4y/FlockSquawk) | f1yaw4y | Multi-platform firmware with WiFi+BLE scanning, audio alerts, and display support across many ESP32 boards |
-| [FlockBack](https://github.com/NSM-Barii/flock-back) | NSM-Barii | Python wardriving toolkit for Linux with BLE and WiFi monitor-mode detection |
-| [ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder) | justcallmekoko | WiFi/Bluetooth security toolkit with Flock Sniff feature |
-| [DeFlock](https://deflock.org) | DeFlock community | Crowdsourced ALPR camera mapping platform and companion mobile app |
+| Project | Platform | WiFi | BLE | Output | Notes |
+|---------|----------|------|-----|--------|-------|
+| [Flock-You](https://github.com/colonelpanichacks/flock-you) | ESP32-S3 | — | Scan | Web UI, JSON/CSV/KML | Largest community, GPS via browser |
+| [OUI-Spy](https://github.com/colonelpanichacks/oui-spy) | ESP32-S3 (custom PCB) | — | Scan | Web UI | Multi-mode: surveillance, drone, proximity |
+| [FlockSquawk](https://github.com/f1yaw4y/FlockSquawk) | ESP32 (5 variants) | Promisc | Scan | Serial JSON, audio | First dual WiFi+BLE detection |
+| [FlockBack](https://github.com/NSM-Barii/flock-back) | Linux (Python) | Monitor | Scan | CLI | No dedicated hardware needed |
+| [ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder) | ESP32 (many) | Promisc | Scan | Serial, WiGLE CSV | Flock detection within broader toolkit |
+| [DeFlock](https://deflock.org) | iOS | — | — | — | Companion app |
+
+AirHound's approach is complementary: a thin sensor that delegates analysis, GPS tagging, scoring, and storage to a companion app, written in Rust with a testable library crate, using BLE GATT relay so the phone keeps its own connectivity. AirHound's signature database builds on research from these projects — the goal is a shared, community-maintained signature format that benefits everyone ([#11](https://github.com/dougborg/AirHound/issues/11)).
 
 ## Design Philosophy
 
