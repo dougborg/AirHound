@@ -1,6 +1,6 @@
-/// Buzzer driver for M5StickC Plus2.
+/// Buzzer driver using LEDC PWM.
 ///
-/// Uses the LEDC peripheral to drive a passive buzzer on GPIO2 at 2700 Hz.
+/// Drives a passive buzzer at the board-configured frequency and GPIO pin.
 /// The buzzer task waits for signals on `BUZZER_SIGNAL` and produces a short
 /// beep when a surveillance device match is detected.
 use core::sync::atomic::Ordering;
@@ -14,10 +14,15 @@ use esp_hal::time::Rate;
 
 use crate::board;
 
+#[cfg(feature = "m5stickc")]
+type BuzzerPin = esp_hal::peripherals::GPIO2<'static>;
+#[cfg(feature = "xiao")]
+type BuzzerPin = esp_hal::peripherals::GPIO3<'static>;
+
 #[embassy_executor::task]
 pub async fn buzzer_task(
     ledc_peripheral: esp_hal::peripherals::LEDC<'static>,
-    buzzer_pin: esp_hal::peripherals::GPIO2<'static>,
+    buzzer_pin: BuzzerPin,
 ) {
     let ledc = Ledc::new(ledc_peripheral);
 
