@@ -1,18 +1,30 @@
 #!/bin/sh
 set -e
 
-# 1. Check for accidental secrets (fast, run first)
-if git diff --cached --name-only | grep -qE '\.(env|pem|key)$'; then
+# 1. Check for accidental secrets — filenames
+if git diff --cached --name-only | grep -qiE '\.(env|pem|key|p12|pfx|jks|keystore)$|credentials\.json|service-account.*\.json'; then
     echo "ERROR: Potentially sensitive file staged. Remove before committing."
     exit 1
 fi
 
-# 2. Auto-format all staged .rs files and re-stage them
+# 2. Check for accidental secrets — file content patterns
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=d | grep -vE '\.(bin|elf|png|jpg|gif|ico|woff2?|ttf)$' || true)
+if [ -n "$STAGED_FILES" ]; then
+    # Check staged content (not working tree) for secret patterns
+    if echo "$STAGED_FILES" | xargs git diff --cached -- | grep -qE \
+        '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----|ghp_[0-9a-zA-Z]{36}|glpat-[0-9a-zA-Z\-_]{20}|sk-[0-9a-zA-Z]{48})'; then
+        echo "ERROR: Potential secret detected in staged content (AWS key, private key, or API token)."
+        echo "If this is a false positive, use 'git commit --no-verify' to bypass."
+        exit 1
+    fi
+fi
+
+# 3. Auto-format all staged .rs files and re-stage them
 STAGED_RS=$(git diff --cached --name-only --diff-filter=d | grep '\.rs$' || true)
 if [ -n "$STAGED_RS" ]; then
     echo "$STAGED_RS" | RUSTUP_TOOLCHAIN=nightly xargs cargo fmt --
     echo "$STAGED_RS" | xargs git add
 fi
 
-# 3. Run unit tests (can't auto-fix, must pass)
+# 4. Run unit tests (can't auto-fix, must pass)
 cargo test --lib --no-default-features --quiet
