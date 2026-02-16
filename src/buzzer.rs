@@ -9,7 +9,7 @@ use embassy_time::{Duration, Timer};
 use esp_hal::gpio::DriveMode;
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, config::Duty, TimerIFace};
-use esp_hal::ledc::{Ledc, LowSpeed};
+use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
 use esp_hal::time::Rate;
 
 use crate::board;
@@ -19,7 +19,8 @@ pub async fn buzzer_task(
     ledc_peripheral: esp_hal::peripherals::LEDC<'static>,
     buzzer_pin: esp_hal::peripherals::GPIO2<'static>,
 ) {
-    let ledc = Ledc::new(ledc_peripheral);
+    let mut ledc = Ledc::new(ledc_peripheral);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
     let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     lstimer0
@@ -40,6 +41,12 @@ pub async fn buzzer_task(
         .unwrap();
 
     log::info!("Buzzer ready on GPIO{}", board::BUZZER_PIN);
+
+    // Short boot beep to confirm hardware is working
+    Timer::after(Duration::from_millis(50)).await;
+    channel0.set_duty(50).unwrap();
+    Timer::after(Duration::from_millis(200)).await;
+    channel0.set_duty(0).unwrap();
 
     let rx = crate::BUZZER_SIGNAL.receiver();
 
