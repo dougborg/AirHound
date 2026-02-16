@@ -40,9 +40,13 @@ esp32s3 = [
     "esp-bootloader-esp-idf/esp32s3",
 ]
 
-# Board-level features
-xiao = ["esp32s3"]
-m5stickc = ["esp32", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus"]
+# Board constants only (no firmware deps — usable by external crates)
+board-xiao = []
+board-m5stickc = []
+
+# Board-level features (constants + firmware deps)
+xiao = ["board-xiao", "esp32s3"]
+m5stickc = ["board-m5stickc", "esp32", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus"]
 
 [dependencies]
 # ── Always available (host + firmware) ────────────────────────────────
