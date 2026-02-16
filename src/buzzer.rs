@@ -14,6 +14,9 @@ use esp_hal::time::Rate;
 
 use crate::board;
 
+#[cfg(all(feature = "m5stickc", feature = "xiao"))]
+compile_error!("Only one board feature (m5stickc or xiao) may be enabled at a time");
+
 #[cfg(feature = "m5stickc")]
 type BuzzerPin = esp_hal::peripherals::GPIO2<'static>;
 #[cfg(feature = "xiao")]

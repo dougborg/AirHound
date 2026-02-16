@@ -17,6 +17,7 @@ use esp_backtrace as _;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Hardware-specific modules (binary crate only)
+#[cfg(any(feature = "m5stickc", feature = "xiao"))]
 mod buzzer;
 #[cfg(feature = "m5stickc")]
 mod display;
@@ -237,15 +238,18 @@ async fn main(spawner: embassy_executor::Spawner) {
     }
 
     // Buzzer task
-    #[cfg(feature = "m5stickc")]
-    let buzzer_pin = peripherals.GPIO2;
-    #[cfg(feature = "xiao")]
-    let buzzer_pin = peripherals.GPIO3;
+    #[cfg(any(feature = "m5stickc", feature = "xiao"))]
+    {
+        #[cfg(feature = "m5stickc")]
+        let buzzer_pin = peripherals.GPIO2;
+        #[cfg(feature = "xiao")]
+        let buzzer_pin = peripherals.GPIO3;
 
-    spawner
-        .spawn(buzzer::buzzer_task(peripherals.LEDC, buzzer_pin))
-        .unwrap();
-    log::info!("Buzzer task spawned");
+        spawner
+            .spawn(buzzer::buzzer_task(peripherals.LEDC, buzzer_pin))
+            .unwrap();
+        log::info!("Buzzer task spawned");
+    }
 
     log::info!(
         "Build target: {}",
