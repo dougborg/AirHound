@@ -1,0 +1,11 @@
+[target.xtensa-esp32s3-espidf]
+linker = "ldproxy"
+rustflags = ["--cfg", "espidf_time64"]
+
+[target.xtensa-esp32-espidf]
+linker = "ldproxy"
+rustflags = ["--cfg", "espidf_time64"]
+
+[env]
+ESP_LOG = "info"
+ESP_IDF_VERSION = "v5.3.3"
