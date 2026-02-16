@@ -55,6 +55,9 @@ pub(crate) fn uptime_secs() -> u32 {
         .unwrap_or(0)
 }
 
+/// Uptime in milliseconds, truncated to u32 (wraps every ~49.7 days).
+/// Matches the no_std firmware's `Instant::now().as_millis() & 0xFFFF_FFFF`
+/// convention — the companion app treats timestamps as opaque sequence numbers.
 fn uptime_millis_u32() -> u32 {
     BOOT_INSTANT
         .lock()
@@ -87,11 +90,16 @@ unsafe extern "C" fn promisc_rx_cb(
         return;
     }
 
-    // Safety: payload is `sig_len` bytes starting at pkt.payload
+    // Safety: promisc_rx_cb is only called by the ESP-IDF WiFi driver which
+    // guarantees pkt.payload points to a valid buffer of sig_len bytes.
+    // The sig_len == 0 early return above ensures a non-empty slice.
+    // u8 has no alignment requirements.
     let payload = unsafe { std::slice::from_raw_parts(pkt.payload.as_ptr(), sig_len) };
 
     if let Some(event) = scanner::parse_wifi_frame(payload, rssi, channel) {
-        if let Ok(guard) = SCAN_TX.lock() {
+        // Use try_lock to avoid blocking the WiFi driver task if another
+        // thread holds the mutex (e.g., during init).
+        if let Ok(guard) = SCAN_TX.try_lock() {
             if let Some(ref tx) = *guard {
                 let _ = tx.try_send(ScanEvent::WiFi(event));
             }
@@ -296,7 +304,7 @@ fn filter_thread(
             continue;
         }
 
-        let config = *FILTER_CONFIG.lock().unwrap();
+        let config = *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
 
         match event {
             ScanEvent::WiFi(ref wifi) => {
@@ -473,7 +481,7 @@ fn command_thread(cmd_rx: mpsc::Receiver<HostCommand>, output_tx: SyncSender<Msg
     while let Ok(cmd) = cmd_rx.recv() {
         let is_status_request = matches!(cmd, HostCommand::GetStatus);
 
-        let mut config = *FILTER_CONFIG.lock().unwrap();
+        let mut config = *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         let mut scanning = SCANNING.load(Ordering::Relaxed);
 
         let buzzer_state = comm::handle_command(&cmd, &mut config, &mut scanning);
@@ -482,7 +490,7 @@ fn command_thread(cmd_rx: mpsc::Receiver<HostCommand>, output_tx: SyncSender<Msg
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
         }
 
-        *FILTER_CONFIG.lock().unwrap() = config;
+        *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = config;
         SCANNING.store(scanning, Ordering::Relaxed);
 
         if is_status_request {
@@ -574,13 +582,15 @@ fn ble_main(
         .expect("BLE advertising start failed");
     log::info!("BLE advertising as '{}'", comm::BLE_ADV_NAME);
 
-    // Start BLE scanning in a separate thread
+    // Start BLE scanning in a separate thread.
+    // Pass the &'static BLEDevice reference — BLEDevice::take() can only be
+    // called once per process, so the scan thread must reuse this reference.
     let ble_scan_tx = scan_tx.clone();
     thread::Builder::new()
         .name("blescan".into())
         .stack_size(4096)
         .spawn(move || {
-            ble_scan_thread(ble_scan_tx);
+            ble_scan_thread(ble_scan_tx, ble_device);
         })
         .expect("BLE scan thread spawn failed");
     log::info!("BLE scan thread spawned");
@@ -608,10 +618,9 @@ fn ble_main(
 
 // ── BLE scan thread ──────────────────────────────────────────────────
 
-fn ble_scan_thread(scan_tx: SyncSender<ScanEvent>) {
+fn ble_scan_thread(scan_tx: SyncSender<ScanEvent>, ble_device: &BLEDevice) {
     log::info!("BLE scan thread started");
 
-    let ble_device = BLEDevice::take();
     let mut scan = BLEScan::new();
     scan.active_scan(true).interval(100).window(99);
 

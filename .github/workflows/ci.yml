@@ -196,23 +196,86 @@ jobs:
           path: airhound-${{ matrix.name }}.bin
           retention-days: 14
 
+  preview-binaries-std:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    needs: build-std
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: xiao-std
+            chip: esp32s3
+          - name: m5stickc-std
+            chip: esp32
+    steps:
+      - uses: cargo-bins/cargo-binstall@7691a5b29cda4f5499b819e5618012ba4b6c3334 # main
+
+      - name: Install espflash
+        run: cargo binstall espflash --no-confirm
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: elf-${{ matrix.name }}
+
+      - name: Create flashable binary
+        run: espflash save-image --chip ${{ matrix.chip }} airhound-std airhound-${{ matrix.name }}.bin
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: bin-${{ matrix.name }}
+          path: airhound-${{ matrix.name }}.bin
+          retention-days: 14
+
   preview-comment:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
-    needs: preview-binaries
+    needs: [preview-binaries, preview-binaries-std]
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      actions: read
     steps:
+      - name: Build comment body
+        id: comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts"
+
+          get_artifact_url() {
+            local name=$1
+            local id
+            id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${name}\") | .id")
+            if [ -n "$id" ]; then
+              echo "${base_url}/${id}"
+            fi
+          }
+
+          bin_xiao=$(get_artifact_url "bin-xiao")
+          bin_m5stickc=$(get_artifact_url "bin-m5stickc")
+          bin_xiao_std=$(get_artifact_url "bin-xiao-std")
+          bin_m5stickc_std=$(get_artifact_url "bin-m5stickc-std")
+
+          {
+            echo 'body<<ENDOFCOMMENT'
+            echo '### Preview Binaries'
+            echo ''
+            echo 'Flashable firmware binaries for this PR:'
+            echo ''
+            echo '#### no_std (Embassy)'
+            echo '| Board | Chip | Download |'
+            echo '|-------|------|----------|'
+            echo "| XIAO ESP32-S3 | esp32s3 | [bin-xiao](${bin_xiao}) |"
+            echo "| M5StickC Plus2 | esp32 | [bin-m5stickc](${bin_m5stickc}) |"
+            echo ''
+            echo '#### std (ESP-IDF)'
+            echo '| Board | Chip | Download |'
+            echo '|-------|------|----------|'
+            echo "| XIAO ESP32-S3 | esp32s3 | [bin-xiao-std](${bin_xiao_std}) |"
+            echo "| M5StickC Plus2 | esp32 | [bin-m5stickc-std](${bin_m5stickc_std}) |"
+            echo 'ENDOFCOMMENT'
+          } >> "$GITHUB_OUTPUT"
+
       - uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2
         with:
-          message: |
-            ### Preview Binaries
-
-            Flashable firmware binaries are available as artifacts from this workflow run.
-
-            | Board | Chip | Artifact |
-            |-------|------|----------|
-            | XIAO ESP32-S3 | esp32s3 | `bin-xiao` |
-            | M5StickC Plus2 | esp32 | `bin-m5stickc` |
-
-            Download from the [Actions tab](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          message: ${{ steps.comment.outputs.body }}
