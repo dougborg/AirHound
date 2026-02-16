@@ -1,21 +1,25 @@
 # AirHound build recipes — install just: cargo install just
 
-xiao_target := "xtensa-esp32s3-none-elf"
-m5_target   := "xtensa-esp32-none-elf"
-dev_image   := "airhound-dev"
-xiao_image  := "espressif/idf-rust:esp32s3_latest"
-m5_image    := "espressif/idf-rust:esp32_latest"
+xiao_target     := "xtensa-esp32s3-none-elf"
+m5_target       := "xtensa-esp32-none-elf"
+xiao_target_std := "xtensa-esp32s3-espidf"
+m5_target_std   := "xtensa-esp32-espidf"
+dev_image := "airhound-dev"
+esp_image := "espressif/idf-rust:all_1.90.0.0"
 
 # build-std is needed for xtensa targets (no pre-built sysroot).
 # Kept here instead of .cargo/config.toml so `cargo test` works on host.
-_build_std := "-Z build-std=core,alloc"
+_build_std     := "-Z build-std=core,alloc"
+_build_std_std := "-Z build-std=std,panic_abort"
 
 # Serial device for flashing (override: just device=/dev/ttyACM0 flash-xiao)
 device := env_var_or_default("DEVICE", "/dev/ttyUSB0")
 
-_volumes := "-v " + justfile_directory() + ":/home/esp/workspace -v airhound-cargo-registry:/home/esp/.cargo/registry -v airhound-cargo-git:/home/esp/.cargo/git"
-_docker  := "docker run --rm " + _volumes + " -w /home/esp/workspace"
-_esp_env := "bash -c '. /home/esp/export-esp.sh &&"
+_volumes   := "-v " + justfile_directory() + ":/home/esp/workspace -v airhound-cargo-registry:/home/esp/.cargo/registry -v airhound-cargo-git:/home/esp/.cargo/git"
+_vol_std   := _volumes + " -v airhound-embuild:/home/esp/workspace/firmware-std/.embuild"
+_docker    := "docker run --rm " + _volumes + " -w /home/esp/workspace"
+_docker_rt := "docker run --rm --user root -e RUSTUP_HOME=/home/esp/.rustup -e CARGO_HOME=/home/esp/.cargo " + _vol_std + " -w /home/esp/workspace"
+_esp_env   := "bash -c '. /home/esp/export-esp.sh &&"
 
 # List available recipes
 [private]
@@ -198,51 +202,67 @@ docker-image:
 [group('docker')]
 docker-build: docker-build-xiao docker-build-m5stickc
 
-# Build XIAO firmware (in container, chip-specific image)
+# Build XIAO firmware (in container)
 [group('docker')]
 docker-build-xiao:
-    {{ _docker }} {{ xiao_image }} {{ _esp_env }} cargo build --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo build --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
 
-# Build M5StickC firmware (in container, chip-specific image)
+# Build M5StickC firmware (in container)
 [group('docker')]
 docker-build-m5stickc:
-    {{ _docker }} {{ m5_image }} {{ _esp_env }} cargo build --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo build --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
 
 # Type-check both boards (in container)
 [group('docker')]
 docker-check: docker-check-xiao docker-check-m5stickc
 
-# Type-check XIAO (in container, chip-specific image)
+# Type-check XIAO (in container)
 [group('docker')]
 docker-check-xiao:
-    {{ _docker }} {{ xiao_image }} {{ _esp_env }} cargo check --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo check --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
 
-# Type-check M5StickC (in container, chip-specific image)
+# Type-check M5StickC (in container)
 [group('docker')]
 docker-check-m5stickc:
-    {{ _docker }} {{ m5_image }} {{ _esp_env }} cargo check --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo check --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
 
 # Run library unit tests (in container)
 [group('docker')]
 docker-test:
-    {{ _docker }} {{ xiao_image }} {{ _esp_env }} cargo test --lib --no-default-features'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo test --lib --no-default-features'
 
 # Flash XIAO via container (Linux only — requires USB passthrough)
 [group('docker')]
 docker-flash-xiao:
-    {{ _docker }} --device={{ device }} {{ xiao_image }} {{ _esp_env }} cargo run --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
+    {{ _docker }} --device={{ device }} {{ esp_image }} {{ _esp_env }} cargo run --no-default-features --features xiao --release --target {{ xiao_target }} {{ _build_std }}'
 
 # Flash M5StickC via container (Linux only — requires USB passthrough)
 [group('docker')]
 docker-flash-m5stickc:
-    {{ _docker }} --device={{ device }} {{ m5_image }} {{ _esp_env }} cargo run --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
+    {{ _docker }} --device={{ device }} {{ esp_image }} {{ _esp_env }} cargo run --no-default-features --features m5stickc --release --target {{ m5_target }} {{ _build_std }}'
 
-# Remove build artifacts (uses either chip image)
+# Remove build artifacts
 [group('docker')]
 docker-clean:
-    {{ _docker }} {{ xiao_image }} {{ _esp_env }} cargo clean'
+    {{ _docker }} {{ esp_image }} {{ _esp_env }} cargo clean'
 
 # Open an interactive shell in the dev container (full toolchain)
 [group('docker')]
 docker-shell: docker-image
     {{ _docker }} -it {{ dev_image }}
+
+# ── Docker (std firmware) ─────────────────────────────────────────
+
+# Build std firmware for both boards (in container)
+[group('docker-std')]
+docker-build-std: docker-build-std-xiao docker-build-std-m5stickc
+
+# Build std firmware for XIAO ESP32-S3 (in container)
+[group('docker-std')]
+docker-build-std-xiao:
+    {{ _docker_rt }} {{ esp_image }} {{ _esp_env }} cd firmware-std && MCU=esp32s3 cargo build --no-default-features --features xiao --release --target {{ xiao_target_std }} {{ _build_std_std }}'
+
+# Build std firmware for M5StickC Plus2 (in container)
+[group('docker-std')]
+docker-build-std-m5stickc:
+    {{ _docker_rt }} {{ esp_image }} {{ _esp_env }} cd firmware-std && MCU=esp32 cargo build --no-default-features --features m5stickc --release --target {{ m5_target_std }} {{ _build_std_std }}'
