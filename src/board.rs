@@ -6,7 +6,7 @@
 // Pin assignments and capability flags are defined for hardware reference
 // even when not yet wired up in code — peripherals are passed by type.
 #[allow(dead_code)]
-#[cfg(feature = "xiao")]
+#[cfg(feature = "board-xiao")]
 mod hw {
     pub const LED_PIN: u8 = 9; // WS2812 addressable LED
     pub const GPS_RX_PIN: u8 = 6;
@@ -19,7 +19,7 @@ mod hw {
 }
 
 #[allow(dead_code)]
-#[cfg(feature = "m5stickc")]
+#[cfg(feature = "board-m5stickc")]
 mod hw {
     pub const LED_PIN: u8 = 10; // Built-in LED
     pub const HAS_PSRAM: bool = false;
@@ -48,7 +48,7 @@ mod hw {
     pub const BUZZER_BEEP_MS: u64 = 150;
 }
 
-#[cfg(not(any(feature = "xiao", feature = "m5stickc")))]
+#[cfg(not(any(feature = "board-xiao", feature = "board-m5stickc")))]
 mod hw {
     pub const BOARD_NAME: &str = "unknown";
 }
