@@ -2,7 +2,7 @@
 //!
 //! One of three portable layers in the AirHound toolkit (alongside the
 //! [signature schema](../schemas/signatures.v1.schema.json) and
-//! [event protocol schema](../schemas/device-message.v1.schema.json)).
+//! [companion event protocol schema](../schemas/device-message.v1.schema.json)).
 //! This crate contains all scanning, filtering, and protocol logic with no
 //! platform dependencies, testable on any host with `cargo test`. Platform
 //! binaries (ESP32 firmware, Linux daemon, Kismet companion) are thin consumers
