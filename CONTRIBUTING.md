@@ -11,6 +11,9 @@ Roughly ordered by accessibility:
 3. **Add board support** — New ESP32 board? Add a feature flag in `Cargo.toml` and pin assignments in `src/board.rs`.
 4. **Protocol improvements** — Changes to the NDJSON message format in `src/protocol.rs`. See [#9](https://github.com/dougborg/AirHound/issues/9).
 5. **Bug fixes and code improvements** — Always welcome.
+6. **Library module contributions** — Layer 2 modules ([#28](https://github.com/dougborg/AirHound/issues/28)–[#32](https://github.com/dougborg/AirHound/issues/32)) are pure Rust with no platform dependencies, fully testable on host with `cargo test`. See the [architecture vision](https://github.com/dougborg/AirHound/issues/17) for context.
+7. **Linux daemon and Kismet companion** — If you have experience with `pcap`, `bluer`, or the Kismet REST API, see [#13](https://github.com/dougborg/AirHound/issues/13) and [#12](https://github.com/dougborg/AirHound/issues/12).
+8. **Cross-project signature sharing** — Help bridge AirHound's portable signature format ([#11](https://github.com/dougborg/AirHound/issues/11)) to other detection tools ([#16](https://github.com/dougborg/AirHound/issues/16)).
 
 ## Development Setup
 
@@ -57,7 +60,7 @@ Examples:
 feat: add Verkada MAC OUI prefixes
 fix: handle truncated BLE advertisement packets
 feat(m5stickc): add battery voltage display
-docs: update filter data counts in README
+docs: update signature counts in README
 chore: bump esp-hal to latest git main
 ```
 
@@ -71,7 +74,7 @@ Common prefixes: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`.
 
 ## Adding Device Signatures
 
-The signature database lives in [`src/defaults.rs`](src/defaults.rs). There are several types of signatures you can add:
+AirHound's signature database has a formal [JSON Schema](schemas/signatures.v1.schema.json) designed for cross-tool sharing ([#11](https://github.com/dougborg/AirHound/issues/11)). The default signatures currently live in [`src/defaults.rs`](src/defaults.rs) in the library crate. There are several types of signatures you can add:
 
 ### MAC OUI Prefixes
 
@@ -111,4 +114,4 @@ For exact SSID matches, add to `SSID_EXACT`. For case-insensitive substring matc
 - **Cite your source.** Add a code comment or mention in the PR where the signature came from (Wireshark capture, another project's database, FCC filing, etc.).
 - **Group by vendor.** Keep entries organized under vendor comment headers.
 - **Test your changes.** Run `just docker-test` (or `just test` natively) — the unit tests verify that filter matching works correctly.
-- **Update counts.** If you add MAC prefixes, update the count in `README.md` under Filter Data.
+- **Update counts.** If you add MAC prefixes, update the count in `README.md` under Signature Database.
