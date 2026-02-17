@@ -4,7 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AirHound is a surveillance detection toolkit built around three portable layers: a standardized **signature database** (JSON Schema in `schemas/signatures.v1.schema.json`), a documented **event protocol** (NDJSON with JSON Schemas in `schemas/`), and a **detection library** (`src/lib.rs` — `no_std` Rust, no platform dependencies). ESP32 firmware is the reference platform consumer; a Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)) and Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) are planned. Companion apps handle analysis, scoring, GPS tagging, and storage. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+AirHound is a surveillance detection toolkit built around three portable layers: a standardized **signature database** (JSON Schema in `schemas/signatures.v1.schema.json`), a documented **companion event protocol** (NDJSON with JSON Schemas in `schemas/`), and a **detection library** (`src/lib.rs` — `no_std` Rust, no platform dependencies). ESP32 firmware is the reference platform consumer; a Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)) and Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) are planned. Companion apps handle analysis, scoring, GPS tagging, and storage. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+
+## Terminology
+
+The project uses these terms consistently across code, schemas, and documentation:
+
+**Data concepts:**
+- **Signature** — atomic, stateless matching criterion. Currently 6 types: `mac_oui`, `wifi_ssid`, `ble_name`, `ble_service_uuid`, `ble_manufacturer_id`, `ble_ad_bytes`. Defined in `signatures.v1.schema.json`, compiled defaults in `defaults.rs`.
+- **Rule** — named device detection composing signatures with `anyOf`/`allOf`/`not` boolean logic. Defined in `signatures.v1.schema.json`. Rule evaluation engine not yet implemented.
+- **Signature database** — portable JSON collection of signatures and rules.
+
+**Processing concepts:**
+- **Scan event** — parsed WiFi frame or BLE advertisement. Types: `ScanEvent`, `WiFiEvent`, `BleEvent` in `scanner.rs`.
+- **Filter engine** — stateless code evaluating scan events against signatures. Entry points: `filter_wifi()`, `filter_ble()` in `filter.rs`.
+- **Filter config** — runtime parameters (RSSI threshold, WiFi/BLE enable). `FilterConfig` in `filter.rs`. Not signature data.
+- **Match** — positive result from the filter engine. `FilterResult` in `filter.rs`.
+- **Match reason** — which signature type triggered and a human-readable detail. `MatchReason` in `protocol.rs`. The `filter_type` field name is a legacy misnomer (rename to `signature_type` tracked for v2, [#9](https://github.com/dougborg/AirHound/issues/9)).
+
+**Output concepts:**
+- **Device message** — NDJSON line from sensor. `DeviceMessage` in `protocol.rs`, schema: `device-message.v1.schema.json`.
+- **Host command** — NDJSON line to sensor. `HostCommand` in `protocol.rs`, schema: `host-command.v1.schema.json`.
+- **Companion event protocol** — the transport-agnostic NDJSON wire format for device messages and host commands.
+
+**WIDS concepts (planned, [#32](https://github.com/dougborg/AirHound/issues/32)):**
+- **Fingerprint alert** — single-frame security anomaly (e.g., malformed IE, zero WPA NONCE). Stateless.
+- **Behavioral alert** — multi-frame temporal detection (e.g., deauth flood, evil twin). Requires per-device state. Implemented as code in `wids.rs`, not declarative rules.
 
 ## Build Commands
 
@@ -42,7 +67,7 @@ The `m5stickc` feature additionally enables display (`mipidsi`, `embedded-graphi
 
 ## Architecture
 
-The project's three portable layers (signature schemas, event protocol, detection library) are described in [Architectural Direction](#architectural-direction) below. This section covers the **ESP32 firmware** implementation.
+The project's three portable layers (signature schemas, companion event protocol, detection library) are described in [Architectural Direction](#architectural-direction) below. This section covers the **ESP32 firmware** implementation.
 
 The firmware runs on the Embassy async executor (`esp-rtos`). All tasks are single-threaded cooperative (no preemption). Tasks communicate through static `embassy_sync::Channel`s defined in `main.rs`:
 
@@ -121,7 +146,7 @@ The project is built around three portable layers ([#17](https://github.com/doug
 | Layer | Artifact | Status |
 |-------|----------|--------|
 | Signature Database | `schemas/signatures.v1.schema.json` + `schemas/examples/` | v1 committed |
-| Event Protocol | `schemas/device-message.v1.schema.json`, `schemas/host-command.v1.schema.json` | v1 committed |
+| Companion Event Protocol | `schemas/device-message.v1.schema.json`, `schemas/host-command.v1.schema.json` | v1 committed |
 | Detection Library | `src/lib.rs` (scanner, filter, defaults, protocol, comm) | Implemented |
 
 Each layer is independently useful. The schemas are designed for cross-tool adoption ([#11](https://github.com/dougborg/AirHound/issues/11), [#16](https://github.com/dougborg/AirHound/issues/16)) — other projects can consume the signature format or wire protocol without depending on AirHound's Rust code.
@@ -136,7 +161,7 @@ Each layer is independently useful. The schemas are designed for cross-tool adop
 
 ### Key Principles
 
-- **Standard formats first** — Signature database and event protocol are defined by JSON Schemas, usable by any tool regardless of language or runtime.
+- **Standard formats first** — Signature database and companion event protocol are defined by JSON Schemas, usable by any tool regardless of language or runtime.
 - **Library owns logic, binaries own I/O** — scanning, filtering, protocol, and analysis in the library; radio drivers, async runtimes, and output sinks in platform binaries.
 - **Feature gates control dependencies** — Layer 1 is unconditional `no_std`. Layer 2 modules behind feature flags so consumers only pay for what they use.
-- **App-agnostic protocol** — NDJSON over any transport. Sensors and companion apps are interchangeable.
+- **App-agnostic companion protocol** — NDJSON over any transport. Sensors and companion apps are interchangeable.
