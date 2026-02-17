@@ -1,6 +1,6 @@
-/// Configurable filter engine for WiFi and BLE scan results.
+/// Filter engine for WiFi and BLE scan events.
 ///
-/// Evaluates scan results against compiled-in defaults and runtime config.
+/// Evaluates scan events against the signature database and runtime config.
 /// Any filter match causes the result to be emitted. No scoring or state tracking —
 /// that's the companion app's job.
 use heapless::Vec;
@@ -39,14 +39,14 @@ impl Default for FilterConfig {
     }
 }
 
-/// Input data for filtering a WiFi scan result
+/// Input data for filtering a WiFi scan event
 pub struct WiFiScanInput<'a> {
     pub mac: &'a [u8; 6],
     pub ssid: &'a str,
     pub rssi: i8,
 }
 
-/// Input data for filtering a BLE scan result
+/// Input data for filtering a BLE scan event
 pub struct BleScanInput<'a> {
     pub mac: &'a [u8; 6],
     pub name: &'a str,
@@ -92,7 +92,7 @@ impl FilterResult {
     }
 }
 
-/// Evaluate a WiFi scan result against all configured filters.
+/// Evaluate a WiFi scan event against all signatures.
 pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult {
     let mut result = FilterResult::new();
 
@@ -150,7 +150,7 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
     result
 }
 
-/// Evaluate a BLE scan result against all configured filters.
+/// Evaluate a BLE scan event against all signatures.
 pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
     let mut result = FilterResult::new();
 

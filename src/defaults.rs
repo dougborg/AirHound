@@ -1,4 +1,4 @@
-/// Default filter data compiled into the firmware.
+/// Default signature data for surveillance device detection.
 ///
 /// MAC OUI prefixes merged from FlockOff (~88 entries), FlockSquawk (20 entries),
 /// and flock-you. SSID patterns, BLE name patterns, Raven UUIDs, and manufacturer

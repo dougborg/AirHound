@@ -60,11 +60,11 @@
         "ble_uuid_std",
         "ble_mfr"
       ],
-      "description": "Filter match type. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id."
+      "description": "Signature type that triggered this match. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id."
     },
     "match_reason": {
       "type": "object",
-      "description": "A single filter match reason. Each scan event contains 1–4 reasons explaining why the device matched.",
+      "description": "A single match reason. Each scan event contains 1–4 reasons explaining why the device matched.",
       "required": [
         "type",
         "detail"
@@ -73,7 +73,7 @@
       "properties": {
         "type": {
           "$ref": "#/$defs/match_reason_type",
-          "description": "Which filter type produced this match."
+          "description": "Which signature type triggered this match."
         },
         "detail": {
           "type": "string",
@@ -84,7 +84,7 @@
     },
     "wifi_scan": {
       "type": "object",
-      "description": "WiFi scan match. Emitted when a promiscuous-mode 802.11 frame matches at least one filter rule.",
+      "description": "WiFi scan match. Emitted when a promiscuous-mode 802.11 frame matches at least one signature.",
       "required": [
         "type",
         "mac",
@@ -142,7 +142,7 @@
     },
     "ble_scan": {
       "type": "object",
-      "description": "BLE scan match. Emitted when a BLE advertisement matches at least one filter rule.",
+      "description": "BLE scan match. Emitted when a BLE advertisement matches at least one signature.",
       "required": [
         "type",
         "mac",
