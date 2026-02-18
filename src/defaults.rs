@@ -305,10 +305,10 @@ const SIG_FLIPPER_ZERO_BLACK: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 2;
 /// Shared post-order expression node pool for all rules.
 ///
 /// Layout:
-///   [0..11]  Flock Safety Camera (12 nodes)
-///   [12..17] Raven Acoustic Sensor (6 nodes)
+///   [0..12)  Flock Safety Camera (12 nodes)
+///   [12..18) Raven Acoustic Sensor (6 nodes)
 ///   [18]     Apple AirTag (1 node)
-///   [19..21] Flipper Zero (3 nodes)
+///   [19..22) Flipper Zero (3 nodes)
 static DEFAULT_RULE_NODES: &[ExprNode] = &[
     // ── Flock Safety Camera ──
     // anyOf(
