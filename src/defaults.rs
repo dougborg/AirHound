@@ -189,6 +189,190 @@ pub static BLE_MANUFACTURER_IDS: &[u16] = &[
     0x09C8, // XUNTONG (associated with Flock Safety)
 ];
 
+/// A BLE advertisement byte pattern signature.
+pub struct BleAdBytesPattern {
+    /// Byte sequence to match
+    pub bytes: &'static [u8],
+    /// Match position: `None` = search anywhere in raw AD data,
+    /// `Some(n)` = match at manufacturer-specific data offset `n`
+    pub offset: Option<usize>,
+    /// Human-readable description
+    pub description: &'static str,
+}
+
+/// Known BLE advertisement byte patterns.
+///
+/// Patterns for tracker and multi-tool devices that can be identified
+/// by specific byte sequences in their advertisement data.
+pub static BLE_AD_BYTES_PATTERNS: &[BleAdBytesPattern] = &[
+    // Apple AirTag / FindMy: manufacturer data starts with Apple company ID (0x004C)
+    // followed by FindMy type byte 0x12 and length 0x19
+    BleAdBytesPattern {
+        bytes: &[0x4C, 0x00, 0x12, 0x19],
+        offset: Some(0),
+        description: "Apple AirTag",
+    },
+    // Flipper Zero White: [0x80, 0x30] in manufacturer-specific data
+    BleAdBytesPattern {
+        bytes: &[0x80, 0x30],
+        offset: None,
+        description: "Flipper Zero",
+    },
+    // Flipper Zero Black: [0x81, 0x30] in manufacturer-specific data
+    BleAdBytesPattern {
+        bytes: &[0x81, 0x30],
+        offset: None,
+        description: "Flipper Zero",
+    },
+];
+
+// ── Signature index constants ────────────────────────────────────────
+//
+// Each compiled-in signature array gets a starting index. The global index
+// of signature `i` within array `A` is `SIG_IDX_A_START + i`. These map
+// every compiled-in signature to a unique `SigIdx` for the rule engine.
+
+use crate::rules::{ExprNode, Rule, RuleDb, SigIdx};
+
+pub const SIG_IDX_MAC_OUI_START: SigIdx = 0;
+pub const SIG_IDX_SSID_PATTERN_START: SigIdx = MAC_PREFIXES.len() as SigIdx;
+pub const SIG_IDX_SSID_EXACT_START: SigIdx = SIG_IDX_SSID_PATTERN_START + SSID_PATTERNS.len() as SigIdx;
+pub const SIG_IDX_SSID_KEYWORD_START: SigIdx = SIG_IDX_SSID_EXACT_START + SSID_EXACT.len() as SigIdx;
+pub const SIG_IDX_WIFI_NAME_START: SigIdx = SIG_IDX_SSID_KEYWORD_START + SSID_KEYWORDS.len() as SigIdx;
+pub const SIG_IDX_BLE_NAME_START: SigIdx = SIG_IDX_WIFI_NAME_START + WIFI_NAME_KEYWORDS.len() as SigIdx;
+pub const SIG_IDX_BLE_UUID_START: SigIdx = SIG_IDX_BLE_NAME_START + BLE_NAME_PATTERNS.len() as SigIdx;
+pub const SIG_IDX_BLE_STD_UUID_START: SigIdx = SIG_IDX_BLE_UUID_START + BLE_SERVICE_UUIDS_16.len() as SigIdx;
+pub const SIG_IDX_BLE_MFR_START: SigIdx = SIG_IDX_BLE_STD_UUID_START + BLE_STANDARD_UUIDS_16.len() as SigIdx;
+pub const SIG_IDX_BLE_AD_BYTES_START: SigIdx = SIG_IDX_BLE_MFR_START + BLE_MANUFACTURER_IDS.len() as SigIdx;
+
+/// Total number of compiled-in signatures.
+pub const SIG_COUNT: usize = SIG_IDX_BLE_AD_BYTES_START as usize + BLE_AD_BYTES_PATTERNS.len();
+
+// ── Named signature indices (for readability in rule definitions) ────
+
+// Flock Safety Camera signatures
+/// MAC_PREFIXES[0] = Flock Safety OUI B4:1E:52
+const SIG_FLOCK_SAFETY_OUI: SigIdx = SIG_IDX_MAC_OUI_START + 0;
+/// MAC_PREFIXES[1] = Silicon Labs 58:8E:81
+const SIG_SILABS_588E81: SigIdx = SIG_IDX_MAC_OUI_START + 1;
+/// MAC_PREFIXES[2] = Silicon Labs CC:CC:CC
+const SIG_SILABS_CCCCCC: SigIdx = SIG_IDX_MAC_OUI_START + 2;
+/// SSID_PATTERNS[0] = Flock-XXXXXX
+const SIG_FLOCK_SSID_PREFIX: SigIdx = SIG_IDX_SSID_PATTERN_START + 0;
+/// SSID_EXACT[0] = "FS Ext Battery"
+const SIG_FS_EXT_BATTERY_SSID: SigIdx = SIG_IDX_SSID_EXACT_START + 0;
+/// SSID_KEYWORDS[0] = "flock"
+const SIG_FLOCK_SSID_KEYWORD: SigIdx = SIG_IDX_SSID_KEYWORD_START + 0;
+/// BLE_NAME_PATTERNS[0] = "Flock"
+const SIG_FLOCK_BLE_NAME: SigIdx = SIG_IDX_BLE_NAME_START + 0;
+/// BLE_NAME_PATTERNS[2] = "FS Ext Battery"
+const SIG_FS_EXT_BATTERY_BLE: SigIdx = SIG_IDX_BLE_NAME_START + 2;
+/// BLE_MANUFACTURER_IDS[0] = 0x09C8 (XUNTONG)
+const SIG_XUNTONG_MFR: SigIdx = SIG_IDX_BLE_MFR_START + 0;
+
+// Raven Acoustic Sensor signatures
+/// BLE_SERVICE_UUIDS_16[0] = 0x3100
+const SIG_RAVEN_GPS_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 0;
+/// BLE_SERVICE_UUIDS_16[1] = 0x3200
+const SIG_RAVEN_POWER_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 1;
+/// BLE_SERVICE_UUIDS_16[2] = 0x3300
+const SIG_RAVEN_NETWORK_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 2;
+/// BLE_SERVICE_UUIDS_16[3] = 0x3400
+const SIG_RAVEN_UPLOAD_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 3;
+/// BLE_SERVICE_UUIDS_16[4] = 0x3500
+const SIG_RAVEN_ERROR_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 4;
+
+// Apple AirTag signature
+/// BLE_AD_BYTES_PATTERNS[0] = Apple FindMy header
+const SIG_AIRTAG_FINDMY_AD: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 0;
+
+// Flipper Zero signatures
+/// BLE_AD_BYTES_PATTERNS[1] = Flipper Zero White
+const SIG_FLIPPER_ZERO_WHITE: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 1;
+/// BLE_AD_BYTES_PATTERNS[2] = Flipper Zero Black
+const SIG_FLIPPER_ZERO_BLACK: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 2;
+
+// ── Compiled-in rule database ───────────────────────────────────────
+
+/// Shared post-order expression node pool for all rules.
+///
+/// Layout:
+///   [0..11]  Flock Safety Camera (12 nodes)
+///   [12..17] Raven Acoustic Sensor (6 nodes)
+///   [18]     Apple AirTag (1 node)
+///   [19..21] Flipper Zero (3 nodes)
+static DEFAULT_RULE_NODES: &[ExprNode] = &[
+    // ── Flock Safety Camera ──
+    // anyOf(
+    //   flock-safety-oui, silabs-588e81, silabs-cccccc,
+    //   flock-ssid-prefix, fs-ext-battery-ssid, flock-ssid-keyword,
+    //   flock-ble-name, fs-ext-battery-ble,
+    //   allOf(xuntong-mfr, flock-ble-name)
+    // )
+    ExprNode::Sig(SIG_FLOCK_SAFETY_OUI),    // [0]
+    ExprNode::Sig(SIG_SILABS_588E81),        // [1]
+    ExprNode::Sig(SIG_SILABS_CCCCCC),        // [2]
+    ExprNode::Sig(SIG_FLOCK_SSID_PREFIX),    // [3]
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_SSID),  // [4]
+    ExprNode::Sig(SIG_FLOCK_SSID_KEYWORD),   // [5]
+    ExprNode::Sig(SIG_FLOCK_BLE_NAME),       // [6]
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_BLE),   // [7]
+    // allOf(xuntong-mfr, flock-ble-name) — nested AND
+    ExprNode::Sig(SIG_XUNTONG_MFR),          // [8]
+    ExprNode::Sig(SIG_FLOCK_BLE_NAME),       // [9]  (same sig referenced again)
+    ExprNode::AllOf { count: 2 },             // [10]
+    // Top-level anyOf: 8 direct sigs + 1 allOf result = 9 children
+    ExprNode::AnyOf { count: 9 },             // [11]
+
+    // ── Raven Acoustic Sensor ──
+    // anyOf(raven-gps, raven-power, raven-network, raven-upload, raven-error)
+    ExprNode::Sig(SIG_RAVEN_GPS_UUID),        // [12]
+    ExprNode::Sig(SIG_RAVEN_POWER_UUID),      // [13]
+    ExprNode::Sig(SIG_RAVEN_NETWORK_UUID),    // [14]
+    ExprNode::Sig(SIG_RAVEN_UPLOAD_UUID),     // [15]
+    ExprNode::Sig(SIG_RAVEN_ERROR_UUID),      // [16]
+    ExprNode::AnyOf { count: 5 },             // [17]
+
+    // ── Apple AirTag ──
+    // Single sig reference
+    ExprNode::Sig(SIG_AIRTAG_FINDMY_AD),      // [18]
+
+    // ── Flipper Zero ──
+    // anyOf(flipper-white, flipper-black)
+    ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE),     // [19]
+    ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK),     // [20]
+    ExprNode::AnyOf { count: 2 },              // [21]
+];
+
+static DEFAULT_RULES: &[Rule] = &[
+    Rule {
+        name: "Flock Safety Camera",
+        expr_start: 0,
+        expr_len: 12,
+    },
+    Rule {
+        name: "Raven Acoustic Sensor",
+        expr_start: 12,
+        expr_len: 6,
+    },
+    Rule {
+        name: "Apple AirTag",
+        expr_start: 18,
+        expr_len: 1,
+    },
+    Rule {
+        name: "Flipper Zero",
+        expr_start: 19,
+        expr_len: 3,
+    },
+];
+
+/// The default compiled-in rule database.
+pub static DEFAULT_RULE_DB: RuleDb = RuleDb {
+    nodes: DEFAULT_RULE_NODES,
+    rules: DEFAULT_RULES,
+};
+
 /// SSID suffix format kind
 #[derive(Debug, Clone, Copy)]
 pub enum SuffixKind {
