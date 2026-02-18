@@ -4,7 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AirHound is a `no_std` Rust firmware for ESP32 devices that acts as an RF wardriving companion. It scans WiFi (promiscuous mode) and BLE advertisements, filters results against compiled-in surveillance device signatures (MAC OUI prefixes, SSID patterns, BLE names/UUIDs/manufacturer IDs), and emits matched results as NDJSON over BLE GATT notifications and serial. AirHound is a **thin sensor/relay** — the companion app (DeFlock) handles analysis, scoring, GPS tagging, and storage.
+AirHound is a surveillance detection toolkit built around three portable layers: a standardized **signature database** (JSON Schema in `schemas/signatures.v1.schema.json`), a documented **companion event protocol** (NDJSON with JSON Schemas in `schemas/`), and a **detection library** (`src/lib.rs` — `no_std` Rust, no platform dependencies). ESP32 firmware is the reference platform consumer; a Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)) and Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) are planned. Companion apps handle analysis, scoring, GPS tagging, and storage. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+
+## Terminology
+
+The project uses these terms consistently across code, schemas, and documentation:
+
+**Data concepts:**
+- **Signature** — atomic, stateless matching criterion. Currently 6 types: `mac_oui`, `wifi_ssid`, `ble_name`, `ble_service_uuid`, `ble_manufacturer_id`, `ble_ad_bytes`. Defined in `signatures.v1.schema.json`, compiled defaults in `defaults.rs`.
+- **Rule** — named device detection composing signatures with `anyOf`/`allOf`/`not` boolean logic. Defined in `signatures.v1.schema.json`. Rule evaluation engine not yet implemented.
+- **Signature database** — portable JSON collection of signatures and rules.
+
+**Processing concepts:**
+- **Scan event** — parsed WiFi frame or BLE advertisement. Types: `ScanEvent`, `WiFiEvent`, `BleEvent` in `scanner.rs`.
+- **Filter engine** — stateless code evaluating scan events against signatures. Entry points: `filter_wifi()`, `filter_ble()` in `filter.rs`.
+- **Filter config** — runtime parameters (RSSI threshold, WiFi/BLE enable). `FilterConfig` in `filter.rs`. Not signature data.
+- **Match** — positive result from the filter engine. `FilterResult` in `filter.rs`.
+- **Match reason** — which signature type triggered and a human-readable detail. `MatchReason` in `protocol.rs`. The `filter_type` field name is a legacy misnomer (rename to `signature_type` tracked for v2, [#9](https://github.com/dougborg/AirHound/issues/9)).
+
+**Output concepts:**
+- **Device message** — NDJSON line from sensor. `DeviceMessage` in `protocol.rs`, schema: `device-message.v1.schema.json`.
+- **Host command** — NDJSON line to sensor. `HostCommand` in `protocol.rs`, schema: `host-command.v1.schema.json`.
+- **Companion event protocol** — the transport-agnostic NDJSON wire format for device messages and host commands.
+
+**WIDS concepts (planned, [#32](https://github.com/dougborg/AirHound/issues/32)):**
+- **Fingerprint alert** — single-frame security anomaly (e.g., malformed IE, zero WPA NONCE). Stateless.
+- **Behavioral alert** — multi-frame temporal detection (e.g., deauth flood, evil twin). Requires per-device state. Implemented as code in `wids.rs`, not declarative rules.
 
 ## Build Commands
 
@@ -42,6 +67,8 @@ The `m5stickc` feature additionally enables display (`mipidsi`, `embedded-graphi
 
 ## Architecture
 
+The project's three portable layers (signature schemas, companion event protocol, detection library) are described in [Architectural Direction](#architectural-direction) below. This section covers the **ESP32 firmware** implementation.
+
 The firmware runs on the Embassy async executor (`esp-rtos`). All tasks are single-threaded cooperative (no preemption). Tasks communicate through static `embassy_sync::Channel`s defined in `main.rs`:
 
 - **SCAN_CHANNEL** (capacity 16) — WiFi sniffer ISR and BLE scan task push raw `ScanEvent`s
@@ -58,15 +85,31 @@ Shared state uses atomics (`SCANNING`, `BLE_CLIENTS`, `WIFI_MATCH_COUNT`, `BLE_M
 
 The project is split into a library crate (`src/lib.rs`) and a binary crate (`src/main.rs`). The library contains all pure-logic modules testable on host (`cargo test --lib --no-default-features`). The binary contains ESP-specific code (ISR callbacks, embassy tasks, hardware init). Library uses `#![cfg_attr(not(test), no_std)]` — `no_std` for firmware, `std` for tests.
 
+The library is organized in two layers with progressive feature gates:
+
+| Layer | Modules | Requires | Status |
+|-------|---------|----------|--------|
+| Layer 1 | `scanner`, `filter`, `defaults`, `protocol`, `comm`, `board` | `no_std`, no deps | Implemented |
+| Layer 2 | `gps` ([#28](https://github.com/dougborg/AirHound/issues/28)), `tracker` ([#29](https://github.com/dougborg/AirHound/issues/29)), `channel` ([#30](https://github.com/dougborg/AirHound/issues/30)) | `no_std` + `alloc` | Planned |
+| Layer 2 | `export` ([#31](https://github.com/dougborg/AirHound/issues/31)) | `std` | Planned |
+| Layer 2 | `wids` ([#32](https://github.com/dougborg/AirHound/issues/32)) | `no_std` + `alloc` | Planned |
+
 ### Module Responsibilities
 
 **Library modules** (`src/lib.rs` re-exports):
 - **`scanner.rs`** — WiFi/BLE event types, 802.11 frame parsing (`parse_wifi_frame()`), BLE advertisement parsing (`BleAdvParser`). Pure functions — ISR callbacks and channel hop task live in `main.rs`.
-- **`filter.rs`** — Stateless filter engine. `filter_wifi()` and `filter_ble()` evaluate inputs against compiled-in defaults plus runtime `FilterConfig`. Returns up to 4 `MatchReason`s per result.
-- **`defaults.rs`** — All compiled-in filter data: MAC OUI prefixes, SSID patterns, BLE names, service UUIDs, manufacturer IDs.
+- **`filter.rs`** — Stateless filter engine. `filter_wifi()` and `filter_ble()` evaluate inputs against default signatures plus runtime `FilterConfig`. Returns up to 4 `MatchReason`s per result.
+- **`defaults.rs`** — Default signature data: MAC OUI prefixes, SSID patterns, BLE names, service UUIDs, manufacturer IDs. Currently compiled in; runtime loading planned ([#14](https://github.com/dougborg/AirHound/issues/14)).
 - **`protocol.rs`** — Serde-based NDJSON message types using `heapless` strings. `DeviceMessage` (wifi/ble/status) and `HostCommand` (start/stop/status/set_rssi/set_buzzer).
 - **`comm.rs`** — JSON serialization/deserialization, `LineReader` NDJSON accumulator, command handler. BLE GATT service definition and channel type aliases live in `main.rs`.
 - **`board.rs`** — Compile-time hardware constants per board (pin assignments, capabilities).
+
+**Planned library modules (Layer 2)** — not yet implemented, see [#17](https://github.com/dougborg/AirHound/issues/17):
+- **`gps.rs`** ([#28](https://github.com/dougborg/AirHound/issues/28)) — NMEA parsing, position types, geofence helpers. Feature gate: `gps`. No deps beyond `heapless`.
+- **`tracker.rs`** ([#29](https://github.com/dougborg/AirHound/issues/29)) — Device history, re-identification, follow detection. Feature gate: `tracker`. Depends on `gps`.
+- **`channel.rs`** ([#30](https://github.com/dougborg/AirHound/issues/30)) — WiFi channel scheduling and dwell optimization. Feature gate: `channel`.
+- **`export.rs`** ([#31](https://github.com/dougborg/AirHound/issues/31)) — WiGLE CSV, KML, pcapng export. Feature gate: `std`. Requires `std` I/O.
+- **`wids.rs`** ([#32](https://github.com/dougborg/AirHound/issues/32)) — Rogue AP detection, deauth monitoring. Feature gate: `wids`.
 
 **Binary modules** (`src/main.rs`):
 - Entry point, heap setup, peripheral init, task spawning, WiFi sniffer callback, channel hop task, BLE scan task, BLE GATT server, serial output task. Owns all static channels, shared state, and ESP-specific types.
@@ -75,7 +118,7 @@ The project is split into a library crate (`src/lib.rs`) and a binary crate (`sr
 
 ## Key Constraints
 
-- **`no_std` / `no_alloc` for application code**: Uses `heapless` collections with fixed capacities. `alloc` is only for the WiFi/BLE radio stacks.
+- **`no_std` core, progressive feature gates**: Layer 1 modules use `heapless` collections with fixed capacities — no `alloc`, no platform deps. Layer 2 modules (planned) will use feature gates: `gps`, `tracker`, `channel`, and `wids` require `alloc`; `export` requires `std`. On ESP32, `alloc` is only for the WiFi/BLE radio stacks and any opted-in Layer 2 modules.
 - **Heap budget is tight**: ESP32 (M5StickC) uses 64KB heap — reduced from 72KB to leave DRAM for stack. ESP32-S3 (XIAO) uses 128KB. Cannot go below ~60KB on ESP32 or WiFi/BLE coex allocation fails.
 - **Stack overflow risk on ESP32**: Embassy task futures are stored in static BSS. Large generic types (e.g., mipidsi Display with nested SPI generics) consume significant DRAM. Use `StaticCell` for large buffers instead of task-stack allocation.
 - **All string types have fixed max lengths**: `MacString` (18), `NameString` (33), `MatchDetail` (32), `MsgBuffer` (512 bytes). Be mindful of truncation.
@@ -95,3 +138,30 @@ The project is split into a library crate (`src/lib.rs`) and a binary crate (`sr
 All `esp-*` crates are from **git main branch** (`https://github.com/esp-rs/esp-hal.git`). Docker named volumes cache the cargo registry/git — run `just docker-clean` after switching dependency sources. `trouble-host 0.6.0` is the BLE host stack.
 
 Docker recipes use chip-specific images (`espressif/idf-rust:esp32s3_latest`, `esp32_latest`) for builds. The devcontainer (`.devcontainer/`) uses `all_latest` for interactive use (`just docker-shell`) and VS Code / Codespaces.
+
+## Architectural Direction
+
+The project is built around three portable layers ([#17](https://github.com/dougborg/AirHound/issues/17)):
+
+| Layer | Artifact | Status |
+|-------|----------|--------|
+| Signature Database | `schemas/signatures.v1.schema.json` + `schemas/examples/` | v1 committed |
+| Companion Event Protocol | `schemas/device-message.v1.schema.json`, `schemas/host-command.v1.schema.json` | v1 committed |
+| Detection Library | `src/lib.rs` (scanner, filter, defaults, protocol, comm) | Implemented |
+
+Each layer is independently useful. The schemas are designed for cross-tool adoption ([#11](https://github.com/dougborg/AirHound/issues/11), [#16](https://github.com/dougborg/AirHound/issues/16)) — other projects can consume the signature format or wire protocol without depending on AirHound's Rust code.
+
+### Platform Targets
+
+| Platform | Runtime | WiFi Source | BLE Source | Issue |
+|----------|---------|-------------|------------|-------|
+| ESP32 firmware | Embassy (`esp-rtos`) | Promiscuous mode (`esp-radio`) | `trouble-host` | — |
+| Linux daemon | Tokio | `pcap` (monitor mode) | `bluer` (BlueZ) | [#13](https://github.com/dougborg/AirHound/issues/13) |
+| Kismet companion | Tokio | Kismet REST API | Kismet REST API | [#12](https://github.com/dougborg/AirHound/issues/12) |
+
+### Key Principles
+
+- **Standard formats first** — Signature database and companion event protocol are defined by JSON Schemas, usable by any tool regardless of language or runtime.
+- **Library owns logic, binaries own I/O** — scanning, filtering, protocol, and analysis in the library; radio drivers, async runtimes, and output sinks in platform binaries.
+- **Feature gates control dependencies** — Layer 1 is unconditional `no_std`. Layer 2 modules behind feature flags so consumers only pay for what they use.
+- **App-agnostic companion protocol** — NDJSON over any transport. Sensors and companion apps are interchangeable.

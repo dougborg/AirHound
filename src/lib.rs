@@ -1,9 +1,18 @@
-//! AirHound library — pure-logic modules for WiFi/BLE surveillance detection.
+//! AirHound library — portable surveillance detection engine.
 //!
-//! This crate contains the parsing, filtering, and protocol logic that can be
-//! tested on the host without ESP hardware dependencies. Hardware-specific code
-//! (embassy tasks, BLE GATT server, WiFi sniffer callbacks) lives in the
-//! firmware binary (`main.rs`).
+//! One of three portable layers in the AirHound toolkit (alongside the
+//! [signature schema](../schemas/signatures.v1.schema.json) and
+//! [companion event protocol schema](../schemas/device-message.v1.schema.json)).
+//! This crate contains all scanning, filtering, and protocol logic with no
+//! platform dependencies, testable on any host with `cargo test`. Platform
+//! binaries (ESP32 firmware, Linux daemon, Kismet companion) are thin consumers
+//! that provide radio access and output sinks.
+//!
+//! The library is organized in two code layers:
+//! - **Layer 1** (implemented): `scanner`, `filter`, `defaults`, `protocol`,
+//!   `comm`, `board` — `no_std`, no allocator, no external dependencies.
+//! - **Layer 2** (planned): `gps`, `tracker`, `channel`, `export`, `wids` —
+//!   behind feature gates, progressively requiring `alloc` or `std`.
 
 #![cfg_attr(not(test), no_std)]
 

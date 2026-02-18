@@ -14,14 +14,15 @@ pub type NameString = String<33>;
 /// Maximum length for UUID strings
 pub type UuidString = String<37>;
 
-/// Maximum length for filter match detail strings
+/// Maximum length for match reason detail strings
 pub type MatchDetail = String<32>;
 
-/// A single filter match reason
+/// A single match reason
 #[derive(Debug, Clone, Serialize)]
 pub struct MatchReason {
-    /// Filter type that matched: "mac_oui", "ssid_pattern", "ssid_keyword",
-    /// "ble_name", "ble_uuid", "ble_mfr"
+    /// Signature type that triggered this match: "mac_oui", "ssid_pattern",
+    /// "ssid_keyword", "ble_name", "ble_uuid", "ble_mfr".
+    /// Note: field rename to `signature_type` is tracked for protocol v2 (#9).
     #[serde(rename = "type")]
     pub filter_type: &'static str,
     /// Human-readable detail about what matched

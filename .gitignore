@@ -1,4 +1,6 @@
 /target
+/firmware-std/target
+.embuild
 .claude/
 
 # Editor / IDE
