@@ -7,7 +7,6 @@
 /// The expression tree uses a **flat post-order encoding** — children precede
 /// their parent in the array. Evaluated with a fixed-size bool stack.
 /// Zero allocation, `no_std` compatible.
-
 use heapless::Vec;
 
 /// Index into the signature arrays in `defaults.rs`.
@@ -929,11 +928,31 @@ mod tests {
             ExprNode::Sig(0),
         ];
         static RULES: &[Rule] = &[
-            Rule { name: "R0", expr_start: 0, expr_len: 1 },
-            Rule { name: "R1", expr_start: 1, expr_len: 1 },
-            Rule { name: "R2", expr_start: 2, expr_len: 1 },
-            Rule { name: "R3", expr_start: 3, expr_len: 1 },
-            Rule { name: "R4", expr_start: 4, expr_len: 1 },
+            Rule {
+                name: "R0",
+                expr_start: 0,
+                expr_len: 1,
+            },
+            Rule {
+                name: "R1",
+                expr_start: 1,
+                expr_len: 1,
+            },
+            Rule {
+                name: "R2",
+                expr_start: 2,
+                expr_len: 1,
+            },
+            Rule {
+                name: "R3",
+                expr_start: 3,
+                expr_len: 1,
+            },
+            Rule {
+                name: "R4",
+                expr_start: 4,
+                expr_len: 1,
+            },
         ];
         let db = RuleDb {
             nodes: NODES,
@@ -972,8 +991,16 @@ mod tests {
     fn eval_anyof_is_commutative() {
         // anyOf(sig0, sig1) should equal anyOf(sig1, sig0) for any input
         let orders = [
-            [ExprNode::Sig(0), ExprNode::Sig(1), ExprNode::AnyOf { count: 2 }],
-            [ExprNode::Sig(1), ExprNode::Sig(0), ExprNode::AnyOf { count: 2 }],
+            [
+                ExprNode::Sig(0),
+                ExprNode::Sig(1),
+                ExprNode::AnyOf { count: 2 },
+            ],
+            [
+                ExprNode::Sig(1),
+                ExprNode::Sig(0),
+                ExprNode::AnyOf { count: 2 },
+            ],
         ];
 
         for sig_to_set in [None, Some(0u16), Some(1), Some(99)] {
@@ -990,8 +1017,16 @@ mod tests {
     #[test]
     fn eval_allof_is_commutative() {
         let orders = [
-            [ExprNode::Sig(0), ExprNode::Sig(1), ExprNode::AllOf { count: 2 }],
-            [ExprNode::Sig(1), ExprNode::Sig(0), ExprNode::AllOf { count: 2 }],
+            [
+                ExprNode::Sig(0),
+                ExprNode::Sig(1),
+                ExprNode::AllOf { count: 2 },
+            ],
+            [
+                ExprNode::Sig(1),
+                ExprNode::Sig(0),
+                ExprNode::AllOf { count: 2 },
+            ],
         ];
 
         for sigs in [vec![], vec![0], vec![1], vec![0, 1]] {

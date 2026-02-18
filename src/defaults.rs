@@ -236,14 +236,22 @@ use crate::rules::{ExprNode, Rule, RuleDb, SigIdx};
 
 pub const SIG_IDX_MAC_OUI_START: SigIdx = 0;
 pub const SIG_IDX_SSID_PATTERN_START: SigIdx = MAC_PREFIXES.len() as SigIdx;
-pub const SIG_IDX_SSID_EXACT_START: SigIdx = SIG_IDX_SSID_PATTERN_START + SSID_PATTERNS.len() as SigIdx;
-pub const SIG_IDX_SSID_KEYWORD_START: SigIdx = SIG_IDX_SSID_EXACT_START + SSID_EXACT.len() as SigIdx;
-pub const SIG_IDX_WIFI_NAME_START: SigIdx = SIG_IDX_SSID_KEYWORD_START + SSID_KEYWORDS.len() as SigIdx;
-pub const SIG_IDX_BLE_NAME_START: SigIdx = SIG_IDX_WIFI_NAME_START + WIFI_NAME_KEYWORDS.len() as SigIdx;
-pub const SIG_IDX_BLE_UUID_START: SigIdx = SIG_IDX_BLE_NAME_START + BLE_NAME_PATTERNS.len() as SigIdx;
-pub const SIG_IDX_BLE_STD_UUID_START: SigIdx = SIG_IDX_BLE_UUID_START + BLE_SERVICE_UUIDS_16.len() as SigIdx;
-pub const SIG_IDX_BLE_MFR_START: SigIdx = SIG_IDX_BLE_STD_UUID_START + BLE_STANDARD_UUIDS_16.len() as SigIdx;
-pub const SIG_IDX_BLE_AD_BYTES_START: SigIdx = SIG_IDX_BLE_MFR_START + BLE_MANUFACTURER_IDS.len() as SigIdx;
+pub const SIG_IDX_SSID_EXACT_START: SigIdx =
+    SIG_IDX_SSID_PATTERN_START + SSID_PATTERNS.len() as SigIdx;
+pub const SIG_IDX_SSID_KEYWORD_START: SigIdx =
+    SIG_IDX_SSID_EXACT_START + SSID_EXACT.len() as SigIdx;
+pub const SIG_IDX_WIFI_NAME_START: SigIdx =
+    SIG_IDX_SSID_KEYWORD_START + SSID_KEYWORDS.len() as SigIdx;
+pub const SIG_IDX_BLE_NAME_START: SigIdx =
+    SIG_IDX_WIFI_NAME_START + WIFI_NAME_KEYWORDS.len() as SigIdx;
+pub const SIG_IDX_BLE_UUID_START: SigIdx =
+    SIG_IDX_BLE_NAME_START + BLE_NAME_PATTERNS.len() as SigIdx;
+pub const SIG_IDX_BLE_STD_UUID_START: SigIdx =
+    SIG_IDX_BLE_UUID_START + BLE_SERVICE_UUIDS_16.len() as SigIdx;
+pub const SIG_IDX_BLE_MFR_START: SigIdx =
+    SIG_IDX_BLE_STD_UUID_START + BLE_STANDARD_UUIDS_16.len() as SigIdx;
+pub const SIG_IDX_BLE_AD_BYTES_START: SigIdx =
+    SIG_IDX_BLE_MFR_START + BLE_MANUFACTURER_IDS.len() as SigIdx;
 
 /// Total number of compiled-in signatures.
 pub const SIG_COUNT: usize = SIG_IDX_BLE_AD_BYTES_START as usize + BLE_AD_BYTES_PATTERNS.len();
@@ -310,38 +318,35 @@ static DEFAULT_RULE_NODES: &[ExprNode] = &[
     //   allOf(xuntong-mfr, flock-ble-name)
     // )
     ExprNode::Sig(SIG_FLOCK_SAFETY_OUI),    // [0]
-    ExprNode::Sig(SIG_SILABS_588E81),        // [1]
-    ExprNode::Sig(SIG_SILABS_CCCCCC),        // [2]
-    ExprNode::Sig(SIG_FLOCK_SSID_PREFIX),    // [3]
-    ExprNode::Sig(SIG_FS_EXT_BATTERY_SSID),  // [4]
-    ExprNode::Sig(SIG_FLOCK_SSID_KEYWORD),   // [5]
-    ExprNode::Sig(SIG_FLOCK_BLE_NAME),       // [6]
-    ExprNode::Sig(SIG_FS_EXT_BATTERY_BLE),   // [7]
+    ExprNode::Sig(SIG_SILABS_588E81),       // [1]
+    ExprNode::Sig(SIG_SILABS_CCCCCC),       // [2]
+    ExprNode::Sig(SIG_FLOCK_SSID_PREFIX),   // [3]
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_SSID), // [4]
+    ExprNode::Sig(SIG_FLOCK_SSID_KEYWORD),  // [5]
+    ExprNode::Sig(SIG_FLOCK_BLE_NAME),      // [6]
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_BLE),  // [7]
     // allOf(xuntong-mfr, flock-ble-name) — nested AND
-    ExprNode::Sig(SIG_XUNTONG_MFR),          // [8]
-    ExprNode::Sig(SIG_FLOCK_BLE_NAME),       // [9]  (same sig referenced again)
-    ExprNode::AllOf { count: 2 },             // [10]
+    ExprNode::Sig(SIG_XUNTONG_MFR),    // [8]
+    ExprNode::Sig(SIG_FLOCK_BLE_NAME), // [9]  (same sig referenced again)
+    ExprNode::AllOf { count: 2 },      // [10]
     // Top-level anyOf: 8 direct sigs + 1 allOf result = 9 children
-    ExprNode::AnyOf { count: 9 },             // [11]
-
+    ExprNode::AnyOf { count: 9 }, // [11]
     // ── Raven Acoustic Sensor ──
     // anyOf(raven-gps, raven-power, raven-network, raven-upload, raven-error)
-    ExprNode::Sig(SIG_RAVEN_GPS_UUID),        // [12]
-    ExprNode::Sig(SIG_RAVEN_POWER_UUID),      // [13]
-    ExprNode::Sig(SIG_RAVEN_NETWORK_UUID),    // [14]
-    ExprNode::Sig(SIG_RAVEN_UPLOAD_UUID),     // [15]
-    ExprNode::Sig(SIG_RAVEN_ERROR_UUID),      // [16]
-    ExprNode::AnyOf { count: 5 },             // [17]
-
+    ExprNode::Sig(SIG_RAVEN_GPS_UUID),     // [12]
+    ExprNode::Sig(SIG_RAVEN_POWER_UUID),   // [13]
+    ExprNode::Sig(SIG_RAVEN_NETWORK_UUID), // [14]
+    ExprNode::Sig(SIG_RAVEN_UPLOAD_UUID),  // [15]
+    ExprNode::Sig(SIG_RAVEN_ERROR_UUID),   // [16]
+    ExprNode::AnyOf { count: 5 },          // [17]
     // ── Apple AirTag ──
     // Single sig reference
-    ExprNode::Sig(SIG_AIRTAG_FINDMY_AD),      // [18]
-
+    ExprNode::Sig(SIG_AIRTAG_FINDMY_AD), // [18]
     // ── Flipper Zero ──
     // anyOf(flipper-white, flipper-black)
-    ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE),     // [19]
-    ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK),     // [20]
-    ExprNode::AnyOf { count: 2 },              // [21]
+    ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE), // [19]
+    ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK), // [20]
+    ExprNode::AnyOf { count: 2 },          // [21]
 ];
 
 static DEFAULT_RULES: &[Rule] = &[

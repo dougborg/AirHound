@@ -120,7 +120,9 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
     // SSID structured pattern check (e.g., Flock-XXXXXX)
     for (i, pattern) in SSID_PATTERNS.iter().enumerate() {
         if pattern.matches(input.ssid) {
-            result.sig_matches.set(defaults::SIG_IDX_SSID_PATTERN_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_SSID_PATTERN_START + i as u16);
             result.add_match("ssid_pattern", pattern.description);
         }
     }
@@ -128,7 +130,9 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
     // SSID exact match check
     for (i, &exact) in SSID_EXACT.iter().enumerate() {
         if input.ssid == exact {
-            result.sig_matches.set(defaults::SIG_IDX_SSID_EXACT_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_SSID_EXACT_START + i as u16);
             result.add_match("ssid_exact", exact);
         }
     }
@@ -144,7 +148,9 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
 
     for (i, &keyword) in SSID_KEYWORDS.iter().enumerate() {
         if ssid_lower_str.contains(keyword) {
-            result.sig_matches.set(defaults::SIG_IDX_SSID_KEYWORD_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_SSID_KEYWORD_START + i as u16);
             result.add_match("ssid_keyword", keyword);
         }
     }
@@ -152,7 +158,9 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
     // WiFi name keyword check (from FlockOff — matches partial names)
     for (i, &keyword) in WIFI_NAME_KEYWORDS.iter().enumerate() {
         if ssid_lower_str.contains(keyword) {
-            result.sig_matches.set(defaults::SIG_IDX_WIFI_NAME_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_WIFI_NAME_START + i as u16);
             // Only add if not already matched by SSID_KEYWORDS
             if !SSID_KEYWORDS.contains(&keyword) {
                 result.add_match("wifi_name", keyword);
@@ -198,7 +206,9 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
             let pattern_lower_str = core::str::from_utf8(&pattern_lower).unwrap_or("");
 
             if name_lower_str.contains(pattern_lower_str) {
-                result.sig_matches.set(defaults::SIG_IDX_BLE_NAME_START + i as u16);
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_BLE_NAME_START + i as u16);
                 result.add_match("ble_name", pattern);
             }
         }
@@ -208,13 +218,17 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
     for &uuid in input.service_uuids_16 {
         for (i, &known) in BLE_SERVICE_UUIDS_16.iter().enumerate() {
             if uuid == known {
-                result.sig_matches.set(defaults::SIG_IDX_BLE_UUID_START + i as u16);
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_BLE_UUID_START + i as u16);
                 result.add_match("ble_uuid", "Raven service UUID");
             }
         }
         for (i, &known) in defaults::BLE_STANDARD_UUIDS_16.iter().enumerate() {
             if uuid == known {
-                result.sig_matches.set(defaults::SIG_IDX_BLE_STD_UUID_START + i as u16);
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_BLE_STD_UUID_START + i as u16);
                 result.add_match("ble_uuid_std", "Raven standard UUID");
             }
         }
@@ -224,7 +238,9 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
     if input.manufacturer_id != 0 {
         for (i, &known) in BLE_MANUFACTURER_IDS.iter().enumerate() {
             if input.manufacturer_id == known {
-                result.sig_matches.set(defaults::SIG_IDX_BLE_MFR_START + i as u16);
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_BLE_MFR_START + i as u16);
                 result.add_match("ble_mfr", "Known manufacturer ID");
             }
         }
@@ -278,7 +294,9 @@ fn check_mac_oui(mac: &[u8; 6], result: &mut FilterResult) {
     let oui = [mac[0], mac[1], mac[2]];
     for (i, &(ref prefix, vendor)) in MAC_PREFIXES.iter().enumerate() {
         if oui == *prefix {
-            result.sig_matches.set(defaults::SIG_IDX_MAC_OUI_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_MAC_OUI_START + i as u16);
             result.add_match("mac_oui", vendor);
             return; // Only report first match (a MAC can only match one OUI)
         }
@@ -329,7 +347,9 @@ fn check_ble_ad_bytes(raw_ad: &[u8], result: &mut FilterResult) {
             }
         };
         if matched {
-            result.sig_matches.set(defaults::SIG_IDX_BLE_AD_BYTES_START + i as u16);
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_BLE_AD_BYTES_START + i as u16);
             result.add_match("ble_ad_bytes", pattern.description);
         }
     }
@@ -693,8 +713,7 @@ mod tests {
         assert!(result
             .matches
             .iter()
-            .any(|m| m.filter_type == "ble_ad_bytes"
-                && m.detail.as_str() == "Apple AirTag"));
+            .any(|m| m.filter_type == "ble_ad_bytes" && m.detail.as_str() == "Apple AirTag"));
     }
 
     #[test]
@@ -718,8 +737,7 @@ mod tests {
         assert!(result
             .matches
             .iter()
-            .any(|m| m.filter_type == "ble_ad_bytes"
-                && m.detail.as_str() == "Flipper Zero"));
+            .any(|m| m.filter_type == "ble_ad_bytes" && m.detail.as_str() == "Flipper Zero"));
     }
 
     #[test]
@@ -828,9 +846,13 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi(&input, &config);
-        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_PATTERN_START + 0));
+        assert!(result
+            .sig_matches
+            .get(defaults::SIG_IDX_SSID_PATTERN_START + 0));
         // Also sets keyword "flock"
-        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_KEYWORD_START + 0));
+        assert!(result
+            .sig_matches
+            .get(defaults::SIG_IDX_SSID_KEYWORD_START + 0));
     }
 
     #[test]
@@ -842,7 +864,9 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi(&input, &config);
-        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_EXACT_START + 0));
+        assert!(result
+            .sig_matches
+            .get(defaults::SIG_IDX_SSID_EXACT_START + 0));
     }
 
     #[test]
@@ -906,7 +930,9 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble(&input, &config);
-        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_AD_BYTES_START + 0)); // AirTag
+        assert!(result
+            .sig_matches
+            .get(defaults::SIG_IDX_BLE_AD_BYTES_START + 0)); // AirTag
     }
 
     // ── Rule integration tests ──────────────────────────────────────
