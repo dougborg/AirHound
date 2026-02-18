@@ -61,6 +61,8 @@ pub struct BleEvent {
     pub service_uuids_16: Vec<u16, 8>,
     /// Manufacturer company ID (0 if not present)
     pub manufacturer_id: u16,
+    /// Raw advertisement data bytes (up to 62 bytes: AD + scan response)
+    pub raw_ad: Vec<u8, 62>,
 }
 
 /// Unified scan event for the filter task
@@ -158,12 +160,18 @@ impl BleAdvParser {
     /// `rssi` is the received signal strength.
     /// `ad_data` is the raw advertisement data bytes.
     pub fn parse(addr: &[u8; 6], rssi: i8, ad_data: &[u8]) -> BleEvent {
+        let mut raw_ad = Vec::new();
+        for &b in ad_data.iter().take(62) {
+            let _ = raw_ad.push(b);
+        }
+
         let mut event = BleEvent {
             mac: *addr,
             name: heapless::String::new(),
             rssi,
             service_uuids_16: Vec::new(),
             manufacturer_id: 0,
+            raw_ad,
         };
 
         let mut pos = 0;

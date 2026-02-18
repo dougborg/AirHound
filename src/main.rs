@@ -38,7 +38,10 @@ use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
 use comm::LineReader;
-use filter::{filter_ble, filter_wifi, format_mac, BleScanInput, FilterConfig, WiFiScanInput};
+use filter::{
+    filter_ble_with_rules, filter_wifi_with_rules, format_mac, BleScanInput, FilterConfig,
+    WiFiScanInput,
+};
 use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
 use scanner::{BleEvent, ScanEvent, WiFiEvent};
 
@@ -200,10 +203,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     log::info!("AirHound v{} starting on {}", VERSION, board::BOARD_NAME);
 
     log::info!(
-        "Filter loaded: {} MAC prefixes, {} SSID patterns, {} BLE name patterns",
+        "Filter loaded: {} signatures, {} rules, {} MAC prefixes",
+        defaults::SIG_COUNT,
+        defaults::DEFAULT_RULE_DB.rules.len(),
         defaults::MAC_PREFIXES.len(),
-        defaults::SSID_PATTERNS.len(),
-        defaults::BLE_NAME_PATTERNS.len(),
     );
 
     // Spawn non-BLE tasks
@@ -522,15 +525,21 @@ async fn handle_wifi_event(
         rssi: wifi.rssi,
     };
 
-    let result = filter_wifi(&input, config);
+    let result = filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB);
     if !result.matched {
         return;
     }
 
     WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    // Update last match description for display
-    if let Some(first) = result.matches.first() {
+    // Update last match description for display — prefer rule name over raw match
+    if let Some(&rule_name) = result.rule_names.first() {
+        critical_section::with(|cs| {
+            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
+            s.clear();
+            let _ = s.push_str(rule_name);
+        });
+    } else if let Some(first) = result.matches.first() {
         critical_section::with(|cs| {
             let mut s = LAST_MATCH.borrow(cs).borrow_mut();
             s.clear();
@@ -553,6 +562,7 @@ async fn handle_wifi_event(
         ch: wifi.channel,
         frame: wifi.frame_type.as_str(),
         matches: &result.matches,
+        rule: result.rule_names.first().copied(),
         ts,
     };
 
@@ -575,17 +585,24 @@ async fn handle_ble_event(
         rssi: ble.rssi,
         service_uuids_16: &ble.service_uuids_16,
         manufacturer_id: ble.manufacturer_id,
+        raw_ad: ble.raw_ad.as_slice(),
     };
 
-    let result = filter_ble(&input, config);
+    let result = filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB);
     if !result.matched {
         return;
     }
 
     BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    // Update last match description for display
-    if let Some(first) = result.matches.first() {
+    // Update last match description for display — prefer rule name over raw match
+    if let Some(&rule_name) = result.rule_names.first() {
+        critical_section::with(|cs| {
+            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
+            s.clear();
+            let _ = s.push_str(rule_name);
+        });
+    } else if let Some(first) = result.matches.first() {
         critical_section::with(|cs| {
             let mut s = LAST_MATCH.borrow(cs).borrow_mut();
             s.clear();
@@ -608,6 +625,7 @@ async fn handle_ble_event(
         uuid: None, // TODO: format primary UUID if present
         mfr: ble.manufacturer_id,
         matches: &result.matches,
+        rule: result.rule_names.first().copied(),
         ts,
     };
 

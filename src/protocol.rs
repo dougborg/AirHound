@@ -44,6 +44,9 @@ pub enum DeviceMessage<'a> {
         /// Why this result matched the filter
         #[serde(rename = "match")]
         matches: &'a Vec<MatchReason, 4>,
+        /// First matched rule name, if any
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rule: Option<&'a str>,
         /// Uptime in milliseconds when captured
         ts: u32,
     },
@@ -61,6 +64,9 @@ pub enum DeviceMessage<'a> {
         /// Why this result matched the filter
         #[serde(rename = "match")]
         matches: &'a Vec<MatchReason, 4>,
+        /// First matched rule name, if any
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rule: Option<&'a str>,
         /// Uptime in milliseconds when captured
         ts: u32,
     },
@@ -179,6 +185,7 @@ mod tests {
             ch: 6,
             frame: "beacon",
             matches: &matches,
+            rule: None,
             ts: 1000,
         };
 
@@ -206,6 +213,7 @@ mod tests {
             uuid: None,
             mfr: 0x09C8,
             matches: &matches,
+            rule: None,
             ts: 2000,
         };
 
@@ -233,6 +241,7 @@ mod tests {
             uuid: Some(&uuid),
             mfr: 0,
             matches: &matches,
+            rule: None,
             ts: 3000,
         };
 
@@ -240,6 +249,77 @@ mod tests {
         let len = serde_json_core::to_slice(&msg, &mut buf).unwrap();
         let json = core::str::from_utf8(&buf[..len]).unwrap();
         assert!(json.contains(r#""uuid":"00003100-0000-1000-8000-00805f9b34fb""#));
+    }
+
+    // ── Rule field serialization ────────────────────────────────────
+
+    #[test]
+    fn serialize_wifi_scan_with_rule() {
+        let mac = MacString::try_from("B4:1E:52:AB:CD:EF").unwrap();
+        let ssid = NameString::try_from("Flock-A1B2C3").unwrap();
+        let matches = Vec::<MatchReason, 4>::new();
+
+        let msg = DeviceMessage::WiFiScan {
+            mac: &mac,
+            ssid: &ssid,
+            rssi: -45,
+            ch: 6,
+            frame: "beacon",
+            matches: &matches,
+            rule: Some("Flock Safety Camera"),
+            ts: 1000,
+        };
+
+        let mut buf = [0u8; 512];
+        let len = serde_json_core::to_slice(&msg, &mut buf).unwrap();
+        let json = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(json.contains(r#""rule":"Flock Safety Camera""#));
+    }
+
+    #[test]
+    fn serialize_wifi_scan_without_rule_omits_field() {
+        let mac = MacString::try_from("B4:1E:52:AB:CD:EF").unwrap();
+        let ssid = NameString::try_from("Flock-A1B2C3").unwrap();
+        let matches = Vec::<MatchReason, 4>::new();
+
+        let msg = DeviceMessage::WiFiScan {
+            mac: &mac,
+            ssid: &ssid,
+            rssi: -45,
+            ch: 6,
+            frame: "beacon",
+            matches: &matches,
+            rule: None,
+            ts: 1000,
+        };
+
+        let mut buf = [0u8; 512];
+        let len = serde_json_core::to_slice(&msg, &mut buf).unwrap();
+        let json = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(!json.contains("rule"));
+    }
+
+    #[test]
+    fn serialize_ble_scan_with_rule() {
+        let mac = MacString::try_from("00:00:00:00:00:00").unwrap();
+        let name = NameString::try_from("").unwrap();
+        let matches = Vec::<MatchReason, 4>::new();
+
+        let msg = DeviceMessage::BleScan {
+            mac: &mac,
+            name: &name,
+            rssi: -50,
+            uuid: None,
+            mfr: 0,
+            matches: &matches,
+            rule: Some("Apple AirTag"),
+            ts: 5000,
+        };
+
+        let mut buf = [0u8; 512];
+        let len = serde_json_core::to_slice(&msg, &mut buf).unwrap();
+        let json = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(json.contains(r#""rule":"Apple AirTag""#));
     }
 
     // ── Version constant ────────────────────────────────────────────
