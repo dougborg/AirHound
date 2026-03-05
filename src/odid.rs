@@ -311,7 +311,7 @@ pub fn parse_odid_ble(ad_data: &[u8]) -> Option<OdidFrame> {
         let payload = &ad_data[i + 2..i + 1 + len];
 
         // AD type 0x16 = Service Data - 16-bit UUID
-        if ad_type == 0x16 && payload.len() >= 2 + MESSAGE_SIZE {
+        if ad_type == 0x16 && payload.len() >= 3 + MESSAGE_SIZE {
             if payload[0..2] == ODID_BLE_UUID {
                 // Skip the counter byte (1 byte after UUID) per ASTM F3411
                 let odid_payload = &payload[3..];
@@ -392,26 +392,22 @@ fn decode_messages(data: &[u8]) -> Option<OdidFrame> {
                 }
             }
             Some(MessageType::Packed) => {
-                // Message pack: byte 1 has single message size, byte 2 has count
-                if msg.len() >= 3 {
-                    let single_size = msg[2] as usize;
-                    let count = msg[3] as usize;
-                    if single_size == MESSAGE_SIZE {
-                        // Messages follow after the 4-byte pack header, but
-                        // the pack itself is 25 bytes — messages are in the
-                        // remaining data after this 25-byte header.
-                        let pack_data = &data[offset + 4..];
-                        for i in 0..count {
-                            let start = i * MESSAGE_SIZE;
-                            if start + MESSAGE_SIZE <= pack_data.len() {
-                                let inner = &pack_data[start..start + MESSAGE_SIZE];
-                                decode_into_frame(&mut frame, inner);
-                            }
+                // Pack header: byte 0 = type+version, byte 1 = single message
+                // size, byte 2 = message count, bytes 3+ = inner messages.
+                let single_size = msg[1] as usize;
+                let count = msg[2] as usize;
+                if single_size == MESSAGE_SIZE {
+                    let pack_data_start = offset + 3; // skip 3-byte header
+                    let pack_data = &data[pack_data_start..];
+                    for i in 0..count {
+                        let start = i * MESSAGE_SIZE;
+                        if start + MESSAGE_SIZE <= pack_data.len() {
+                            let inner = &pack_data[start..start + MESSAGE_SIZE];
+                            decode_into_frame(&mut frame, inner);
                         }
-                        // Advance past the pack header + all inner messages
-                        offset += 4 + count * MESSAGE_SIZE;
-                        continue;
                     }
+                    offset = pack_data_start + count * MESSAGE_SIZE;
+                    continue;
                 }
             }
             _ => {} // Auth, SelfId, unknown — skip
@@ -1250,6 +1246,44 @@ mod tests {
         assert_eq!(bid.ua_type, UaType::HelicopterOrMultirotor);
         assert_eq!(bid.id_type, IdType::SerialNumber);
         assert_eq!(bid.uas_id.as_str(), "INTCE123456789012345");
+    }
+
+    /// Packed message: 3-byte header + N inner 25-byte messages.
+    /// Format: [type+version, single_size=25, count=N, msg0..., msg1..., ...]
+    #[test]
+    fn test_decode_packed_message() {
+        let bid = make_basic_id(2, 1, b"PACKED001");
+        let loc = make_location(48.8566, 2.3522, 35.0, 2);
+
+        // 3-byte pack header + 2 inner messages
+        let mut data = [0u8; 3 + MESSAGE_SIZE * 2];
+        data[0] = (MessageType::Packed as u8) << 4 | 0x02; // type=Packed, version=2
+        data[1] = MESSAGE_SIZE as u8; // single message size
+        data[2] = 2; // message count
+        data[3..3 + MESSAGE_SIZE].copy_from_slice(&bid);
+        data[3 + MESSAGE_SIZE..3 + MESSAGE_SIZE * 2].copy_from_slice(&loc);
+
+        let frame = decode_messages(&data).unwrap();
+        let bid = frame.basic_id.unwrap();
+        assert_eq!(bid.uas_id.as_str(), "PACKED001");
+        assert_eq!(bid.ua_type, UaType::HelicopterOrMultirotor);
+
+        let loc = frame.location.unwrap();
+        assert_eq!(loc.status, Status::Airborne);
+        assert!((loc.latitude - 48.8566).abs() < 0.0001);
+        assert!((loc.longitude - 2.3522).abs() < 0.0001);
+    }
+
+    /// Packed message with wrong single_size is skipped.
+    #[test]
+    fn test_decode_packed_wrong_size_skipped() {
+        let mut data = [0u8; MESSAGE_SIZE];
+        data[0] = (MessageType::Packed as u8) << 4 | 0x02;
+        data[1] = 30; // wrong single message size (not 25)
+        data[2] = 1;
+
+        let result = decode_messages(&data);
+        assert!(result.is_none());
     }
 
     /// Negative latitude/longitude (southern/western hemisphere).
