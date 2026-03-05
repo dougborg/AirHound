@@ -2,7 +2,7 @@
 // Called by actions/github-script in the preview-comment CI job.
 // Automatically discovers artifacts — no changes needed when adding new boards.
 
-const MARKER = "## Preview Binaries";
+const MARKER = "<!-- preview-binaries-bot -->\n## Preview Binaries";
 
 /**
  * Build the comment body from a list of artifacts and job results.
@@ -67,43 +67,49 @@ function buildCommentBody({ artifacts, needs, runUrl }) {
  * Main entry point — called by actions/github-script.
  */
 async function run({ github, context, needs }) {
-  const { owner, repo } = context.repo;
-  const runId = context.runId;
-  const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+  try {
+    const { owner, repo } = context.repo;
+    const runId = context.runId;
+    const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
 
-  // Fetch all artifacts for this workflow run
-  const {
-    data: { artifacts },
-  } = await github.rest.actions.listWorkflowRunArtifacts({
-    owner,
-    repo,
-    run_id: runId,
-    per_page: 100,
-  });
-
-  const body = buildCommentBody({ artifacts, needs, runUrl });
-
-  // Upsert: find existing comment by marker, update or create
-  const { data: comments } = await github.rest.issues.listComments({
-    owner,
-    repo,
-    issue_number: context.issue.number,
-  });
-  const existing = comments.find((c) => c.body?.startsWith(MARKER));
-  if (existing) {
-    await github.rest.issues.updateComment({
+    // Fetch all artifacts for this workflow run
+    const {
+      data: { artifacts },
+    } = await github.rest.actions.listWorkflowRunArtifacts({
       owner,
       repo,
-      comment_id: existing.id,
-      body,
+      run_id: runId,
+      per_page: 100,
     });
-  } else {
-    await github.rest.issues.createComment({
+
+    const body = buildCommentBody({ artifacts, needs, runUrl });
+
+    // Upsert: find existing comment by marker, update or create
+    const { data: comments } = await github.rest.issues.listComments({
       owner,
       repo,
       issue_number: context.issue.number,
-      body,
+      per_page: 100,
     });
+    const existing = comments.find((c) => c.body?.startsWith(MARKER));
+    if (existing) {
+      await github.rest.issues.updateComment({
+        owner,
+        repo,
+        comment_id: existing.id,
+        body,
+      });
+    } else {
+      await github.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: context.issue.number,
+        body,
+      });
+    }
+  } catch (error) {
+    console.error("Failed to post or update preview binaries comment:", error);
+    throw error;
   }
 }
 
