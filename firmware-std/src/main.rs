@@ -370,6 +370,7 @@ fn handle_wifi_event(
         ch: wifi.channel,
         frame: wifi.frame_type.as_str(),
         matches: &result.matches,
+        rule: result.rule_names.first().copied(),
         ts,
     };
 
@@ -393,6 +394,7 @@ fn handle_ble_event(
         rssi: ble.rssi,
         service_uuids_16: &ble.service_uuids_16,
         manufacturer_id: ble.manufacturer_id,
+        raw_ad: &ble.raw_ad,
     };
 
     let result = filter_ble(&input, config);
@@ -424,6 +426,7 @@ fn handle_ble_event(
         uuid: None,
         mfr: ble.manufacturer_id,
         matches: &result.matches,
+        rule: result.rule_names.first().copied(),
         ts,
     };
 
