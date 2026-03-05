@@ -20,6 +20,7 @@ pub mod board;
 pub mod comm;
 pub mod defaults;
 pub mod filter;
+pub mod odid;
 pub mod protocol;
 pub mod rules;
 pub mod scanner;
