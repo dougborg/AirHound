@@ -21,4 +21,5 @@ pub mod comm;
 pub mod defaults;
 pub mod filter;
 pub mod protocol;
+pub mod rules;
 pub mod scanner;

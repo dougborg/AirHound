@@ -213,6 +213,7 @@ mod tests {
             ch: 1,
             frame: "beacon",
             matches: &matches,
+            rule: None,
             ts: 100,
         };
         let mut buf = [0u8; 512];
