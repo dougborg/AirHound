@@ -415,7 +415,11 @@ fn decode_messages(data: &[u8]) -> Option<OdidFrame> {
         offset += MESSAGE_SIZE;
     }
 
-    if frame.has_data() { Some(frame) } else { None }
+    if frame.has_data() {
+        Some(frame)
+    } else {
+        None
+    }
 }
 
 /// Decode a single message into an existing frame.
@@ -581,8 +585,7 @@ pub fn decode_system(data: &[u8]) -> Option<System> {
     let operator_location_type = OperatorLocationType::from_bits(flags & 0x03);
     let classification_type = ClassificationType::from_bits((flags >> 2) & 0x07);
 
-    let operator_latitude =
-        decode_latlon(i32::from_le_bytes([data[2], data[3], data[4], data[5]]));
+    let operator_latitude = decode_latlon(i32::from_le_bytes([data[2], data[3], data[4], data[5]]));
     let operator_longitude =
         decode_latlon(i32::from_le_bytes([data[6], data[7], data[8], data[9]]));
 
@@ -900,10 +903,7 @@ mod tests {
         let frame = decode_messages(&data).unwrap();
         assert!(frame.basic_id.is_some());
         assert!(frame.location.is_some());
-        assert_eq!(
-            frame.basic_id.unwrap().uas_id.as_str(),
-            "MULTI001"
-        );
+        assert_eq!(frame.basic_id.unwrap().uas_id.as_str(), "MULTI001");
         assert!((frame.location.unwrap().latitude - 51.5074).abs() < 0.0001);
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
         // Direction 215.7 > 180, so EW=1, encoded = 215.7 - 180 = 35.7 -> 35
         let ew_flag: u8 = 1;
         let dir_enc: u8 = 35; // (215.7 - 180) truncated
-        // Speed 5.4 / 0.25 = 21.6 -> 21 (truncated), mult=0
+                              // Speed 5.4 / 0.25 = 21.6 -> 21 (truncated), mult=0
         let speed_enc: u8 = 21;
         // VSpeed 5.25 / 0.5 = 10.5 -> 10 (truncated)
         let vspeed_enc: i8 = 10;
@@ -1106,7 +1106,7 @@ mod tests {
 
         let mut msg = [0u8; MESSAGE_SIZE];
         msg[0] = 0x12; // Location + proto v2
-        // Status=Airborne(2), HeightType=OverGround(1), EW=1, SpeedMult=0
+                       // Status=Airborne(2), HeightType=OverGround(1), EW=1, SpeedMult=0
         msg[1] = (2 << 4) | (1 << 2) | (ew_flag << 1);
         msg[2] = dir_enc;
         msg[3] = speed_enc;
@@ -1153,7 +1153,7 @@ mod tests {
 
         let mut msg = [0u8; MESSAGE_SIZE];
         msg[0] = 0x42; // System + proto v2
-        // OperatorLocationType=Takeoff(0), ClassificationType=EU(1)
+                       // OperatorLocationType=Takeoff(0), ClassificationType=EU(1)
         msg[1] = 0x00 | (0x01 << 2);
         msg[2..6].copy_from_slice(&lat_enc.to_le_bytes());
         msg[6..10].copy_from_slice(&lon_enc.to_le_bytes());
