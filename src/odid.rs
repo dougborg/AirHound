@@ -1,10 +1,10 @@
-/// Open Drone ID (ASTM F3411) parser.
-///
-/// Decodes ODID messages from BLE advertisements, WiFi NAN action frames,
-/// and WiFi beacon vendor IEs. Each encoded message is 25 bytes. This module
-/// provides pure `no_std` parsing with no allocations.
-///
-/// Reference: ASTM F3411-22a, ASD-STAN prEN 4709-002.
+// Open Drone ID (ASTM F3411) parser.
+//
+// Decodes ODID messages from BLE advertisements, WiFi NAN action frames,
+// and WiFi beacon vendor IEs. Each encoded message is 25 bytes. This module
+// provides pure `no_std` parsing with no allocations.
+//
+// Reference: ASTM F3411-22a, ASD-STAN prEN 4709-002.
 
 /// Size of a single encoded ODID message.
 const MESSAGE_SIZE: usize = 25;
@@ -350,7 +350,7 @@ pub fn parse_odid_wifi_beacon(ie_data: &[u8]) -> Option<OdidFrame> {
         let body = &ie_data[i + 2..i + 2 + len];
 
         // Vendor-specific IE with ODID OUI
-        if tag == 0xDD && len >= 3 + MESSAGE_SIZE && body[0..3] == ODID_WIFI_OUI {
+        if tag == 0xDD && len >= 4 + MESSAGE_SIZE && body[0..3] == ODID_WIFI_OUI {
             // Skip OUI (3) + OUI type (1)
             let odid_payload = &body[4..];
             return decode_messages(odid_payload);
