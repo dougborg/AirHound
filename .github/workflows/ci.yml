@@ -178,7 +178,7 @@ jobs:
           - name: m5stickc
             chip: esp32
     steps:
-      - uses: cargo-bins/cargo-binstall@7691a5b29cda4f5499b819e5618012ba4b6c3334 # main
+      - uses: cargo-bins/cargo-binstall@bc432b49369a3f25c8c8b19578a82060c18a5dd6 # main
 
       - name: Install espflash
         run: cargo binstall espflash --no-confirm
@@ -208,7 +208,7 @@ jobs:
           - name: m5stickc-std
             chip: esp32
     steps:
-      - uses: cargo-bins/cargo-binstall@7691a5b29cda4f5499b819e5618012ba4b6c3334 # main
+      - uses: cargo-bins/cargo-binstall@bc432b49369a3f25c8c8b19578a82060c18a5dd6 # main
 
       - name: Install espflash
         run: cargo binstall espflash --no-confirm
