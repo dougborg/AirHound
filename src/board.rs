@@ -2,6 +2,19 @@
 ///
 /// Each board module defines pin assignments and capabilities
 /// selected at compile time via feature flags.
+///
+/// ## Platform memory constraints
+///
+/// | | ESP32 (M5StickC) | ESP32-S3 (XIAO) |
+/// |---|---|---|
+/// | Heap | 64 KB | 128 KB |
+/// | Scan channel | 8 slots | 16 slots |
+/// | PSRAM | No | Yes (unused) |
+/// | Display | ST7789V2 135×240 | None |
+/// | DRAM limit | ~180 KB total | ~512 KB total |
+///
+/// ESP32 is the binding constraint — adding fields to `ScanEvent` or
+/// increasing channel capacity can push static BSS past the linker limit.
 
 // Pin assignments and capability flags are defined for hardware reference
 // even when not yet wired up in code — peripherals are passed by type.

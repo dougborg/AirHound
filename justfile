@@ -93,6 +93,41 @@ setup-hooks:
     chmod +x .githooks/*
     @echo "Git hooks configured."
 
+# Set up local development tools (hooks, formatter, test runner)
+[group('host')]
+setup-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== AirHound local dev setup ==="
+
+    # Git hooks
+    git config core.hooksPath .githooks
+    chmod +x .githooks/*
+    echo "✓ Git hooks configured"
+
+    # Check for Rust nightly (needed for cargo fmt and cargo test on host)
+    if command -v rustup >/dev/null 2>&1; then
+        if ! rustup toolchain list | grep -q nightly; then
+            echo "Installing Rust nightly toolchain..."
+            rustup toolchain install nightly --component rustfmt --profile minimal
+        fi
+        echo "✓ Rust nightly available"
+    else
+        echo "⚠ rustup not found — install from https://rustup.rs"
+        echo "  Pre-commit hooks will skip Rust checks; CI will catch issues"
+    fi
+
+    # Check for python3 (needed for JSON formatting)
+    if command -v python3 >/dev/null 2>&1; then
+        echo "✓ python3 available"
+    else
+        echo "⚠ python3 not found — JSON formatting hooks will be skipped"
+    fi
+
+    echo ""
+    echo "Local dev ready. Docker builds: just docker-build"
+    echo "Full dev environment: just docker-shell (or use VS Code devcontainer)"
+
 # ── Schemas ──────────────────────────────────────────────
 
 # Check JSON files are well-formed and consistently formatted (2-space indent)

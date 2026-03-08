@@ -23,7 +23,9 @@ mod buzzer;
 mod display;
 
 // Re-export library modules so binary submodules (display, buzzer) can use crate::*
-pub(crate) use airhound::{board, comm, defaults, filter, protocol, scanner};
+pub(crate) use airhound::{
+    board, comm, defaults, filter, mac_index, odid, protocol, scanner, watchlist,
+};
 
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
@@ -37,13 +39,16 @@ use static_cell::StaticCell;
 
 use trouble_host::prelude::*;
 
+use airhound::rules::MatchCategory;
 use comm::LineReader;
 use filter::{
     filter_ble_with_rules, filter_wifi_with_rules, format_mac, BleScanInput, FilterConfig,
     WiFiScanInput,
 };
+use mac_index::MacIndex;
 use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
 use scanner::{BleEvent, ScanEvent, WiFiEvent};
+use watchlist::Watchlist;
 
 // ── BLE GATT server definition ──────────────────────────────────────
 //
@@ -73,6 +78,11 @@ struct AirHoundServer {
 
 // ── Channel type aliases ──────────────────────────────────────────────
 
+// ESP32 (M5StickC): 8 slots — tighter DRAM budget (~180KB limit)
+#[cfg(feature = "esp32")]
+type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 8>;
+// ESP32-S3 (XIAO): 16 slots — ample DRAM
+#[cfg(not(feature = "esp32"))]
 type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
 type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
 type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
@@ -107,6 +117,7 @@ static BLE_CLIENTS: AtomicU8 = AtomicU8::new(0);
 /// Match counters for display
 pub(crate) static WIFI_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static BLE_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
+pub(crate) static ODID_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Last match description for display
 pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
@@ -117,6 +128,18 @@ pub(crate) static BUZZER_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Signal channel for buzzer beeps
 pub(crate) static BUZZER_SIGNAL: Channel<CriticalSectionRawMutex, (), 1> = Channel::new();
+
+/// Accelerated MAC lookup table — populated from defaults at boot,
+/// updated by AddWatchlist/RemoveWatchlist host commands.
+static MAC_INDEX: Mutex<RefCell<MacIndex>> = Mutex::new(RefCell::new(MacIndex::new()));
+
+/// Watchlist entries — managed via host commands.
+/// ESP32 (M5StickC): 32 entries to fit within DRAM budget.
+/// ESP32-S3 (XIAO): 128 entries (default capacity).
+#[cfg(feature = "esp32")]
+static WATCHLIST: Mutex<RefCell<Watchlist<32>>> = Mutex::new(RefCell::new(Watchlist::new()));
+#[cfg(not(feature = "esp32"))]
+static WATCHLIST: Mutex<RefCell<Watchlist>> = Mutex::new(RefCell::new(Watchlist::new()));
 
 /// Get a snapshot of the current filter config.
 fn get_filter_config() -> FilterConfig {
@@ -132,6 +155,16 @@ fn get_filter_config() -> FilterConfig {
 fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     let rssi = pkt.rx_cntl.rssi as i8;
     let channel = pkt.rx_cntl.channel as u8;
+
+    // Check for NAN ODID action frame first (not on ESP32 — DRAM constrained)
+    #[cfg(not(feature = "esp32"))]
+    {
+        if let Some(odid_event) = scanner::try_parse_odid_nan(pkt.data, rssi, channel) {
+            let _ = SCAN_CHANNEL.try_send(ScanEvent::Odid(odid_event));
+            return;
+        }
+    }
+
     if let Some(event) = scanner::parse_wifi_frame(pkt.data, rssi, channel) {
         let _ = SCAN_CHANNEL.try_send(ScanEvent::WiFi(event));
     }
@@ -208,6 +241,13 @@ async fn main(spawner: embassy_executor::Spawner) {
         defaults::DEFAULT_RULE_DB.rules.len(),
         defaults::MAC_PREFIXES.len(),
     );
+
+    // Build accelerated MAC lookup index from default signatures
+    critical_section::with(|cs| {
+        let mut idx = MAC_INDEX.borrow(cs).borrow_mut();
+        *idx = MacIndex::from_defaults();
+    });
+    log::info!("MAC index initialized");
 
     // Spawn non-BLE tasks
     spawner.spawn(filter_task()).unwrap();
@@ -505,34 +545,48 @@ async fn filter_task() {
 
         match event {
             ScanEvent::WiFi(ref wifi) => {
-                handle_wifi_event(wifi, &config, &output_tx).await;
+                handle_wifi_event(wifi, &config, &output_tx);
             }
             ScanEvent::Ble(ref ble) => {
-                handle_ble_event(ble, &config, &output_tx).await;
+                handle_ble_event(ble, &config, &output_tx);
+            }
+            #[cfg(not(feature = "esp32"))]
+            ScanEvent::Odid(ref odid_event) => {
+                // NAN ODID events bypass normal filter path — category-based
+                // runtime toggling is not yet implemented (DEFAULT_RULE_DB is
+                // immutable static; enable_category is parsed but has no effect).
+
+                // Parse raw ODID bytes deferred from scan time
+                let frame = match odid::parse_odid_wifi_nan(&odid_event.raw_data) {
+                    Some(f) if f.has_data() => f,
+                    _ => continue,
+                };
+
+                let source = odid_event.source.as_str();
+
+                // Update last match for display
+                critical_section::with(|cs| {
+                    let mut s = LAST_MATCH.borrow(cs).borrow_mut();
+                    s.clear();
+                    let _ = s.push_str("Open Drone ID");
+                });
+                let _ = BUZZER_SIGNAL.try_send(());
+
+                emit_drone_sighting(
+                    &frame,
+                    &odid_event.mac,
+                    odid_event.rssi,
+                    source,
+                    Some("Open Drone ID"),
+                    &output_tx,
+                );
             }
         }
     }
 }
 
-async fn handle_wifi_event(
-    wifi: &WiFiEvent,
-    config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
-) {
-    let input = WiFiScanInput {
-        mac: &wifi.mac,
-        ssid: wifi.ssid.as_str(),
-        rssi: wifi.rssi,
-    };
-
-    let result = filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB);
-    if !result.matched {
-        return;
-    }
-
-    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    // Update last match description for display — prefer rule name over raw match
+/// Update the last match display and trigger buzzer.
+fn update_last_match_and_buzz(result: &filter::FilterResult) {
     if let Some(&rule_name) = result.rule_names.first() {
         critical_section::with(|cs| {
             let mut s = LAST_MATCH.borrow(cs).borrow_mut();
@@ -547,8 +601,107 @@ async fn handle_wifi_event(
         });
     }
 
-    // Trigger buzzer beep
     let _ = BUZZER_SIGNAL.try_send(());
+}
+
+/// Emit a DroneSighting message from parsed ODID data.
+fn emit_drone_sighting(
+    frame: &odid::OdidFrame,
+    mac: &[u8; 6],
+    rssi: i8,
+    source: &'static str,
+    rule_name: Option<&'static str>,
+    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
+) {
+    ODID_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    let mut mac_str = MacString::new();
+    format_mac(mac, &mut mac_str);
+
+    let ts = (Instant::now().as_millis() & 0xFFFF_FFFF) as u32;
+
+    let uas_id_str = frame.basic_id.as_ref().map(|bid| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&bid.uas_id);
+        s
+    });
+
+    let operator_id_str = frame.operator_id.as_ref().map(|oid| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&oid.operator_id);
+        s
+    });
+
+    let msg = DeviceMessage::DroneSighting {
+        mac: &mac_str,
+        rssi,
+        source,
+        uas_id: uas_id_str.as_ref(),
+        ua_type: frame.basic_id.as_ref().map(|bid| bid.ua_type as u8),
+        lat: frame.location.as_ref().map(|loc| loc.latitude),
+        lon: frame.location.as_ref().map(|loc| loc.longitude),
+        alt: frame.location.as_ref().map(|loc| loc.altitude_geo),
+        speed: frame.location.as_ref().map(|loc| loc.speed_horizontal),
+        operator_id: operator_id_str.as_ref(),
+        rule: rule_name,
+        category: Some("drone"),
+        ts,
+    };
+
+    let mut buf = MsgBuffer::new();
+    buf.resize_default(MAX_MSG_LEN).ok();
+    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+        buf.truncate(len);
+        let _ = output_tx.try_send(buf);
+    }
+}
+
+fn handle_wifi_event(
+    wifi: &WiFiEvent,
+    config: &FilterConfig,
+    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
+) {
+    let input = WiFiScanInput {
+        mac: &wifi.mac,
+        ssid: wifi.ssid.as_str(),
+        rssi: wifi.rssi,
+    };
+
+    let result = critical_section::with(|cs| {
+        let idx = MAC_INDEX.borrow(cs).borrow();
+        filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
+    });
+    if !result.matched {
+        return;
+    }
+
+    // Check if this is a drone detection — emit DroneSighting instead of WiFiScan
+    // ODID beacon IE parsing requires raw_ies which is only present on ESP32-S3
+    #[cfg(not(feature = "esp32"))]
+    if result
+        .rule_categories
+        .iter()
+        .any(|c| matches!(c, MatchCategory::Drone))
+    {
+        if let Some(frame) = odid::parse_odid_wifi_beacon(&wifi.raw_ies) {
+            if frame.has_data() {
+                let rule_name = result.rule_names.first().copied();
+                update_last_match_and_buzz(&result);
+                emit_drone_sighting(
+                    &frame,
+                    &wifi.mac,
+                    wifi.rssi,
+                    "wifi_beacon",
+                    rule_name,
+                    output_tx,
+                );
+                return;
+            }
+        }
+    }
+
+    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_last_match_and_buzz(&result);
 
     let mut mac_str = MacString::new();
     format_mac(&wifi.mac, &mut mac_str);
@@ -574,7 +727,7 @@ async fn handle_wifi_event(
     }
 }
 
-async fn handle_ble_event(
+fn handle_ble_event(
     ble: &BleEvent,
     config: &FilterConfig,
     output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
@@ -588,30 +741,32 @@ async fn handle_ble_event(
         raw_ad: ble.raw_ad.as_slice(),
     };
 
-    let result = filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB);
+    let result = critical_section::with(|cs| {
+        let idx = MAC_INDEX.borrow(cs).borrow();
+        filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
+    });
     if !result.matched {
         return;
     }
 
-    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    // Update last match description for display — prefer rule name over raw match
-    if let Some(&rule_name) = result.rule_names.first() {
-        critical_section::with(|cs| {
-            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
-            s.clear();
-            let _ = s.push_str(rule_name);
-        });
-    } else if let Some(first) = result.matches.first() {
-        critical_section::with(|cs| {
-            let mut s = LAST_MATCH.borrow(cs).borrow_mut();
-            s.clear();
-            let _ = s.push_str(&first.detail);
-        });
+    // Check if this is a drone detection — emit DroneSighting instead of BleScan
+    if result
+        .rule_categories
+        .iter()
+        .any(|c| matches!(c, MatchCategory::Drone))
+    {
+        if let Some(frame) = odid::parse_odid_ble(&ble.raw_ad) {
+            if frame.has_data() {
+                let rule_name = result.rule_names.first().copied();
+                update_last_match_and_buzz(&result);
+                emit_drone_sighting(&frame, &ble.mac, ble.rssi, "ble", rule_name, output_tx);
+                return;
+            }
+        }
     }
 
-    // Trigger buzzer beep
-    let _ = BUZZER_SIGNAL.try_send(());
+    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_last_match_and_buzz(&result);
 
     let mut mac_str = MacString::new();
     format_mac(&ble.mac, &mut mac_str);
@@ -702,6 +857,54 @@ async fn command_task() {
 
         if let Some(enabled) = buzzer_state {
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
+        }
+
+        // Handle watchlist mutations — update both Watchlist and MacIndex
+        match &cmd {
+            HostCommand::AddWatchlist {
+                id,
+                mac,
+                full_mac,
+                label,
+            } => {
+                critical_section::with(|cs| {
+                    let mut wl = WATCHLIST.borrow(cs).borrow_mut();
+                    let mut idx = MAC_INDEX.borrow(cs).borrow_mut();
+                    let oui = [mac[0], mac[1], mac[2]];
+                    let match_type = if *full_mac {
+                        watchlist::WatchlistMatch::MacFull(*mac)
+                    } else {
+                        watchlist::WatchlistMatch::MacPrefix(oui)
+                    };
+                    let entry = watchlist::WatchlistEntry::new(*id, match_type, label.as_str());
+                    if wl.add(entry).is_ok() {
+                        if *full_mac {
+                            idx.add_watchlist_full(*mac, *id);
+                        } else {
+                            idx.add_watchlist_oui(oui, *id);
+                        }
+                    }
+                });
+            }
+            HostCommand::RemoveWatchlist { id } => {
+                critical_section::with(|cs| {
+                    let mut wl = WATCHLIST.borrow(cs).borrow_mut();
+                    let mut idx = MAC_INDEX.borrow(cs).borrow_mut();
+                    // Find the entry before removing to get its match info
+                    if let Some(entry) = wl.entries().iter().find(|e| e.id == *id) {
+                        match &entry.match_type {
+                            watchlist::WatchlistMatch::MacFull(mac) => {
+                                idx.remove_watchlist_full(mac);
+                            }
+                            watchlist::WatchlistMatch::MacPrefix(oui) => {
+                                idx.remove_watchlist_oui(oui);
+                            }
+                        }
+                    }
+                    wl.remove(*id);
+                });
+            }
+            _ => {}
         }
 
         // Write back updated state

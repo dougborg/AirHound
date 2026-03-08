@@ -71,7 +71,7 @@ The project's three portable layers (signature schemas, companion event protocol
 
 The firmware runs on the Embassy async executor (`esp-rtos`). All tasks are single-threaded cooperative (no preemption). Tasks communicate through static `embassy_sync::Channel`s defined in `main.rs`:
 
-- **SCAN_CHANNEL** (capacity 16) — WiFi sniffer ISR and BLE scan task push raw `ScanEvent`s
+- **SCAN_CHANNEL** (capacity 8 on ESP32, 16 on ESP32-S3) — WiFi sniffer ISR and BLE scan task push raw `ScanEvent`s
 - **OUTPUT_CHANNEL** (capacity 8) — Serialized NDJSON `MsgBuffer`s ready for transmission
 - **CMD_CHANNEL** (capacity 4) — Parsed `HostCommand`s from BLE or serial input
 - **BLE_OUTPUT_CHANNEL** (capacity 4) — Cloned output messages forwarded as BLE GATT notifications
@@ -124,6 +124,20 @@ The library is organized in two layers with progressive feature gates:
 - **All string types have fixed max lengths**: `MacString` (18), `NameString` (33), `MatchDetail` (32), `MsgBuffer` (512 bytes). Be mindful of truncation.
 - **ISR context for WiFi sniffer callback**: The sniffer callback runs in interrupt context — must use `try_send` (non-blocking) on the channel, not `.await`.
 - **BLE must init before WiFi** for coexistence to work (assertion failure otherwise on ESP32-S3).
+
+### Platform comparison
+
+| | ESP32 (M5StickC) | ESP32-S3 (XIAO) |
+|---|---|---|
+| Heap | 64 KB | 128 KB |
+| Total DRAM | ~180 KB | ~512 KB |
+| Scan channel capacity | 8 slots | 16 slots |
+| PSRAM | No | Yes (unused) |
+| Display | ST7789V2 135×240 | None |
+| Buzzer | GPIO2 passive | GPIO3 passive |
+| Feature gate | `esp32` / `m5stickc` | `esp32s3` / `xiao` |
+
+ESP32 is the binding DRAM constraint. Adding fields to `ScanEvent` or increasing channel capacity can cause linker overflow. Always verify with `just docker-build-m5stickc` after changing shared types.
 
 ## M5StickC Plus2 Hardware
 

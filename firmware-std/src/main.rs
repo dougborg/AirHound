@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use airhound::{board, comm, defaults, filter, protocol, scanner};
+use airhound::{board, comm, defaults, filter, mac_index, odid, protocol, scanner, watchlist};
 
 use comm::LineReader;
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -27,7 +27,13 @@ use esp_idf_svc::sys::{
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
-use filter::{filter_ble, filter_wifi, format_mac, BleScanInput, FilterConfig, WiFiScanInput};
+use airhound::rules::MatchCategory;
+use filter::{
+    filter_ble_with_rules, filter_wifi_with_rules, format_mac, BleScanInput, FilterConfig,
+    WiFiScanInput,
+};
+use mac_index::MacIndex;
+use watchlist::Watchlist;
 use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
 use scanner::{BleEvent, ScanEvent, WiFiEvent};
 
@@ -40,12 +46,19 @@ pub(crate) static SCANNING: AtomicBool = AtomicBool::new(true);
 pub(crate) static BLE_CLIENTS: AtomicU8 = AtomicU8::new(0);
 pub(crate) static WIFI_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static BLE_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
+pub(crate) static ODID_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static BUZZER_ENABLED: AtomicBool = AtomicBool::new(true);
 static FILTER_CONFIG: Mutex<FilterConfig> = Mutex::new(FilterConfig::new());
 pub(crate) static LAST_MATCH: Mutex<heapless::String<32>> = Mutex::new(heapless::String::new());
 
 /// Boot time — captured once in main, used for uptime calculation.
 static BOOT_INSTANT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Accelerated MAC lookup table.
+static MAC_INDEX: Mutex<MacIndex> = Mutex::new(MacIndex::new());
+
+/// Watchlist entries.
+static WATCHLIST: Mutex<Watchlist> = Mutex::new(Watchlist::new());
 
 pub(crate) fn uptime_secs() -> u32 {
     BOOT_INSTANT
@@ -96,6 +109,16 @@ unsafe extern "C" fn promisc_rx_cb(
     // u8 has no alignment requirements.
     let payload = unsafe { std::slice::from_raw_parts(pkt.payload.as_ptr(), sig_len) };
 
+    // Check for NAN ODID action frame first
+    if let Some(odid_event) = scanner::try_parse_odid_nan(payload, rssi, channel) {
+        if let Ok(guard) = SCAN_TX.try_lock() {
+            if let Some(ref tx) = *guard {
+                let _ = tx.try_send(ScanEvent::Odid(odid_event));
+            }
+        }
+        return;
+    }
+
     if let Some(event) = scanner::parse_wifi_frame(payload, rssi, channel) {
         // Use try_lock to avoid blocking the WiFi driver task if another
         // thread holds the mutex (e.g., during init).
@@ -116,11 +139,15 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("AirHound v{} starting on {} (std)", VERSION, board::BOARD_NAME);
     log::info!(
-        "Filter loaded: {} MAC prefixes, {} SSID patterns, {} BLE name patterns",
+        "Filter loaded: {} signatures, {} rules, {} MAC prefixes",
+        defaults::SIG_COUNT,
+        defaults::DEFAULT_RULE_DB.rules.len(),
         defaults::MAC_PREFIXES.len(),
-        defaults::SSID_PATTERNS.len(),
-        defaults::BLE_NAME_PATTERNS.len(),
     );
+
+    // Build accelerated MAC lookup index from default signatures
+    *MAC_INDEX.lock().unwrap() = MacIndex::from_defaults();
+    log::info!("MAC index initialized");
 
     // ── Peripherals ──────────────────────────────────────────────────
 
@@ -325,7 +352,109 @@ fn filter_thread(
                     &buzzer_tx,
                 );
             }
+            ScanEvent::Odid(ref odid_event) => {
+                // NAN ODID events bypass normal filter path — category-based
+                // runtime toggling is not yet implemented (DEFAULT_RULE_DB is
+                // immutable static; enable_category is parsed but has no effect).
+
+                // Parse raw ODID bytes deferred from scan time
+                let frame = match odid::parse_odid_wifi_nan(&odid_event.raw_data) {
+                    Some(f) if f.has_data() => f,
+                    _ => continue,
+                };
+
+                let source = odid_event.source.as_str();
+
+                if let Ok(mut s) = LAST_MATCH.lock() {
+                    s.clear();
+                    let _ = s.push_str("Open Drone ID");
+                }
+                #[cfg(feature = "m5stickc")]
+                let _ = buzzer_tx.try_send(());
+
+                emit_drone_sighting(
+                    &frame,
+                    &odid_event.mac,
+                    odid_event.rssi,
+                    source,
+                    Some("Open Drone ID"),
+                    &output_tx,
+                );
+            }
         }
+    }
+}
+
+/// Update the last match display and trigger buzzer.
+fn update_last_match_and_buzz(
+    result: &filter::FilterResult,
+    #[cfg(feature = "m5stickc")] buzzer_tx: &SyncSender<()>,
+) {
+    if let Some(&rule_name) = result.rule_names.first() {
+        if let Ok(mut s) = LAST_MATCH.lock() {
+            s.clear();
+            let _ = s.push_str(rule_name);
+        }
+    } else if let Some(first) = result.matches.first() {
+        if let Ok(mut s) = LAST_MATCH.lock() {
+            s.clear();
+            let _ = s.push_str(&first.detail);
+        }
+    }
+
+    #[cfg(feature = "m5stickc")]
+    let _ = buzzer_tx.try_send(());
+}
+
+/// Emit a DroneSighting message from parsed ODID data.
+fn emit_drone_sighting(
+    frame: &odid::OdidFrame,
+    mac: &[u8; 6],
+    rssi: i8,
+    source: &'static str,
+    rule_name: Option<&'static str>,
+    output_tx: &SyncSender<MsgBuffer>,
+) {
+    ODID_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    let mut mac_str = MacString::new();
+    format_mac(mac, &mut mac_str);
+
+    let ts = uptime_millis_u32();
+
+    let uas_id_str = frame.basic_id.as_ref().map(|bid| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&bid.uas_id);
+        s
+    });
+
+    let operator_id_str = frame.operator_id.as_ref().map(|oid| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&oid.operator_id);
+        s
+    });
+
+    let msg = DeviceMessage::DroneSighting {
+        mac: &mac_str,
+        rssi,
+        source,
+        uas_id: uas_id_str.as_ref(),
+        ua_type: frame.basic_id.as_ref().map(|bid| bid.ua_type as u8),
+        lat: frame.location.as_ref().map(|loc| loc.latitude),
+        lon: frame.location.as_ref().map(|loc| loc.longitude),
+        alt: frame.location.as_ref().map(|loc| loc.altitude_geo),
+        speed: frame.location.as_ref().map(|loc| loc.speed_horizontal),
+        operator_id: operator_id_str.as_ref(),
+        rule: rule_name,
+        category: Some("drone"),
+        ts,
+    };
+
+    let mut buf = MsgBuffer::new();
+    buf.resize_default(MAX_MSG_LEN).ok();
+    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+        buf.truncate(len);
+        let _ = output_tx.try_send(buf);
     }
 }
 
@@ -341,22 +470,50 @@ fn handle_wifi_event(
         rssi: wifi.rssi,
     };
 
-    let result = filter_wifi(&input, config);
+    let result = {
+        let idx = MAC_INDEX.lock().unwrap_or_else(|e| e.into_inner());
+        filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
+    };
     if !result.matched {
         return;
     }
 
-    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    if let Some(first) = result.matches.first() {
-        if let Ok(mut s) = LAST_MATCH.lock() {
-            s.clear();
-            let _ = s.push_str(&first.detail);
+    // Check if this is a drone detection — emit DroneSighting instead of WiFiScan
+    // ODID beacon IE parsing requires raw_ies (only present on ESP32-S3 in library).
+    // firmware-std doesn't have an "esp32" feature — use "m5stickc" to distinguish.
+    #[cfg(not(feature = "m5stickc"))]
+    if result
+        .rule_categories
+        .iter()
+        .any(|c| matches!(c, MatchCategory::Drone))
+    {
+        if let Some(frame) = odid::parse_odid_wifi_beacon(&wifi.raw_ies) {
+            if frame.has_data() {
+                let rule_name = result.rule_names.first().copied();
+                update_last_match_and_buzz(
+                    &result,
+                    #[cfg(feature = "m5stickc")]
+                    buzzer_tx,
+                );
+                emit_drone_sighting(
+                    &frame,
+                    &wifi.mac,
+                    wifi.rssi,
+                    "wifi_beacon",
+                    rule_name,
+                    output_tx,
+                );
+                return;
+            }
         }
     }
 
-    #[cfg(feature = "m5stickc")]
-    let _ = buzzer_tx.try_send(());
+    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_last_match_and_buzz(
+        &result,
+        #[cfg(feature = "m5stickc")]
+        buzzer_tx,
+    );
 
     let mut mac_str = MacString::new();
     format_mac(&wifi.mac, &mut mac_str);
@@ -397,22 +554,40 @@ fn handle_ble_event(
         raw_ad: &ble.raw_ad,
     };
 
-    let result = filter_ble(&input, config);
+    let result = {
+        let idx = MAC_INDEX.lock().unwrap_or_else(|e| e.into_inner());
+        filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
+    };
     if !result.matched {
         return;
     }
 
-    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    if let Some(first) = result.matches.first() {
-        if let Ok(mut s) = LAST_MATCH.lock() {
-            s.clear();
-            let _ = s.push_str(&first.detail);
+    // Check if this is a drone detection — emit DroneSighting instead of BleScan
+    if result
+        .rule_categories
+        .iter()
+        .any(|c| matches!(c, MatchCategory::Drone))
+    {
+        if let Some(frame) = odid::parse_odid_ble(&ble.raw_ad) {
+            if frame.has_data() {
+                let rule_name = result.rule_names.first().copied();
+                update_last_match_and_buzz(
+                    &result,
+                    #[cfg(feature = "m5stickc")]
+                    buzzer_tx,
+                );
+                emit_drone_sighting(&frame, &ble.mac, ble.rssi, "ble", rule_name, output_tx);
+                return;
+            }
         }
     }
 
-    #[cfg(feature = "m5stickc")]
-    let _ = buzzer_tx.try_send(());
+    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+    update_last_match_and_buzz(
+        &result,
+        #[cfg(feature = "m5stickc")]
+        buzzer_tx,
+    );
 
     let mut mac_str = MacString::new();
     format_mac(&ble.mac, &mut mac_str);
@@ -491,6 +666,52 @@ fn command_thread(cmd_rx: mpsc::Receiver<HostCommand>, output_tx: SyncSender<Msg
 
         if let Some(enabled) = buzzer_state {
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
+        }
+
+        // Handle watchlist mutations — update both Watchlist and MacIndex
+        match &cmd {
+            HostCommand::AddWatchlist {
+                id,
+                mac,
+                full_mac,
+                label,
+            } => {
+                let match_type = if *full_mac {
+                    watchlist::WatchlistMatch::MacFull(*mac)
+                } else {
+                    watchlist::WatchlistMatch::MacPrefix([mac[0], mac[1], mac[2]])
+                };
+                let entry = watchlist::WatchlistEntry::new(*id, match_type, label.as_str());
+                if let Ok(mut wl) = WATCHLIST.lock() {
+                    if wl.add(entry).is_ok() {
+                        if let Ok(mut idx) = MAC_INDEX.lock() {
+                            if *full_mac {
+                                idx.add_watchlist_full(*mac, *id);
+                            } else {
+                                idx.add_watchlist_oui([mac[0], mac[1], mac[2]], *id);
+                            }
+                        }
+                    }
+                }
+            }
+            HostCommand::RemoveWatchlist { id } => {
+                if let Ok(mut wl) = WATCHLIST.lock() {
+                    if let Some(entry) = wl.entries().iter().find(|e| e.id == *id) {
+                        if let Ok(mut idx) = MAC_INDEX.lock() {
+                            match &entry.match_type {
+                                watchlist::WatchlistMatch::MacFull(mac) => {
+                                    idx.remove_watchlist_full(mac);
+                                }
+                                watchlist::WatchlistMatch::MacPrefix(oui) => {
+                                    idx.remove_watchlist_oui(oui);
+                                }
+                            }
+                        }
+                    }
+                    wl.remove(*id);
+                }
+            }
+            _ => {}
         }
 
         *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = config;
