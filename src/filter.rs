@@ -3,14 +3,17 @@
 /// Evaluates scan events against the signature database and runtime config.
 /// Any filter match causes the result to be emitted. No scoring or state tracking —
 /// that's the companion app's job.
+use core::fmt::Write;
+
 use heapless::Vec;
 
 use crate::defaults::{
     self, BLE_AD_BYTES_PATTERNS, BLE_MANUFACTURER_IDS, BLE_NAME_PATTERNS, BLE_SERVICE_UUIDS_16,
-    MAC_PREFIXES, SSID_EXACT, SSID_KEYWORDS, SSID_PATTERNS, WIFI_NAME_KEYWORDS,
+    SSID_EXACT, SSID_KEYWORDS, SSID_PATTERNS, WIFI_NAME_KEYWORDS,
 };
+use crate::mac_index::MacIndex;
 use crate::protocol::{MatchDetail, MatchReason};
-use crate::rules::{evaluate_rules, RuleDb, SigMatchSet};
+use crate::rules::{evaluate_rules, MatchCategory, RuleDb, SigMatchSet};
 
 /// Runtime filter configuration. Allows the companion app to adjust
 /// filtering without reflashing.
@@ -70,6 +73,8 @@ pub struct FilterResult {
     pub sig_matches: SigMatchSet,
     /// Names of matched rules (populated by `filter_*_with_rules`)
     pub rule_names: Vec<&'static str, 4>,
+    /// Categories of matched rules (populated by `filter_*_with_rules`)
+    pub rule_categories: Vec<MatchCategory, 4>,
 }
 
 impl FilterResult {
@@ -79,6 +84,7 @@ impl FilterResult {
             matches: Vec::new(),
             sig_matches: SigMatchSet::new(),
             rule_names: Vec::new(),
+            rule_categories: Vec::new(),
         }
     }
 
@@ -102,7 +108,11 @@ impl FilterResult {
 }
 
 /// Evaluate a WiFi scan event against all signatures.
-pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult {
+pub fn filter_wifi(
+    input: &WiFiScanInput,
+    config: &FilterConfig,
+    mac_index: &MacIndex,
+) -> FilterResult {
     let mut result = FilterResult::new();
 
     if !config.wifi_enabled {
@@ -114,8 +124,8 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
         return result;
     }
 
-    // MAC OUI prefix check
-    check_mac_oui(input.mac, &mut result);
+    // MAC lookup via hash index (OUI signatures + watchlist)
+    check_mac(input.mac, mac_index, &mut result);
 
     // SSID structured pattern check (e.g., Flock-XXXXXX)
     for (i, pattern) in SSID_PATTERNS.iter().enumerate() {
@@ -172,7 +182,11 @@ pub fn filter_wifi(input: &WiFiScanInput, config: &FilterConfig) -> FilterResult
 }
 
 /// Evaluate a BLE scan event against all signatures.
-pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
+pub fn filter_ble(
+    input: &BleScanInput,
+    config: &FilterConfig,
+    mac_index: &MacIndex,
+) -> FilterResult {
     let mut result = FilterResult::new();
 
     if !config.ble_enabled {
@@ -184,8 +198,8 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
         return result;
     }
 
-    // MAC OUI prefix check
-    check_mac_oui(input.mac, &mut result);
+    // MAC lookup via hash index (OUI signatures + watchlist)
+    check_mac(input.mac, mac_index, &mut result);
 
     // BLE device name pattern check (case-insensitive substring)
     if !input.name.is_empty() {
@@ -197,15 +211,9 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
             .collect();
         let name_lower_str = core::str::from_utf8(&name_lower).unwrap_or("");
 
+        // BLE_NAME_PATTERNS are pre-lowercased in defaults.rs
         for (i, &pattern) in BLE_NAME_PATTERNS.iter().enumerate() {
-            let pattern_lower: Vec<u8, 33> = pattern
-                .bytes()
-                .take(33)
-                .map(|b| b.to_ascii_lowercase())
-                .collect();
-            let pattern_lower_str = core::str::from_utf8(&pattern_lower).unwrap_or("");
-
-            if name_lower_str.contains(pattern_lower_str) {
+            if name_lower_str.contains(pattern) {
                 result
                     .sig_matches
                     .set(defaults::SIG_IDX_BLE_NAME_START + i as u16);
@@ -221,7 +229,9 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
                 result
                     .sig_matches
                     .set(defaults::SIG_IDX_BLE_UUID_START + i as u16);
-                result.add_match("ble_uuid", "Raven service UUID");
+                let mut detail = crate::protocol::MatchDetail::new();
+                let _ = write!(detail, "Service UUID 0x{:04X}", uuid);
+                result.add_match("ble_uuid", detail.as_str());
             }
         }
         for (i, &known) in defaults::BLE_STANDARD_UUIDS_16.iter().enumerate() {
@@ -229,7 +239,9 @@ pub fn filter_ble(input: &BleScanInput, config: &FilterConfig) -> FilterResult {
                 result
                     .sig_matches
                     .set(defaults::SIG_IDX_BLE_STD_UUID_START + i as u16);
-                result.add_match("ble_uuid_std", "Raven standard UUID");
+                let mut detail = crate::protocol::MatchDetail::new();
+                let _ = write!(detail, "Standard UUID 0x{:04X}", uuid);
+                result.add_match("ble_uuid_std", detail.as_str());
             }
         }
     }
@@ -260,8 +272,9 @@ pub fn filter_wifi_with_rules(
     input: &WiFiScanInput,
     config: &FilterConfig,
     db: &RuleDb,
+    mac_index: &MacIndex,
 ) -> FilterResult {
-    let mut result = filter_wifi(input, config);
+    let mut result = filter_wifi(input, config, mac_index);
     apply_rules(&mut result, db);
     result
 }
@@ -271,36 +284,34 @@ pub fn filter_ble_with_rules(
     input: &BleScanInput,
     config: &FilterConfig,
     db: &RuleDb,
+    mac_index: &MacIndex,
 ) -> FilterResult {
-    let mut result = filter_ble(input, config);
+    let mut result = filter_ble(input, config, mac_index);
     apply_rules(&mut result, db);
     result
 }
 
-/// Run rule evaluation on a filter result and populate `rule_names`.
+/// Run rule evaluation on a filter result and populate `rule_names` and `rule_categories`.
 fn apply_rules(result: &mut FilterResult, db: &RuleDb) {
     if !result.matched {
         return;
     }
-    let matched_indices = evaluate_rules(db, &result.sig_matches);
-    for &idx in &matched_indices {
-        if let Some(rule) = db.rules.get(idx as usize) {
-            let _ = result.rule_names.push(rule.name);
-        }
+    let rule_matches = evaluate_rules(db, &result.sig_matches);
+    for rm in &rule_matches {
+        let _ = result.rule_names.push(rm.name);
+        let _ = result.rule_categories.push(rm.category);
     }
 }
 
-/// Check MAC address against known OUI prefixes
-fn check_mac_oui(mac: &[u8; 6], result: &mut FilterResult) {
-    let oui = [mac[0], mac[1], mac[2]];
-    for (i, &(ref prefix, vendor)) in MAC_PREFIXES.iter().enumerate() {
-        if oui == *prefix {
-            result
-                .sig_matches
-                .set(defaults::SIG_IDX_MAC_OUI_START + i as u16);
-            result.add_match("mac_oui", vendor);
-            return; // Only report first match (a MAC can only match one OUI)
-        }
+/// Check MAC address against the hash index (OUI signatures + watchlist).
+fn check_mac(mac: &[u8; 6], mac_index: &MacIndex, result: &mut FilterResult) {
+    let lookup = mac_index.lookup(mac);
+    if lookup.sig_idx != crate::mac_index::NO_ID {
+        result.sig_matches.set(lookup.sig_idx);
+        result.add_match("mac_oui", lookup.vendor);
+    }
+    if lookup.has_watchlist_match() {
+        result.add_match("watchlist", "");
     }
 }
 
@@ -373,8 +384,14 @@ pub fn format_mac(mac: &[u8; 6], buf: &mut crate::protocol::MacString) {
 mod tests {
     use super::*;
 
+    use crate::mac_index::MacIndex;
+
     fn default_config() -> FilterConfig {
         FilterConfig::new()
+    }
+
+    fn test_mac_index() -> MacIndex {
+        MacIndex::from_defaults()
     }
 
     // ── WiFi filter tests ───────────────────────────────────────────
@@ -387,7 +404,7 @@ mod tests {
             ssid: "SomeNetwork",
             rssi: -50,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.iter().any(|m| m.filter_type == "mac_oui"));
     }
@@ -400,7 +417,7 @@ mod tests {
             ssid: "",
             rssi: -60,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert_eq!(result.matches[0].filter_type, "mac_oui");
         assert!(result.matches[0].detail.contains("Silicon Labs"));
@@ -414,7 +431,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -430,7 +447,7 @@ mod tests {
             ssid: "Penguin-1234567890",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -447,7 +464,7 @@ mod tests {
             ssid: "Flock-A1B",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         // No ssid_pattern match (wrong suffix length)
         assert!(!result
             .matches
@@ -465,7 +482,7 @@ mod tests {
             ssid: "FS Ext Battery",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.iter().any(|m| m.filter_type == "ssid_exact"));
     }
@@ -478,7 +495,7 @@ mod tests {
             ssid: "MyFLOCKNetwork",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -494,7 +511,7 @@ mod tests {
             ssid: "Linksys-Home",
             rssi: -50,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(!result.matched);
         assert!(result.matches.is_empty());
     }
@@ -510,7 +527,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -80, // Below -70 threshold
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(!result.matched);
     }
 
@@ -525,7 +542,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(!result.matched);
     }
 
@@ -538,7 +555,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -40,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.len() >= 2);
     }
@@ -556,7 +573,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.iter().any(|m| m.filter_type == "ble_name"));
     }
@@ -572,7 +589,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
     }
 
@@ -587,7 +604,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
     }
 
@@ -602,7 +619,7 @@ mod tests {
             manufacturer_id: 0x09C8,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.iter().any(|m| m.filter_type == "ble_mfr"));
     }
@@ -618,7 +635,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result.matches.iter().any(|m| m.filter_type == "ble_uuid"));
     }
@@ -634,7 +651,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -653,7 +670,7 @@ mod tests {
             manufacturer_id: 0x004C,     // Apple (not in our list)
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(!result.matched);
     }
 
@@ -671,7 +688,7 @@ mod tests {
             manufacturer_id: 0x09C8,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(!result.matched);
     }
 
@@ -689,7 +706,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(!result.matched);
     }
 
@@ -712,7 +729,7 @@ mod tests {
             manufacturer_id: 0x004C,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -736,7 +753,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -757,7 +774,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.matched);
         assert!(result
             .matches
@@ -779,7 +796,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         // Should NOT match AirTag (offset-sensitive pattern)
         assert!(!result
             .matches
@@ -802,7 +819,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(!result
             .matches
             .iter()
@@ -820,7 +837,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(!result
             .matches
             .iter()
@@ -837,7 +854,7 @@ mod tests {
             ssid: "",
             rssi: -50,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result.sig_matches.get(defaults::SIG_IDX_MAC_OUI_START + 0));
     }
 
@@ -849,7 +866,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -50,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result
             .sig_matches
             .get(defaults::SIG_IDX_SSID_PATTERN_START + 0));
@@ -867,7 +884,7 @@ mod tests {
             ssid: "FS Ext Battery",
             rssi: -50,
         };
-        let result = filter_wifi(&input, &config);
+        let result = filter_wifi(&input, &config, &test_mac_index());
         assert!(result
             .sig_matches
             .get(defaults::SIG_IDX_SSID_EXACT_START + 0));
@@ -884,7 +901,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_NAME_START + 0)); // "Flock"
     }
 
@@ -899,7 +916,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_UUID_START + 0));
     }
 
@@ -914,7 +931,7 @@ mod tests {
             manufacturer_id: 0x09C8, // XUNTONG = index 0
             raw_ad: &[],
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_MFR_START + 0));
     }
 
@@ -933,7 +950,7 @@ mod tests {
             manufacturer_id: 0x004C,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble(&input, &config);
+        let result = filter_ble(&input, &config, &test_mac_index());
         assert!(result
             .sig_matches
             .get(defaults::SIG_IDX_BLE_AD_BYTES_START + 0)); // AirTag
@@ -952,7 +969,7 @@ mod tests {
             ssid: "SomeNetwork",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -966,7 +983,7 @@ mod tests {
             ssid: "",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -980,7 +997,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -994,7 +1011,7 @@ mod tests {
             ssid: "FS Ext Battery",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -1008,7 +1025,7 @@ mod tests {
             ssid: "MyFlockThing",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -1025,7 +1042,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -1043,7 +1060,7 @@ mod tests {
             manufacturer_id: 0x09C8, // XUNTONG
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
     }
@@ -1062,7 +1079,7 @@ mod tests {
             manufacturer_id: 0x09C8,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         // It matches on ble_mfr signature, but should NOT trigger the rule
         assert!(result.matched); // still a signature match
         assert!(!result.rule_names.contains(&"Flock Safety Camera"));
@@ -1080,7 +1097,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
     }
@@ -1097,7 +1114,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
     }
@@ -1114,7 +1131,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched); // signature match (std UUID)
         assert!(!result.rule_names.contains(&"Raven Acoustic Sensor"));
     }
@@ -1135,7 +1152,7 @@ mod tests {
             manufacturer_id: 0x004C,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Apple AirTag"));
     }
@@ -1154,7 +1171,7 @@ mod tests {
             manufacturer_id: 0x004C,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.rule_names.contains(&"Apple AirTag"));
     }
 
@@ -1174,7 +1191,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flipper Zero"));
     }
@@ -1192,7 +1209,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flipper Zero"));
     }
@@ -1210,7 +1227,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &raw_ad,
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.rule_names.contains(&"Flipper Zero"));
     }
 
@@ -1226,7 +1243,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.matched);
         assert!(result.rule_names.is_empty());
     }
@@ -1240,7 +1257,7 @@ mod tests {
             ssid: "Linksys-Home",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.matched);
         assert!(result.rule_names.is_empty());
     }
@@ -1260,7 +1277,7 @@ mod tests {
             manufacturer_id: 0,
             raw_ad: &[],
         };
-        let result = filter_ble_with_rules(&input, &config, db);
+        let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
         assert!(result.rule_names.contains(&"Flock Safety Camera"));
         assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
@@ -1279,7 +1296,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -50,
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.matched);
         assert!(result.rule_names.is_empty());
     }
@@ -1296,7 +1313,7 @@ mod tests {
             ssid: "Flock-A1B2C3",
             rssi: -50, // below -40 threshold
         };
-        let result = filter_wifi_with_rules(&input, &config, db);
+        let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(!result.matched);
         assert!(result.rule_names.is_empty());
     }
@@ -1387,5 +1404,165 @@ mod tests {
         let mut buf = crate::protocol::MacString::new();
         format_mac(&mac, &mut buf);
         assert_eq!(buf.as_str(), "00:0A:0B:00:00:01");
+    }
+
+    // ── MacIndex integration tests ─────────────────────────────────
+
+    #[test]
+    fn filter_wifi_watchlist_match() {
+        let config = default_config();
+        let mut idx = MacIndex::from_defaults();
+        idx.add_watchlist_oui([0xDE, 0xAD, 0xBE], 1);
+
+        let input = WiFiScanInput {
+            mac: &[0xDE, 0xAD, 0xBE, 0x01, 0x02, 0x03],
+            ssid: "",
+            rssi: -50,
+        };
+        let result = filter_wifi(&input, &config, &idx);
+        assert!(result.matched);
+        assert!(result.matches.iter().any(|m| m.filter_type == "watchlist"));
+    }
+
+    #[test]
+    fn filter_ble_watchlist_full_mac_match() {
+        let config = default_config();
+        let mut idx = MacIndex::from_defaults();
+        let mac = [0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD];
+        idx.add_watchlist_full(mac, 2);
+
+        let input = BleScanInput {
+            mac: &mac,
+            name: "",
+            rssi: -50,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let result = filter_ble(&input, &config, &idx);
+        assert!(result.matched);
+        assert!(result.matches.iter().any(|m| m.filter_type == "watchlist"));
+    }
+
+    // ── Card Skimmer rule tests ──────────────────────────────────────
+
+    #[test]
+    fn rule_card_skimmer_hc05_matches() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = BleScanInput {
+            mac: &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            name: "HC-05",
+            rssi: -50,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(result.matched);
+        assert!(result.rule_names.iter().any(|&n| n == "Card Skimmer"));
+    }
+
+    #[test]
+    fn rule_card_skimmer_hc06_case_insensitive() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = BleScanInput {
+            mac: &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            name: "hc-06",
+            rssi: -50,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(result.matched);
+        assert!(result.rule_names.iter().any(|&n| n == "Card Skimmer"));
+    }
+
+    // ── Pwnagotchi rule tests ────────────────────────────────────────
+
+    #[test]
+    fn rule_pwnagotchi_oui_matches() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = WiFiScanInput {
+            mac: &[0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD],
+            ssid: "",
+            rssi: -50,
+        };
+        let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(result.matched);
+        assert!(result.rule_names.iter().any(|&n| n == "Pwnagotchi"));
+    }
+
+    #[test]
+    fn rule_pwnagotchi_no_match_wrong_oui() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = WiFiScanInput {
+            mac: &[0xDE, 0xAD, 0xBF, 0xEF, 0xDE, 0xAD],
+            ssid: "",
+            rssi: -50,
+        };
+        let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(!result.rule_names.iter().any(|&n| n == "Pwnagotchi"));
+    }
+
+    // ── Open Drone ID rule tests ──────────────────────────────────────
+
+    #[test]
+    fn rule_odid_ble_uuid_matches() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = BleScanInput {
+            mac: &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            name: "",
+            rssi: -50,
+            service_uuids_16: &[0xFFFA],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(result.matched);
+        assert!(result.rule_names.iter().any(|&n| n == "Open Drone ID"));
+        assert!(result
+            .rule_categories
+            .iter()
+            .any(|c| matches!(c, MatchCategory::Drone)));
+    }
+
+    #[test]
+    fn rule_odid_wifi_oui_matches() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = WiFiScanInput {
+            mac: &[0x90, 0x3A, 0xE6, 0x01, 0x02, 0x03],
+            ssid: "",
+            rssi: -50,
+        };
+        let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(result.matched);
+        assert!(result.rule_names.iter().any(|&n| n == "Open Drone ID"));
+        assert!(result
+            .rule_categories
+            .iter()
+            .any(|c| matches!(c, MatchCategory::Drone)));
+    }
+
+    #[test]
+    fn rule_odid_no_match_wrong_uuid() {
+        let config = default_config();
+        let idx = test_mac_index();
+        let input = BleScanInput {
+            mac: &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            name: "",
+            rssi: -50,
+            service_uuids_16: &[0xFFFB],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
+        assert!(!result.rule_names.iter().any(|&n| n == "Open Drone ID"));
     }
 }

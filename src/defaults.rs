@@ -136,6 +136,12 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0xAC, 0xA2, 0x13], "Shenzhen Bilian"),
     // === Sunell Electronics ===
     ([0x00, 0x1C, 0x27], "Sunell Electronics"),
+    // === Pwnagotchi ===
+    // pwnagotchi uses fixed transmitter address DE:AD:BE:EF:DE:AD
+    ([0xDE, 0xAD, 0xBE], "Pwnagotchi"),
+    // === Open Drone ID ===
+    // ASTM F3411 vendor IE OUI for WiFi beacon-based Remote ID
+    ([0x90, 0x3A, 0xE6], "Open Drone ID"),
 ];
 
 /// WiFi SSID exact-prefix patterns.
@@ -164,8 +170,17 @@ pub static SSID_KEYWORDS: &[&str] = &["flock", "penguin", "pigvision"];
 /// WiFi SSID name keyword from FlockOff (matches partial name in beacon/probe).
 pub static WIFI_NAME_KEYWORDS: &[&str] = &["flock"];
 
-/// BLE device name patterns (case-insensitive substring match).
-pub static BLE_NAME_PATTERNS: &[&str] = &["Flock", "Penguin", "FS Ext Battery", "Pigvision"];
+/// BLE device name patterns (pre-lowercased for case-insensitive matching).
+pub static BLE_NAME_PATTERNS: &[&str] = &[
+    "flock",
+    "penguin",
+    "fs ext battery",
+    "pigvision",
+    // Card skimmer BLE modules (cheap HC-series Bluetooth modules)
+    "hc-03",
+    "hc-05",
+    "hc-06",
+];
 
 /// Raven custom BLE service UUIDs (16-bit short IDs).
 /// Full UUID: 0000XXXX-0000-1000-8000-00805f9b34fb
@@ -175,6 +190,7 @@ pub static BLE_SERVICE_UUIDS_16: &[u16] = &[
     0x3300, // Raven Network service
     0x3400, // Raven Upload service
     0x3500, // Raven Error service
+    0xFFFA, // ASTM F3411 Open Drone ID
 ];
 
 /// Standard BLE service UUIDs also associated with Raven devices.
@@ -232,7 +248,7 @@ pub static BLE_AD_BYTES_PATTERNS: &[BleAdBytesPattern] = &[
 // of signature `i` within array `A` is `SIG_IDX_A_START + i`. These map
 // every compiled-in signature to a unique `SigIdx` for the rule engine.
 
-use crate::rules::{ExprNode, Rule, RuleDb, SigIdx};
+use crate::rules::{ExprNode, MatchCategory, Rule, RuleDb, SigIdx};
 
 pub const SIG_IDX_MAC_OUI_START: SigIdx = 0;
 pub const SIG_IDX_SSID_PATTERN_START: SigIdx = MAC_PREFIXES.len() as SigIdx;
@@ -300,6 +316,33 @@ const SIG_FLIPPER_ZERO_WHITE: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 1;
 /// BLE_AD_BYTES_PATTERNS[2] = Flipper Zero Black
 const SIG_FLIPPER_ZERO_BLACK: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 2;
 
+// Card Skimmer signatures
+/// BLE_NAME_PATTERNS[4] = "hc-03"
+const SIG_SKIMMER_HC03: SigIdx = SIG_IDX_BLE_NAME_START + 4;
+/// BLE_NAME_PATTERNS[5] = "hc-05"
+const SIG_SKIMMER_HC05: SigIdx = SIG_IDX_BLE_NAME_START + 5;
+/// BLE_NAME_PATTERNS[6] = "hc-06"
+const SIG_SKIMMER_HC06: SigIdx = SIG_IDX_BLE_NAME_START + 6;
+
+// Pwnagotchi signature
+/// MAC_PREFIXES[second-to-last] = Pwnagotchi OUI DE:AD:BE
+const SIG_PWNAGOTCHI_OUI: SigIdx = SIG_IDX_MAC_OUI_START + (MAC_PREFIXES.len() as SigIdx - 2);
+
+// Open Drone ID signatures
+/// MAC_PREFIXES[last] = Open Drone ID WiFi OUI 90:3A:E6
+const SIG_ODID_WIFI_OUI: SigIdx = SIG_IDX_MAC_OUI_START + (MAC_PREFIXES.len() as SigIdx - 1);
+/// BLE_SERVICE_UUIDS_16[5] = 0xFFFA (ASTM F3411 Open Drone ID)
+const SIG_ODID_BLE_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 5;
+
+// Compile-time verification that signature indices point to the expected entries.
+const _: () = {
+    let pwn = MAC_PREFIXES[MAC_PREFIXES.len() - 2].0;
+    assert!(pwn[0] == 0xDE && pwn[1] == 0xAD && pwn[2] == 0xBE);
+    let odid = MAC_PREFIXES[MAC_PREFIXES.len() - 1].0;
+    assert!(odid[0] == 0x90 && odid[1] == 0x3A && odid[2] == 0xE6);
+    assert!(BLE_SERVICE_UUIDS_16[5] == 0xFFFA);
+};
+
 // ── Compiled-in rule database ───────────────────────────────────────
 
 /// Shared post-order expression node pool for all rules.
@@ -309,6 +352,9 @@ const SIG_FLIPPER_ZERO_BLACK: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 2;
 ///   [12..18) Raven Acoustic Sensor (6 nodes)
 ///   [18]     Apple AirTag (1 node)
 ///   [19..22) Flipper Zero (3 nodes)
+///   [22..26) Card Skimmer (4 nodes)
+///   [26]     Pwnagotchi (1 node)
+///   [27..30) Open Drone ID (3 nodes)
 static DEFAULT_RULE_NODES: &[ExprNode] = &[
     // ── Flock Safety Camera ──
     // anyOf(
@@ -347,6 +393,20 @@ static DEFAULT_RULE_NODES: &[ExprNode] = &[
     ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE), // [19]
     ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK), // [20]
     ExprNode::AnyOf { count: 2 },          // [21]
+    // ── Card Skimmer ──
+    // anyOf(hc-03, hc-05, hc-06)
+    ExprNode::Sig(SIG_SKIMMER_HC03), // [22]
+    ExprNode::Sig(SIG_SKIMMER_HC05), // [23]
+    ExprNode::Sig(SIG_SKIMMER_HC06), // [24]
+    ExprNode::AnyOf { count: 3 },    // [25]
+    // ── Pwnagotchi ──
+    // Single sig: pwnagotchi OUI
+    ExprNode::Sig(SIG_PWNAGOTCHI_OUI), // [26]
+    // ── Open Drone ID ──
+    // anyOf(odid-ble-uuid, odid-wifi-oui)
+    ExprNode::Sig(SIG_ODID_BLE_UUID), // [27]
+    ExprNode::Sig(SIG_ODID_WIFI_OUI), // [28]
+    ExprNode::AnyOf { count: 2 },     // [29]
 ];
 
 static DEFAULT_RULES: &[Rule] = &[
@@ -354,21 +414,50 @@ static DEFAULT_RULES: &[Rule] = &[
         name: "Flock Safety Camera",
         expr_start: 0,
         expr_len: 12,
+        category: MatchCategory::Surveillance,
+        active: true,
     },
     Rule {
         name: "Raven Acoustic Sensor",
         expr_start: 12,
         expr_len: 6,
+        category: MatchCategory::Surveillance,
+        active: true,
     },
     Rule {
         name: "Apple AirTag",
         expr_start: 18,
         expr_len: 1,
+        category: MatchCategory::Surveillance,
+        active: true,
     },
     Rule {
         name: "Flipper Zero",
         expr_start: 19,
         expr_len: 3,
+        category: MatchCategory::Surveillance,
+        active: true,
+    },
+    Rule {
+        name: "Card Skimmer",
+        expr_start: 22,
+        expr_len: 4,
+        category: MatchCategory::Surveillance,
+        active: true,
+    },
+    Rule {
+        name: "Pwnagotchi",
+        expr_start: 26,
+        expr_len: 1,
+        category: MatchCategory::Network,
+        active: true,
+    },
+    Rule {
+        name: "Open Drone ID",
+        expr_start: 27,
+        expr_len: 3,
+        category: MatchCategory::Drone,
+        active: true,
     },
 ];
 
