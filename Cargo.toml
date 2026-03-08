@@ -64,6 +64,9 @@ serde-json-core = "~0.6.0"
 # Logging facade
 log = "~0.4.0"
 
+# Software floating-point math for no_std
+libm = "0.2"
+
 # ── Firmware deps (optional — enabled by chip/board features) ─────────
 
 # Core HAL — from esp-hal main branch for latest fixes
