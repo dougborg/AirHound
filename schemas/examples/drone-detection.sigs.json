@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v1.schema.json",
+  "version": 1,
+  "signatures": [
+    {
+      "id": "odid-ble-uuid",
+      "type": "ble_service_uuid",
+      "uuid": "fffa",
+      "description": "ASTM F3411 Open Drone ID BLE service data UUID"
+    },
+    {
+      "id": "odid-wifi-oui",
+      "type": "mac_oui",
+      "oui": "90:3A:E6",
+      "description": "ASTM F3411 Open Drone ID WiFi vendor IE OUI"
+    }
+  ],
+  "rules": [
+    {
+      "id": "open-drone-id",
+      "name": "Open Drone ID",
+      "description": "ASTM F3411 Remote ID broadcast from drone or controller",
+      "tags": [
+        "drone",
+        "remote_id"
+      ],
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "odid-ble-uuid"
+          },
+          {
+            "sig": "odid-wifi-oui"
+          }
+        ]
+      }
+    }
+  ]
+}
