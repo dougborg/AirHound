@@ -21,6 +21,30 @@
     },
     {
       "$ref": "#/$defs/set_buzzer_cmd"
+    },
+    {
+      "$ref": "#/$defs/set_mode_cmd"
+    },
+    {
+      "$ref": "#/$defs/add_proximity_cmd"
+    },
+    {
+      "$ref": "#/$defs/remove_proximity_cmd"
+    },
+    {
+      "$ref": "#/$defs/clear_proximity_cmd"
+    },
+    {
+      "$ref": "#/$defs/add_watchlist_cmd"
+    },
+    {
+      "$ref": "#/$defs/remove_watchlist_cmd"
+    },
+    {
+      "$ref": "#/$defs/enable_category_cmd"
+    },
+    {
+      "$ref": "#/$defs/export_wigle_cmd"
     }
   ],
   "$defs": {
@@ -100,6 +124,182 @@
           "description": "true to enable, false to disable."
         }
       }
+    },
+    "set_mode_cmd": {
+      "type": "object",
+      "description": "Set the operating mode. Controls which rules and features are active.",
+      "required": [
+        "cmd",
+        "mode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "set_mode"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "ap",
+            "client",
+            "dongle",
+            "standalone"
+          ],
+          "description": "Operating mode identifier."
+        }
+      }
+    },
+    "add_proximity_cmd": {
+      "type": "object",
+      "description": "Add a MAC address to the proximity tracking list. The device will emit proximity updates when this target is seen.",
+      "required": [
+        "cmd",
+        "mac"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "add_proximity"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "MAC address of the target to track."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional user-assigned label for this target."
+        }
+      }
+    },
+    "remove_proximity_cmd": {
+      "type": "object",
+      "description": "Remove a MAC address from the proximity tracking list.",
+      "required": [
+        "cmd",
+        "mac"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "remove_proximity"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "MAC address to stop tracking."
+        }
+      }
+    },
+    "clear_proximity_cmd": {
+      "type": "object",
+      "description": "Clear all proximity tracking targets.",
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "clear_proximity"
+        }
+      }
+    },
+    "add_watchlist_cmd": {
+      "type": "object",
+      "description": "Add a watchlist entry. Watchlist entries match by OUI prefix (3 bytes) or full MAC (6 bytes) and produce 'watchlist' match reasons.",
+      "required": [
+        "cmd",
+        "id",
+        "mac"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "add_watchlist"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Unique identifier for this watchlist entry (u16)."
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "MAC address (full 6 bytes). When full_mac is false, only the first 3 bytes (OUI) are used for matching."
+        },
+        "full_mac": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, match all 6 bytes exactly. If false (default), match only the 3-byte OUI prefix."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional user-assigned label (e.g. 'My AirTag', 'Neighbor Camera')."
+        }
+      }
+    },
+    "remove_watchlist_cmd": {
+      "type": "object",
+      "description": "Remove a watchlist entry by its ID.",
+      "required": [
+        "cmd",
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "remove_watchlist"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "ID of the watchlist entry to remove."
+        }
+      }
+    },
+    "enable_category_cmd": {
+      "type": "object",
+      "description": "Enable or disable a match category. When disabled, rules in that category are skipped during filtering.",
+      "required": [
+        "cmd",
+        "category",
+        "enabled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "enable_category"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 16,
+          "description": "Category name (e.g. 'Surveillance', 'Network', 'Drone')."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "true to enable, false to disable."
+        }
+      }
+    },
+    "export_wigle_cmd": {
+      "type": "object",
+      "description": "Request WiGLE CSV data export. Device will output stored sighting data in WiGLE format.",
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "const": "export_wigle"
+        }
+      }
+    },
+    "mac_address": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$",
+      "maxLength": 18,
+      "description": "MAC address in colon-separated hex (e.g. \"B4:1E:52:AB:CD:EF\"). Both uppercase and lowercase are accepted."
     }
   }
 }

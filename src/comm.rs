@@ -41,11 +41,31 @@ pub fn serialize_message(msg: &DeviceMessage, buf: &mut [u8]) -> Option<usize> {
     }
 }
 
+/// Parse a MAC address string "AA:BB:CC:DD:EE:FF" into a 6-byte array.
+pub fn parse_mac_string(s: &str) -> Option<[u8; 6]> {
+    let mut mac = [0u8; 6];
+    let mut idx = 0;
+    for part in s.split(':') {
+        if idx >= 6 || part.len() != 2 {
+            return None;
+        }
+        mac[idx] = u8::from_str_radix(part, 16).ok()?;
+        idx += 1;
+    }
+    if idx == 6 {
+        Some(mac)
+    } else {
+        None
+    }
+}
+
 /// Deserialize a HostCommand from a JSON byte slice.
 ///
 /// Uses [`RawCommand`] as an intermediate because `serde_json_core` does not
 /// support internally tagged enums (no `deserialize_any`).
 pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
+    use crate::protocol::OperatingMode;
+
     // Strip trailing newline/whitespace
     let trimmed = trim_trailing_whitespace(data);
     if trimmed.is_empty() {
@@ -62,6 +82,52 @@ pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
         "set_buzzer" => raw
             .enabled
             .map(|enabled| HostCommand::SetBuzzer { enabled }),
+        "set_mode" => {
+            let mode_str = raw.mode.as_ref()?;
+            let mode = match mode_str.as_str() {
+                "ap" => OperatingMode::Ap,
+                "client" => OperatingMode::Client,
+                "dongle" => OperatingMode::Dongle,
+                "standalone" => OperatingMode::Standalone,
+                _ => return None,
+            };
+            Some(HostCommand::SetMode { mode })
+        }
+        "add_proximity" => {
+            let mac_str = raw.mac.as_ref()?;
+            let mac = parse_mac_string(mac_str.as_str())?;
+            let label = raw.label.unwrap_or_default();
+            Some(HostCommand::AddProximityTarget { mac, label })
+        }
+        "remove_proximity" => {
+            let mac_str = raw.mac.as_ref()?;
+            let mac = parse_mac_string(mac_str.as_str())?;
+            Some(HostCommand::RemoveProximityTarget { mac })
+        }
+        "clear_proximity" => Some(HostCommand::ClearProximityTargets),
+        "add_watchlist" => {
+            let id = raw.id?;
+            let mac_str = raw.mac.as_ref()?;
+            let mac = parse_mac_string(mac_str.as_str())?;
+            let full_mac = raw.full_mac.unwrap_or(false);
+            let label = raw.label.unwrap_or_default();
+            Some(HostCommand::AddWatchlist {
+                id,
+                mac,
+                full_mac,
+                label,
+            })
+        }
+        "remove_watchlist" => {
+            let id = raw.id?;
+            Some(HostCommand::RemoveWatchlist { id })
+        }
+        "enable_category" => {
+            let category = raw.category?;
+            let enabled = raw.enabled?;
+            Some(HostCommand::EnableCategory { category, enabled })
+        }
+        "export_wigle" => Some(HostCommand::ExportWigle),
         _ => None,
     }
 }
@@ -98,6 +164,64 @@ pub fn handle_command(
         HostCommand::SetBuzzer { enabled } => {
             log::info!("Buzzer {}", if *enabled { "enabled" } else { "disabled" });
             Some(*enabled)
+        }
+        HostCommand::SetMode { mode } => {
+            log::info!("Set mode: {:?}", mode);
+            None
+        }
+        HostCommand::AddProximityTarget { mac, label } => {
+            log::info!(
+                "Add proximity target: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} label={}",
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5],
+                label.as_str()
+            );
+            None
+        }
+        HostCommand::RemoveProximityTarget { mac } => {
+            log::info!(
+                "Remove proximity target: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5]
+            );
+            None
+        }
+        HostCommand::ClearProximityTargets => {
+            log::info!("Clear all proximity targets");
+            None
+        }
+        HostCommand::AddWatchlist {
+            id,
+            mac,
+            full_mac,
+            label,
+        } => {
+            log::info!(
+                "Add watchlist: id={} mac={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} full={} label={}",
+                id, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                full_mac, label.as_str()
+            );
+            None
+        }
+        HostCommand::RemoveWatchlist { id } => {
+            log::info!("Remove watchlist: id={}", id);
+            None
+        }
+        HostCommand::EnableCategory { category, enabled } => {
+            log::info!("Enable category: {} = {}", category.as_str(), enabled);
+            None
+        }
+        HostCommand::ExportWigle => {
+            log::info!("Export WiGLE requested");
+            None
         }
     }
 }
@@ -301,6 +425,215 @@ mod tests {
         handle_command(&cmd, &mut config, &mut scanning);
         assert_eq!(config.min_rssi, -75);
         assert!(scanning); // set_rssi should not change scanning state
+    }
+
+    // ── parse_mac_string tests ────────────────────────────────────
+
+    #[test]
+    fn parse_mac_string_valid() {
+        let mac = parse_mac_string("AA:BB:CC:DD:EE:FF").unwrap();
+        assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    }
+
+    #[test]
+    fn parse_mac_string_lowercase() {
+        let mac = parse_mac_string("aa:bb:cc:dd:ee:ff").unwrap();
+        assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    }
+
+    #[test]
+    fn parse_mac_string_too_short() {
+        assert!(parse_mac_string("AA:BB:CC").is_none());
+    }
+
+    #[test]
+    fn parse_mac_string_invalid_hex() {
+        assert!(parse_mac_string("GG:HH:II:JJ:KK:LL").is_none());
+    }
+
+    #[test]
+    fn parse_mac_string_wrong_separator() {
+        assert!(parse_mac_string("AA-BB-CC-DD-EE-FF").is_none());
+    }
+
+    // ── New command parsing tests ─────────────────────────────────
+
+    #[test]
+    fn parse_set_mode_command() {
+        let cmd = parse_command(br#"{"cmd":"set_mode","mode":"ap"}"#).unwrap();
+        match cmd {
+            HostCommand::SetMode { mode } => {
+                assert_eq!(mode, crate::protocol::OperatingMode::Ap)
+            }
+            _ => panic!("Expected SetMode"),
+        }
+    }
+
+    #[test]
+    fn parse_set_mode_all_variants() {
+        for (json_val, expected) in [
+            ("ap", crate::protocol::OperatingMode::Ap),
+            ("client", crate::protocol::OperatingMode::Client),
+            ("dongle", crate::protocol::OperatingMode::Dongle),
+            ("standalone", crate::protocol::OperatingMode::Standalone),
+        ] {
+            let json = format!(r#"{{"cmd":"set_mode","mode":"{}"}}"#, json_val);
+            let cmd = parse_command(json.as_bytes()).unwrap();
+            match cmd {
+                HostCommand::SetMode { mode } => assert_eq!(mode, expected),
+                _ => panic!("Expected SetMode for {}", json_val),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_set_mode_invalid_mode() {
+        assert!(parse_command(br#"{"cmd":"set_mode","mode":"invalid"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_set_mode_missing_mode() {
+        assert!(parse_command(br#"{"cmd":"set_mode"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_add_proximity_target() {
+        let cmd =
+            parse_command(br#"{"cmd":"add_proximity","mac":"AA:BB:CC:DD:EE:FF","label":"Car"}"#)
+                .unwrap();
+        match cmd {
+            HostCommand::AddProximityTarget { mac, label } => {
+                assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+                assert_eq!(label.as_str(), "Car");
+            }
+            _ => panic!("Expected AddProximityTarget"),
+        }
+    }
+
+    #[test]
+    fn parse_add_proximity_missing_mac() {
+        assert!(parse_command(br#"{"cmd":"add_proximity","label":"Car"}"#).is_none());
+    }
+
+    #[test]
+    fn parse_remove_proximity_target() {
+        let cmd =
+            parse_command(br#"{"cmd":"remove_proximity","mac":"11:22:33:44:55:66"}"#).unwrap();
+        match cmd {
+            HostCommand::RemoveProximityTarget { mac } => {
+                assert_eq!(mac, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+            }
+            _ => panic!("Expected RemoveProximityTarget"),
+        }
+    }
+
+    #[test]
+    fn parse_clear_proximity() {
+        let cmd = parse_command(br#"{"cmd":"clear_proximity"}"#).unwrap();
+        assert_eq!(cmd, HostCommand::ClearProximityTargets);
+    }
+
+    #[test]
+    fn parse_add_watchlist() {
+        let cmd = parse_command(
+            br#"{"cmd":"add_watchlist","id":42,"mac":"AA:BB:CC:DD:EE:FF","full_mac":true,"label":"Target"}"#,
+        )
+        .unwrap();
+        match cmd {
+            HostCommand::AddWatchlist {
+                id,
+                mac,
+                full_mac,
+                label,
+            } => {
+                assert_eq!(id, 42);
+                assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+                assert!(full_mac);
+                assert_eq!(label.as_str(), "Target");
+            }
+            _ => panic!("Expected AddWatchlist"),
+        }
+    }
+
+    #[test]
+    fn parse_add_watchlist_missing_id() {
+        assert!(parse_command(
+            br#"{"cmd":"add_watchlist","mac":"AA:BB:CC:DD:EE:FF","full_mac":true}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn parse_remove_watchlist() {
+        let cmd = parse_command(br#"{"cmd":"remove_watchlist","id":7}"#).unwrap();
+        match cmd {
+            HostCommand::RemoveWatchlist { id } => assert_eq!(id, 7),
+            _ => panic!("Expected RemoveWatchlist"),
+        }
+    }
+
+    #[test]
+    fn parse_enable_category() {
+        let cmd = parse_command(br#"{"cmd":"enable_category","category":"Drone","enabled":false}"#)
+            .unwrap();
+        match cmd {
+            HostCommand::EnableCategory { category, enabled } => {
+                assert_eq!(category.as_str(), "Drone");
+                assert!(!enabled);
+            }
+            _ => panic!("Expected EnableCategory"),
+        }
+    }
+
+    #[test]
+    fn parse_enable_category_missing_fields() {
+        assert!(parse_command(br#"{"cmd":"enable_category","category":"Drone"}"#).is_none());
+        assert!(parse_command(br#"{"cmd":"enable_category","enabled":true}"#).is_none());
+    }
+
+    #[test]
+    fn parse_export_wigle() {
+        let cmd = parse_command(br#"{"cmd":"export_wigle"}"#).unwrap();
+        assert_eq!(cmd, HostCommand::ExportWigle);
+    }
+
+    // ── handle_command for new commands ────────────────────────────
+
+    #[test]
+    fn handle_new_commands_return_none() {
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+
+        let commands = [
+            HostCommand::SetMode {
+                mode: crate::protocol::OperatingMode::Dongle,
+            },
+            HostCommand::AddProximityTarget {
+                mac: [0; 6],
+                label: heapless::String::new(),
+            },
+            HostCommand::RemoveProximityTarget { mac: [0; 6] },
+            HostCommand::ClearProximityTargets,
+            HostCommand::AddWatchlist {
+                id: 1,
+                mac: [0; 6],
+                full_mac: true,
+                label: heapless::String::new(),
+            },
+            HostCommand::RemoveWatchlist { id: 1 },
+            HostCommand::EnableCategory {
+                category: heapless::String::new(),
+                enabled: true,
+            },
+            HostCommand::ExportWigle,
+        ];
+
+        for cmd in &commands {
+            let result = handle_command(cmd, &mut config, &mut scanning);
+            assert!(result.is_none(), "New command {:?} should return None", cmd);
+        }
+        // None of these should change scanning state
+        assert!(scanning);
     }
 
     // ── handle_command tests ────────────────────────────────────────
