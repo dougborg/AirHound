@@ -176,13 +176,25 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         if scanning { Rgb565::GREEN } else { Rgb565::RED },
     );
 
-    row!(
-        s,
-        FG,
-        " WiFi: {}    BLE: {}",
-        crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
-        crate::BLE_MATCH_COUNT.load(Ordering::Relaxed)
-    );
+    let odid_count = crate::ODID_MATCH_COUNT.load(Ordering::Relaxed);
+    if odid_count > 0 {
+        row!(
+            s,
+            FG,
+            " W:{} B:{} D:{}",
+            crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
+            crate::BLE_MATCH_COUNT.load(Ordering::Relaxed),
+            odid_count
+        );
+    } else {
+        row!(
+            s,
+            FG,
+            " WiFi: {}    BLE: {}",
+            crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
+            crate::BLE_MATCH_COUNT.load(Ordering::Relaxed)
+        );
+    }
 
     let last = crate::LAST_MATCH.lock().map(|s| s.clone()).unwrap_or_default();
     if !last.is_empty() {
