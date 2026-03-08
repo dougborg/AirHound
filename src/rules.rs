@@ -78,6 +78,15 @@ impl SigMatchSet {
     }
 }
 
+/// Category of a matched rule for routing and UI grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchCategory {
+    Surveillance,
+    Drone,
+    Network,
+    Watchlist,
+}
+
 /// A named rule that references a slice of the shared expression node pool.
 #[derive(Debug, Clone, Copy)]
 pub struct Rule {
@@ -87,6 +96,18 @@ pub struct Rule {
     pub expr_start: u16,
     /// Number of expression nodes for this rule.
     pub expr_len: u16,
+    /// Category for routing and display grouping.
+    pub category: MatchCategory,
+    /// Whether this rule is active. Inactive rules are skipped during evaluation.
+    pub active: bool,
+}
+
+/// Result of a rule match, carrying the rule index, name, and category.
+#[derive(Debug, Clone, Copy)]
+pub struct RuleMatch {
+    pub rule_idx: u16,
+    pub name: &'static str,
+    pub category: MatchCategory,
 }
 
 /// A compiled rule database: a shared pool of expression nodes and
@@ -160,18 +181,26 @@ pub fn evaluate_rule(nodes: &[ExprNode], matched: &SigMatchSet) -> bool {
 
 /// Evaluate all rules in a database against the matched signature set.
 ///
-/// Returns indices (into `db.rules`) of rules that matched, up to 4.
-pub fn evaluate_rules(db: &RuleDb, matched: &SigMatchSet) -> Vec<u16, 4> {
+/// Returns `RuleMatch` structs for rules that matched, up to 4.
+pub fn evaluate_rules(db: &RuleDb, matched: &SigMatchSet) -> Vec<RuleMatch, 4> {
     let mut result = Vec::new();
 
     for (i, rule) in db.rules.iter().enumerate() {
+        if !rule.active {
+            continue;
+        }
+
         let start = rule.expr_start as usize;
         let end = start + rule.expr_len as usize;
 
         if end <= db.nodes.len() {
             let nodes = &db.nodes[start..end];
             if evaluate_rule(nodes, matched) {
-                let _ = result.push(i as u16);
+                let _ = result.push(RuleMatch {
+                    rule_idx: i as u16,
+                    name: rule.name,
+                    category: rule.category,
+                });
             }
         }
     }
@@ -834,6 +863,8 @@ mod tests {
             name: "Rule A",
             expr_start: 0,
             expr_len: 3,
+            category: MatchCategory::Surveillance,
+            active: true,
         }];
         let db = RuleDb {
             nodes: NODES,
@@ -862,11 +893,15 @@ mod tests {
                 name: "Rule A",
                 expr_start: 0,
                 expr_len: 3,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "Rule B",
                 expr_start: 3,
                 expr_len: 1,
+                category: MatchCategory::Network,
+                active: true,
             },
         ];
         let db = RuleDb {
@@ -879,8 +914,9 @@ mod tests {
         matched.set(0);
         let result = evaluate_rules(&db, &matched);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], 0); // Rule A index
-        assert_eq!(db.rules[result[0] as usize].name, "Rule A");
+        assert_eq!(result[0].rule_idx, 0);
+        assert_eq!(result[0].name, "Rule A");
+        assert_eq!(result[0].category, MatchCategory::Surveillance);
     }
 
     #[test]
@@ -896,11 +932,15 @@ mod tests {
                 name: "Rule A",
                 expr_start: 0,
                 expr_len: 3,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "Rule B",
                 expr_start: 3,
                 expr_len: 1,
+                category: MatchCategory::Drone,
+                active: true,
             },
         ];
         let db = RuleDb {
@@ -913,8 +953,10 @@ mod tests {
         matched.set(2);
         let result = evaluate_rules(&db, &matched);
         assert_eq!(result.len(), 2);
-        assert_eq!(db.rules[result[0] as usize].name, "Rule A");
-        assert_eq!(db.rules[result[1] as usize].name, "Rule B");
+        assert_eq!(result[0].name, "Rule A");
+        assert_eq!(result[0].category, MatchCategory::Surveillance);
+        assert_eq!(result[1].name, "Rule B");
+        assert_eq!(result[1].category, MatchCategory::Drone);
     }
 
     #[test]
@@ -932,26 +974,36 @@ mod tests {
                 name: "R0",
                 expr_start: 0,
                 expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "R1",
                 expr_start: 1,
                 expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "R2",
                 expr_start: 2,
                 expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "R3",
                 expr_start: 3,
                 expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
             Rule {
                 name: "R4",
                 expr_start: 4,
                 expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
             },
         ];
         let db = RuleDb {
@@ -973,6 +1025,8 @@ mod tests {
             name: "Bad rule",
             expr_start: 0,
             expr_len: 10, // way beyond nodes length
+            category: MatchCategory::Surveillance,
+            active: true,
         }];
         let db = RuleDb {
             nodes: NODES,
@@ -983,6 +1037,39 @@ mod tests {
         matched.set(0);
         let result = evaluate_rules(&db, &matched);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn evaluate_rules_category_propagation() {
+        static NODES: &[ExprNode] = &[ExprNode::Sig(0), ExprNode::Sig(1)];
+        static RULES: &[Rule] = &[
+            Rule {
+                name: "Surv Rule",
+                expr_start: 0,
+                expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
+            },
+            Rule {
+                name: "Drone Rule",
+                expr_start: 1,
+                expr_len: 1,
+                category: MatchCategory::Drone,
+                active: true,
+            },
+        ];
+        let db = RuleDb {
+            nodes: NODES,
+            rules: RULES,
+        };
+
+        let mut matched = SigMatchSet::new();
+        matched.set(0);
+        matched.set(1);
+        let result = evaluate_rules(&db, &matched);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].category, MatchCategory::Surveillance);
+        assert_eq!(result[1].category, MatchCategory::Drone);
     }
 
     // ── Stress / property-like tests ────────────────────────────────
@@ -1098,5 +1185,59 @@ mod tests {
                 "De Morgan's law violated for sigs={sigs:?}"
             );
         }
+    }
+
+    // ── Rule activation tests ───────────────────────────────────────
+
+    #[test]
+    fn evaluate_rules_skips_inactive() {
+        static NODES: &[ExprNode] = &[ExprNode::Sig(0), ExprNode::Sig(0)];
+        static RULES: &[Rule] = &[
+            Rule {
+                name: "Active",
+                expr_start: 0,
+                expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: true,
+            },
+            Rule {
+                name: "Inactive",
+                expr_start: 1,
+                expr_len: 1,
+                category: MatchCategory::Surveillance,
+                active: false,
+            },
+        ];
+        let db = RuleDb {
+            nodes: NODES,
+            rules: RULES,
+        };
+
+        let mut matched = SigMatchSet::new();
+        matched.set(0);
+        let result = evaluate_rules(&db, &matched);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Active");
+    }
+
+    #[test]
+    fn evaluate_rules_all_inactive_returns_empty() {
+        static NODES: &[ExprNode] = &[ExprNode::Sig(0)];
+        static RULES: &[Rule] = &[Rule {
+            name: "Off",
+            expr_start: 0,
+            expr_len: 1,
+            category: MatchCategory::Surveillance,
+            active: false,
+        }];
+        let db = RuleDb {
+            nodes: NODES,
+            rules: RULES,
+        };
+
+        let mut matched = SigMatchSet::new();
+        matched.set(0);
+        let result = evaluate_rules(&db, &matched);
+        assert!(result.is_empty());
     }
 }
