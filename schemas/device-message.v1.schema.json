@@ -14,6 +14,15 @@
       "$ref": "#/$defs/ble_scan"
     },
     {
+      "$ref": "#/$defs/drone_sighting"
+    },
+    {
+      "$ref": "#/$defs/proximity_update"
+    },
+    {
+      "$ref": "#/$defs/alert"
+    },
+    {
       "$ref": "#/$defs/status_report"
     }
   ],
@@ -58,9 +67,11 @@
         "ble_name",
         "ble_uuid",
         "ble_uuid_std",
-        "ble_mfr"
+        "ble_mfr",
+        "ble_ad_bytes",
+        "watchlist"
       ],
-      "description": "Signature type that triggered this match. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id."
+      "description": "Signature type that triggered this match. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id, ble_ad_bytes→ble_ad_bytes. 'watchlist' indicates a user-defined watchlist target match."
     },
     "match_reason": {
       "type": "object",
@@ -134,6 +145,11 @@
           "maxItems": 4,
           "description": "Why this frame matched. At least one reason is always present (unmatched frames are not emitted). Note: field is named 'match' (not 'matches') — see v2 roadmap for planned rename."
         },
+        "rule": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Name of the first matched rule, if any. Omitted when no rule matched (raw signature match only)."
+        },
         "ts": {
           "$ref": "#/$defs/uptime_ms",
           "description": "Capture timestamp as device uptime in milliseconds."
@@ -190,6 +206,187 @@
           "minItems": 1,
           "maxItems": 4,
           "description": "Why this advertisement matched. At least one reason is always present. Note: field is named 'match' (not 'matches') — see v2 roadmap for planned rename."
+        },
+        "rule": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Name of the first matched rule, if any. Omitted when no rule matched (raw signature match only)."
+        },
+        "ts": {
+          "$ref": "#/$defs/uptime_ms",
+          "description": "Capture timestamp as device uptime in milliseconds."
+        }
+      }
+    },
+    "drone_sighting": {
+      "type": "object",
+      "description": "Drone sighting from Open Drone ID (ODID) data. Emitted when an ODID-compliant remote ID broadcast is decoded from BLE or WiFi.",
+      "required": [
+        "type",
+        "mac",
+        "rssi",
+        "source",
+        "ts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "drone"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "Transmitter MAC address."
+        },
+        "rssi": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 0,
+          "description": "Received signal strength in dBm (i8)."
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "ble",
+            "wifi_nan",
+            "wifi_beacon"
+          ],
+          "description": "Transport over which the ODID data was received."
+        },
+        "uas_id": {
+          "type": "string",
+          "maxLength": 33,
+          "description": "UAS (drone) identifier from BasicId message. Omitted if no BasicId was decoded."
+        },
+        "ua_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "UA (unmanned aircraft) type code from BasicId. Omitted if not available."
+        },
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "Latitude in degrees from Location message. Omitted if no location available."
+        },
+        "lon": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "Longitude in degrees from Location message. Omitted if no location available."
+        },
+        "alt": {
+          "type": "number",
+          "description": "Altitude in meters from Location message. Omitted if not available."
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Speed in m/s from Location message. Omitted if not available."
+        },
+        "operator_id": {
+          "type": "string",
+          "maxLength": 33,
+          "description": "Operator ID string from OperatorId message. Omitted if not available."
+        },
+        "rule": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Matched rule name, if any."
+        },
+        "category": {
+          "type": "string",
+          "description": "Match category (e.g. 'Drone'). Omitted if not categorized."
+        },
+        "ts": {
+          "$ref": "#/$defs/uptime_ms",
+          "description": "Capture timestamp as device uptime in milliseconds."
+        }
+      }
+    },
+    "proximity_update": {
+      "type": "object",
+      "description": "Proximity update for a tracked target. Emitted when a proximity-tracked device is seen, with estimated distance and beep cadence.",
+      "required": [
+        "type",
+        "mac",
+        "rssi",
+        "distance",
+        "interval",
+        "ts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "proximity"
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "MAC address of the tracked target."
+        },
+        "rssi": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 0,
+          "description": "Received signal strength in dBm (i8)."
+        },
+        "distance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated distance in meters based on RSSI path-loss model."
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Beep interval in milliseconds (u16). Shorter interval = closer target."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "User-assigned label for this target. Omitted if no label set."
+        },
+        "ts": {
+          "$ref": "#/$defs/uptime_ms",
+          "description": "Capture timestamp as device uptime in milliseconds."
+        }
+      }
+    },
+    "alert": {
+      "type": "object",
+      "description": "Security or system alert. Emitted for fingerprint alerts (single-frame anomalies) or behavioral alerts (multi-frame temporal detections).",
+      "required": [
+        "type",
+        "alert_type",
+        "message",
+        "severity",
+        "ts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "alert"
+        },
+        "alert_type": {
+          "type": "string",
+          "description": "Alert type identifier (e.g. 'deauth_flood', 'evil_twin', 'channel_hopping')."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable description of the alert."
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "description": "Alert severity level."
+        },
+        "mac": {
+          "$ref": "#/$defs/mac_address",
+          "description": "Related MAC address, if applicable. Omitted for system-level alerts."
         },
         "ts": {
           "$ref": "#/$defs/uptime_ms",
