@@ -309,9 +309,7 @@ pub struct MacLookupResult {
 impl MacLookupResult {
     /// Whether any match was found (signature or watchlist).
     pub fn has_match(&self) -> bool {
-        self.sig_idx != NO_ID
-            || self.oui_watchlist_id != NO_ID
-            || self.full_watchlist_id != NO_ID
+        self.sig_idx != NO_ID || self.oui_watchlist_id != NO_ID || self.full_watchlist_id != NO_ID
     }
 
     /// Whether this is a watchlist match (OUI or full).
