@@ -148,32 +148,34 @@ pub fn filter_wifi(
     }
 
     // SSID keyword substring check (case-insensitive)
-    let ssid_lower: Vec<u8, 33> = input
-        .ssid
-        .bytes()
-        .take(33)
-        .map(|b| b.to_ascii_lowercase())
-        .collect();
-    let ssid_lower_str = core::str::from_utf8(&ssid_lower).unwrap_or("");
+    if !input.ssid.is_empty() {
+        let ssid_lower: Vec<u8, 33> = input
+            .ssid
+            .bytes()
+            .take(33)
+            .map(|b| b.to_ascii_lowercase())
+            .collect();
+        let ssid_lower_str = core::str::from_utf8(&ssid_lower).unwrap_or("");
 
-    for (i, &keyword) in SSID_KEYWORDS.iter().enumerate() {
-        if ssid_lower_str.contains(keyword) {
-            result
-                .sig_matches
-                .set(defaults::SIG_IDX_SSID_KEYWORD_START + i as u16);
-            result.add_match("ssid_keyword", keyword);
+        for (i, &keyword) in SSID_KEYWORDS.iter().enumerate() {
+            if ssid_lower_str.contains(keyword) {
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_SSID_KEYWORD_START + i as u16);
+                result.add_match("ssid_keyword", keyword);
+            }
         }
-    }
 
-    // WiFi name keyword check (from FlockOff — matches partial names)
-    for (i, &keyword) in WIFI_NAME_KEYWORDS.iter().enumerate() {
-        if ssid_lower_str.contains(keyword) {
-            result
-                .sig_matches
-                .set(defaults::SIG_IDX_WIFI_NAME_START + i as u16);
-            // Only add if not already matched by SSID_KEYWORDS
-            if !SSID_KEYWORDS.contains(&keyword) {
-                result.add_match("wifi_name", keyword);
+        // WiFi name keyword check (from FlockOff — matches partial names)
+        for (i, &keyword) in WIFI_NAME_KEYWORDS.iter().enumerate() {
+            if ssid_lower_str.contains(keyword) {
+                result
+                    .sig_matches
+                    .set(defaults::SIG_IDX_WIFI_NAME_START + i as u16);
+                // Only add if not already matched by SSID_KEYWORDS
+                if !SSID_KEYWORDS.contains(&keyword) {
+                    result.add_match("wifi_name", keyword);
+                }
             }
         }
     }
@@ -308,7 +310,8 @@ fn check_mac(mac: &[u8; 6], mac_index: &MacIndex, result: &mut FilterResult) {
     let lookup = mac_index.lookup(mac);
     if lookup.sig_idx != crate::mac_index::NO_ID {
         result.sig_matches.set(lookup.sig_idx);
-        result.add_match("mac_oui", lookup.vendor);
+        let vendor = defaults::vendor_for_sig_idx(lookup.sig_idx);
+        result.add_match("mac_oui", vendor);
     }
     if lookup.has_watchlist_match() {
         result.add_match("watchlist", "");
@@ -370,14 +373,11 @@ fn check_ble_ad_bytes(raw_ad: &[u8], result: &mut FilterResult) {
     }
 }
 
-/// Format a 6-byte MAC address into "AA:BB:CC:DD:EE:FF" string
+/// Format a 6-byte MAC address into "AA:BB:CC:DD:EE:FF" string.
+///
+/// Re-exported from `protocol::format_mac` for backward compatibility.
 pub fn format_mac(mac: &[u8; 6], buf: &mut crate::protocol::MacString) {
-    use core::fmt::Write;
-    let _ = write!(
-        buf,
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-    );
+    crate::protocol::format_mac(mac, buf);
 }
 
 #[cfg(test)]

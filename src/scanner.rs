@@ -181,10 +181,8 @@ fn build_wifi_event(
     let _ = ssid_str.push_str(ssid);
     #[cfg(not(feature = "esp32"))]
     let raw_ies = {
-        let mut v = Vec::new();
-        for &b in ies.iter().take(64) {
-            let _ = v.push(b);
-        }
+        let mut v: Vec<u8, 64> = Vec::new();
+        v.extend(ies.iter().copied().take(64));
         v
     };
     WiFiEvent {
@@ -251,10 +249,8 @@ pub fn try_parse_odid_nan(frame: &[u8], rssi: i8, _channel: u8) -> Option<OdidEv
     let service_info = extract_nan_odid_service_info(nan_body)?;
 
     // Store raw service info bytes — parsing deferred to filter task
-    let mut raw_data = heapless::Vec::new();
-    for &b in service_info.iter().take(64) {
-        let _ = raw_data.push(b);
-    }
+    let mut raw_data: heapless::Vec<u8, 64> = heapless::Vec::new();
+    raw_data.extend(service_info.iter().copied().take(64));
 
     Some(OdidEvent {
         source: OdidSource::WiFiNan,
@@ -371,10 +367,8 @@ impl BleAdvParser {
     /// `rssi` is the received signal strength.
     /// `ad_data` is the raw advertisement data bytes.
     pub fn parse(addr: &[u8; 6], rssi: i8, ad_data: &[u8]) -> BleEvent {
-        let mut raw_ad = Vec::new();
-        for &b in ad_data.iter().take(62) {
-            let _ = raw_ad.push(b);
-        }
+        let mut raw_ad: Vec<u8, 62> = Vec::new();
+        raw_ad.extend(ad_data.iter().copied().take(62));
 
         let mut event = BleEvent {
             mac: *addr,

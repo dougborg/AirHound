@@ -36,8 +36,6 @@ pub const NO_ID: u16 = u16::MAX;
 pub struct OuiValue {
     /// Index into `MAC_PREFIXES` array, or [`NO_ID`] if this is watchlist-only.
     pub sig_idx: u16,
-    /// Vendor name from the signature database, or empty if watchlist-only.
-    pub vendor: &'static str,
     /// Watchlist entry ID, or [`NO_ID`] if not a watchlist entry.
     pub watchlist_id: u16,
 }
@@ -66,7 +64,6 @@ impl<const N: usize> OuiIndex<N> {
             keys: [OUI_EMPTY; N],
             vals: [OuiValue {
                 sig_idx: NO_ID,
-                vendor: "",
                 watchlist_id: NO_ID,
             }; N],
             len: 0,
@@ -101,11 +98,10 @@ impl<const N: usize> OuiIndex<N> {
 
         for _ in 0..N {
             if self.keys[idx] == key {
-                // Key exists — merge: update sig_idx/vendor if they were unset,
+                // Key exists — merge: update sig_idx if unset,
                 // update watchlist_id if new value has one
                 if val.sig_idx != NO_ID {
                     self.vals[idx].sig_idx = val.sig_idx;
-                    self.vals[idx].vendor = val.vendor;
                 }
                 if val.watchlist_id != NO_ID {
                     self.vals[idx].watchlist_id = val.watchlist_id;
@@ -298,8 +294,6 @@ impl<const N: usize> FullMacIndex<N> {
 pub struct MacLookupResult {
     /// Signature index from OUI match, or `NO_ID` if none.
     pub sig_idx: u16,
-    /// Vendor name from OUI match, or empty string.
-    pub vendor: &'static str,
     /// Watchlist ID from OUI prefix match, or `NO_ID` if none.
     pub oui_watchlist_id: u16,
     /// Watchlist ID from full MAC match, or `NO_ID` if none.
@@ -368,12 +362,11 @@ impl<const OUI_CAP: usize, const MAC_CAP: usize> MacIndex<OUI_CAP, MAC_CAP> {
     /// Build the index from the default MAC_PREFIXES signature array.
     pub fn from_defaults() -> Self {
         let mut idx = Self::new();
-        for (i, &(ref prefix, vendor)) in crate::defaults::MAC_PREFIXES.iter().enumerate() {
+        for (i, &(ref prefix, _vendor)) in crate::defaults::MAC_PREFIXES.iter().enumerate() {
             idx.oui.insert(
                 *prefix,
                 OuiValue {
                     sig_idx: crate::defaults::SIG_IDX_MAC_OUI_START + i as u16,
-                    vendor,
                     watchlist_id: NO_ID,
                 },
             );
@@ -389,7 +382,6 @@ impl<const OUI_CAP: usize, const MAC_CAP: usize> MacIndex<OUI_CAP, MAC_CAP> {
 
         MacLookupResult {
             sig_idx: oui_result.map_or(NO_ID, |v| v.sig_idx),
-            vendor: oui_result.map_or("", |v| v.vendor),
             oui_watchlist_id: oui_result.map_or(NO_ID, |v| v.watchlist_id),
             full_watchlist_id: full_result.map_or(NO_ID, |v| v.watchlist_id),
         }
@@ -401,7 +393,6 @@ impl<const OUI_CAP: usize, const MAC_CAP: usize> MacIndex<OUI_CAP, MAC_CAP> {
             prefix,
             OuiValue {
                 sig_idx: NO_ID,
-                vendor: "",
                 watchlist_id,
             },
         )
@@ -453,7 +444,7 @@ mod tests {
             [0xB4, 0x1E, 0x52],
             OuiValue {
                 sig_idx: 0,
-                vendor: "Flock Safety",
+
                 watchlist_id: NO_ID,
             }
         ));
@@ -461,7 +452,7 @@ mod tests {
 
         let val = idx.get(&[0xB4, 0x1E, 0x52]).unwrap();
         assert_eq!(val.sig_idx, 0);
-        assert_eq!(val.vendor, "Flock Safety");
+
         assert_eq!(val.watchlist_id, NO_ID);
     }
 
@@ -472,7 +463,7 @@ mod tests {
             [0xB4, 0x1E, 0x52],
             OuiValue {
                 sig_idx: 0,
-                vendor: "Test",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -494,7 +485,6 @@ mod tests {
                 p,
                 OuiValue {
                     sig_idx: i as u16,
-                    vendor: "Test",
                     watchlist_id: NO_ID,
                 }
             ));
@@ -513,7 +503,7 @@ mod tests {
             [0xAA, 0xBB, 0xCC],
             OuiValue {
                 sig_idx: 5,
-                vendor: "Old",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -522,14 +512,14 @@ mod tests {
             [0xAA, 0xBB, 0xCC],
             OuiValue {
                 sig_idx: NO_ID,
-                vendor: "",
+
                 watchlist_id: 42,
             },
         );
         assert_eq!(idx.len(), 1); // no new entry
         let val = idx.get(&[0xAA, 0xBB, 0xCC]).unwrap();
         assert_eq!(val.sig_idx, 5); // preserved
-        assert_eq!(val.vendor, "Old"); // preserved
+
         assert_eq!(val.watchlist_id, 42); // merged
     }
 
@@ -540,7 +530,7 @@ mod tests {
             [0xAA, 0xBB, 0xCC],
             OuiValue {
                 sig_idx: 0,
-                vendor: "Test",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -563,7 +553,7 @@ mod tests {
             [0xAA, 0xBB, 0xCC],
             OuiValue {
                 sig_idx: 0,
-                vendor: "A",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -572,7 +562,7 @@ mod tests {
             [0xDD, 0xEE, 0xFF],
             OuiValue {
                 sig_idx: 1,
-                vendor: "B",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -588,7 +578,7 @@ mod tests {
             OUI_EMPTY,
             OuiValue {
                 sig_idx: 0,
-                vendor: "",
+
                 watchlist_id: NO_ID,
             }
         ));
@@ -597,7 +587,7 @@ mod tests {
             OUI_TOMBSTONE,
             OuiValue {
                 sig_idx: 0,
-                vendor: "",
+
                 watchlist_id: NO_ID,
             }
         ));
@@ -616,7 +606,7 @@ mod tests {
             a,
             OuiValue {
                 sig_idx: 0,
-                vendor: "A",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -624,7 +614,7 @@ mod tests {
             b,
             OuiValue {
                 sig_idx: 1,
-                vendor: "B",
+
                 watchlist_id: NO_ID,
             },
         );
@@ -678,7 +668,6 @@ mod tests {
         // Spot-check Flock Safety OUI
         let val = idx.oui.get(&[0xB4, 0x1E, 0x52]).unwrap();
         assert_eq!(val.sig_idx, crate::defaults::SIG_IDX_MAC_OUI_START);
-        assert_eq!(val.vendor, "Flock Safety");
     }
 
     #[test]
@@ -687,7 +676,7 @@ mod tests {
         let result = idx.lookup(&[0xB4, 0x1E, 0x52, 0x01, 0x02, 0x03]);
         assert!(result.has_match());
         assert_eq!(result.sig_idx, crate::defaults::SIG_IDX_MAC_OUI_START);
-        assert_eq!(result.vendor, "Flock Safety");
+
         assert!(!result.has_watchlist_match());
     }
 
@@ -697,7 +686,6 @@ mod tests {
         let result = idx.lookup(&[0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03]);
         assert!(!result.has_match());
         assert_eq!(result.sig_idx, NO_ID);
-        assert_eq!(result.vendor, "");
     }
 
     #[test]
@@ -742,7 +730,7 @@ mod tests {
         let result = idx.lookup(&[0xB4, 0x1E, 0x52, 0x01, 0x02, 0x03]);
         assert!(result.has_match());
         assert_eq!(result.sig_idx, crate::defaults::SIG_IDX_MAC_OUI_START);
-        assert_eq!(result.vendor, "Flock Safety");
+
         assert_eq!(result.oui_watchlist_id, 99);
     }
 
