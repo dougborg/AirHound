@@ -170,28 +170,15 @@ pub fn handle_command(
             None
         }
         HostCommand::AddProximityTarget { mac, label } => {
-            log::info!(
-                "Add proximity target: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} label={}",
-                mac[0],
-                mac[1],
-                mac[2],
-                mac[3],
-                mac[4],
-                mac[5],
-                label.as_str()
-            );
+            let mut mac_str = crate::protocol::MacString::new();
+            crate::protocol::format_mac(mac, &mut mac_str);
+            log::info!("Add proximity target: {} label={}", mac_str, label.as_str());
             None
         }
         HostCommand::RemoveProximityTarget { mac } => {
-            log::info!(
-                "Remove proximity target: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                mac[0],
-                mac[1],
-                mac[2],
-                mac[3],
-                mac[4],
-                mac[5]
-            );
+            let mut mac_str = crate::protocol::MacString::new();
+            crate::protocol::format_mac(mac, &mut mac_str);
+            log::info!("Remove proximity target: {}", mac_str);
             None
         }
         HostCommand::ClearProximityTargets => {
@@ -204,10 +191,14 @@ pub fn handle_command(
             full_mac,
             label,
         } => {
+            let mut mac_str = crate::protocol::MacString::new();
+            crate::protocol::format_mac(mac, &mut mac_str);
             log::info!(
-                "Add watchlist: id={} mac={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} full={} label={}",
-                id, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-                full_mac, label.as_str()
+                "Add watchlist: id={} mac={} full={} label={}",
+                id,
+                mac_str,
+                full_mac,
+                label.as_str()
             );
             None
         }

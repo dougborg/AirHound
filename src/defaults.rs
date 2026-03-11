@@ -251,6 +251,17 @@ pub static BLE_AD_BYTES_PATTERNS: &[BleAdBytesPattern] = &[
 use crate::rules::{ExprNode, MatchCategory, Rule, RuleDb, SigIdx};
 
 pub const SIG_IDX_MAC_OUI_START: SigIdx = 0;
+
+/// Look up the vendor name for a MAC OUI signature index.
+/// Returns empty string if the index is out of range or not a MAC OUI signature.
+pub fn vendor_for_sig_idx(sig_idx: u16) -> &'static str {
+    let offset = sig_idx.wrapping_sub(SIG_IDX_MAC_OUI_START) as usize;
+    if offset < MAC_PREFIXES.len() {
+        MAC_PREFIXES[offset].1
+    } else {
+        ""
+    }
+}
 pub const SIG_IDX_SSID_PATTERN_START: SigIdx = MAC_PREFIXES.len() as SigIdx;
 pub const SIG_IDX_SSID_EXACT_START: SigIdx =
     SIG_IDX_SSID_PATTERN_START + SSID_PATTERNS.len() as SigIdx;

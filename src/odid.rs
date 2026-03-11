@@ -12,6 +12,20 @@ const MESSAGE_SIZE: usize = 25;
 /// BLE service data UUID for ODID (little-endian: 0xFA, 0xFF).
 const ODID_BLE_UUID: [u8; 2] = [0xFA, 0xFF];
 
+/// Decode a null-terminated ASCII printable string from raw ODID ID bytes.
+fn decode_ascii_id<const N: usize>(id_bytes: &[u8]) -> heapless::String<N> {
+    let mut s = heapless::String::new();
+    for &b in id_bytes {
+        if b == 0 {
+            break;
+        }
+        if b >= 0x20 && b <= 0x7E {
+            let _ = s.push(b as char);
+        }
+    }
+    s
+}
+
 /// WiFi vendor IE OUI for ODID (ASTM).
 const ODID_WIFI_OUI: [u8; 3] = [0x90, 0x3A, 0xE6];
 
@@ -469,16 +483,7 @@ pub fn decode_basic_id(data: &[u8]) -> Option<BasicId> {
     let id_type = IdType::from_nibble(data[1] >> 4);
     let id_bytes = &data[2..22];
 
-    let mut uas_id = heapless::String::new();
-    for &b in id_bytes {
-        if b == 0 {
-            break;
-        }
-        // Only accept printable ASCII
-        if b >= 0x20 && b <= 0x7E {
-            let _ = uas_id.push(b as char);
-        }
-    }
+    let uas_id = decode_ascii_id(id_bytes);
 
     Some(BasicId {
         ua_type,
@@ -632,15 +637,7 @@ pub fn decode_operator_id(data: &[u8]) -> Option<OperatorId> {
     let operator_id_type = data[1];
     let id_bytes = &data[2..22];
 
-    let mut operator_id = heapless::String::new();
-    for &b in id_bytes {
-        if b == 0 {
-            break;
-        }
-        if b >= 0x20 && b <= 0x7E {
-            let _ = operator_id.push(b as char);
-        }
-    }
+    let operator_id = decode_ascii_id(id_bytes);
 
     Some(OperatorId {
         operator_id_type,
