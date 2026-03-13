@@ -239,6 +239,7 @@ pub(crate) struct RawCommand {
 /// Format a 6-byte MAC address into "AA:BB:CC:DD:EE:FF" string.
 pub fn format_mac(mac: &[u8; 6], buf: &mut MacString) {
     use core::fmt::Write;
+    buf.clear();
     let _ = write!(
         buf,
         "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",

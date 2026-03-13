@@ -100,7 +100,7 @@ impl<const N: usize> OuiIndex<N> {
             if self.keys[idx] == key {
                 // Key exists — merge: update sig_idx if unset,
                 // update watchlist_id if new value has one
-                if val.sig_idx != NO_ID {
+                if self.vals[idx].sig_idx == NO_ID && val.sig_idx != NO_ID {
                     self.vals[idx].sig_idx = val.sig_idx;
                 }
                 if val.watchlist_id != NO_ID {
