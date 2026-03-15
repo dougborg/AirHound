@@ -64,7 +64,20 @@ mod hw {
     pub const BUZZER_BEEP_MS: u64 = 150;
 }
 
-#[cfg(not(any(feature = "board-xiao", feature = "board-m5stickc")))]
+#[cfg(feature = "board-host")]
+mod hw {
+    pub const BOARD_NAME: &str = "host";
+    pub const HAS_DISPLAY: bool = false;
+    pub const HAS_BUZZER: bool = false;
+    pub const HAS_PSRAM: bool = false;
+    pub const HAS_GPS_HEADER: bool = false;
+}
+
+#[cfg(not(any(
+    feature = "board-xiao",
+    feature = "board-m5stickc",
+    feature = "board-host"
+)))]
 mod hw {
     pub const BOARD_NAME: &str = "unknown";
 }
