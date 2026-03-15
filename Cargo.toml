@@ -43,6 +43,7 @@ esp32s3 = [
 # Board constants only (no firmware deps — usable by external crates)
 board-xiao = []
 board-m5stickc = []
+board-host = []
 
 # Board-level features (constants + firmware deps)
 xiao = ["board-xiao", "esp32s3"]
