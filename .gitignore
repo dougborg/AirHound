@@ -1,5 +1,7 @@
 /target
 /firmware-std/target
+/hostd/target
+/hostd/AirHound.app
 .embuild
 .claude/
 
