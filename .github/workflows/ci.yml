@@ -32,6 +32,9 @@ jobs:
       - run: cargo fmt --check
         env:
           RUSTUP_TOOLCHAIN: nightly
+      - run: cd hostd && cargo fmt --check
+        env:
+          RUSTUP_TOOLCHAIN: nightly
 
   schemas:
     runs-on: ubuntu-latest
@@ -75,6 +78,28 @@ jobs:
         run: cargo audit
         env:
           RUSTUP_TOOLCHAIN: nightly
+      - name: Audit hostd dependencies
+        run: cd hostd && cargo audit
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+
+  hostd:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # stable
+        with:
+          components: clippy
+      - name: Install BLE dev dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: Check
+        run: cd hostd && cargo check
+      - name: Clippy
+        run: cd hostd && cargo clippy -- -D warnings
+      - name: Test
+        run: cd hostd && cargo test
 
   build:
     runs-on: ubuntu-latest

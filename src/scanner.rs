@@ -33,6 +33,12 @@ pub struct WiFiEvent {
     /// can't spare the ~65 bytes per scan event (8 slots × 65 = 520 bytes DRAM).
     #[cfg(not(feature = "esp32"))]
     pub raw_ies: Vec<u8, 64>,
+    /// WiFi security mode string for WiGLE AuthMode (e.g. "[WPA2-PSK][WPA3-SAE]").
+    /// Only present on non-ESP32 platforms — ESP32 promiscuous mode doesn't expose
+    /// security info and can't spare the ~65 bytes per scan event.
+    /// Populated by hostd from `wifi_scan` crate on desktop platforms.
+    #[cfg(not(feature = "esp32"))]
+    pub security: heapless::String<64>,
 }
 
 /// WiFi frame type classification
@@ -193,6 +199,8 @@ fn build_wifi_event(
         frame_type,
         #[cfg(not(feature = "esp32"))]
         raw_ies,
+        #[cfg(not(feature = "esp32"))]
+        security: heapless::String::new(),
     }
 }
 

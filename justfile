@@ -86,6 +86,57 @@ flash-m5stickc-host:
 clean:
     cargo clean
 
+# ── Desktop (hostd) ─────────────────────────────────────
+
+# Build the host daemon
+[group('hostd')]
+build-hostd:
+    cd hostd && cargo build --release
+
+# Assemble macOS .app bundle (needed for Location Services permission)
+[group('hostd')]
+[macos]
+bundle-hostd: build-hostd
+    #!/usr/bin/env bash
+    set -euo pipefail
+    APP="hostd/AirHound.app"
+    rm -rf "$APP"
+    mkdir -p "$APP/Contents/MacOS"
+    cp hostd/macos/Info.plist "$APP/Contents/"
+    ln -s "$(pwd)/hostd/target/release/airhound-hostd" "$APP/Contents/MacOS/airhound-hostd"
+
+# Run the host daemon (macOS: via app bundle for Location Services)
+[group('hostd')]
+[macos]
+run-hostd: bundle-hostd
+    RUST_LOG=info hostd/AirHound.app/Contents/MacOS/airhound-hostd
+
+# Run the host daemon (Linux)
+[group('hostd')]
+[linux]
+run-hostd: build-hostd
+    RUST_LOG=info hostd/target/release/airhound-hostd
+
+# Type-check the host daemon
+[group('hostd')]
+check-hostd:
+    cd hostd && cargo check
+
+# Run host daemon unit tests
+[group('hostd')]
+test-hostd:
+    cd hostd && cargo test
+
+# Check host daemon formatting (requires rustfmt)
+[group('hostd')]
+fmt-hostd:
+    cd hostd && cargo fmt --check
+
+# Run clippy on the host daemon
+[group('hostd')]
+clippy-hostd:
+    cd hostd && cargo clippy -- -D warnings
+
 # Configure git hooks for this repository
 [group('host')]
 setup-hooks:

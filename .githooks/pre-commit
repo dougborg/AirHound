@@ -57,9 +57,22 @@ with open('$f', 'w') as fh:
     fi
 fi
 
-# 5. Run unit tests (if cargo is available)
-if has_cmd cargo; then
-    cargo test --lib --no-default-features --quiet
-else
-    echo "WARN: cargo not found — skipping unit tests (run 'just setup-local')"
+# Detect staged source files for conditional test runs
+STAGED_HOSTD=$(git diff --cached --name-only --diff-filter=d | grep '^hostd/' || true)
+STAGED_LIB=$(git diff --cached --name-only --diff-filter=d | grep '^src/' || true)
+
+# 5. Run unit tests when library sources change (if cargo is available)
+if [ -n "$STAGED_LIB" ]; then
+    if has_cmd cargo; then
+        cargo test --lib --no-default-features --quiet
+    else
+        echo "WARN: cargo not found — skipping unit tests (run 'just setup-local')"
+    fi
+fi
+
+# 6. Run hostd tests (uses stable toolchain via hostd/rust-toolchain.toml)
+if [ -n "$STAGED_HOSTD" ] || [ -n "$STAGED_LIB" ]; then
+    if has_cmd cargo && [ -f hostd/Cargo.toml ]; then
+        (cd hostd && cargo test --quiet)
+    fi
 fi
