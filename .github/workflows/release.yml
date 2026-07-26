@@ -85,7 +85,12 @@ jobs:
           pattern: release-bin-*
           merge-multiple: true
 
+      # release-please creates the release as a draft (draft: true in
+      # release-please-config.json). Immutable releases reject asset uploads
+      # once a release is published, so the binaries have to go on while it is
+      # still a draft — this step attaches them and publishes in one call.
       - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
           files: "*.bin"
+          draft: false
