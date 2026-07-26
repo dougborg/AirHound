@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/dougborg/AirHound/compare/airhound-v0.1.1...airhound-v0.1.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* **release:** attach firmware before publishing, for immutable releases ([8a3b536](https://github.com/dougborg/AirHound/commit/8a3b5362b12e4918839bb57a3ffd5a1f3a7e021c))
+
 ## [0.1.1](https://github.com/dougborg/AirHound/compare/airhound-v0.1.0...airhound-v0.1.1) (2026-07-25)
 
 
