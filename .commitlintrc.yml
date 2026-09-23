@@ -1,2 +1,11 @@
 extends:
   - "@commitlint/config-conventional"
+rules:
+  # Dependabot bodies carry release notes with long URLs.
+  body-max-line-length: [0]
+  footer-max-line-length: [0]
+  # Same types as .githooks/commit-msg.
+  type-enum:
+    - 2
+    - always
+    - [build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test]
