@@ -6,6 +6,7 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+      include: "scope"
     groups:
       embassy:
         patterns: ["embassy-*"]
@@ -19,6 +20,7 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci"
+      include: "scope"
 
   - package-ecosystem: "docker"
     directory: "/.devcontainer"
@@ -26,3 +28,4 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "build"
+      include: "scope"
