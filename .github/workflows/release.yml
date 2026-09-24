@@ -20,13 +20,31 @@ jobs:
       # The release PR is opened with an installation token minted from the
       # release-please GitHub App instead of GITHUB_TOKEN, so the pull_request
       # workflows behind CI checks actually run on it (GITHUB_TOKEN-authored
-      # events never trigger downstream workflows).
+      # events never trigger downstream workflows). Without the App
+      # credentials the job fails here with a clear message rather than inside
+      # create-github-app-token.
+      - name: Require the release App credentials
+        env:
+          APP_ID: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          PRIVATE_KEY_SET: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -z "$APP_ID" ] || [ "$PRIVATE_KEY_SET" != "true" ]; then
+            echo "::error::Set the RELEASE_PLEASE_APP_ID variable and RELEASE_PLEASE_APP_PRIVATE_KEY secret (dougborg-release-please App) in the repository settings."
+            exit 1
+          fi
+
       - name: Mint GitHub App installation token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          # Only what release-please uses: the release branch, tags and
+          # Releases (contents), the release PR (pull-requests), and its
+          # autorelease labels (issues).
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
 
       - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
         id: release
