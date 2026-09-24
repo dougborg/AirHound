@@ -7,6 +7,11 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
+# Least privilege: every job reads the repository only, unless it grants itself
+# more below. Do not rely on the repository's default GITHUB_TOKEN permissions.
+permissions:
+  contents: read
+
 jobs:
   # Rebase merges land every commit on main as written, and release-please reads
   # each one, so every commit in the pull request must be Conventional.
@@ -246,8 +251,9 @@ jobs:
     needs: [preview-binaries, preview-binaries-std]
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
-      actions: read
+      contents: read # sparse checkout of .github/scripts
+      actions: read # list this run's artifacts
+      pull-requests: write # create or update the preview comment on the PR
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:

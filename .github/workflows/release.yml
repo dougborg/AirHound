@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
 
+# Least privilege: jobs read the repository only, unless they grant themselves
+# more below. release-please writes with the release-please App token, not
+# GITHUB_TOKEN, so it needs no write grant here.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
@@ -78,7 +80,7 @@ jobs:
     needs: [release-please, build-release]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # attach binaries to the draft release and publish it
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
