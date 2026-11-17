@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use airhound::{board, comm, defaults, filter, mac_index, odid, protocol, scanner, watchlist};
 
+use airhound::rules::MatchCategory;
 use comm::LineReader;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::task::block_on;
@@ -27,15 +28,14 @@ use esp_idf_svc::sys::{
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
-use airhound::rules::MatchCategory;
 use filter::{
     filter_ble_with_rules, filter_wifi_with_rules, format_mac, BleScanInput, FilterConfig,
     WiFiScanInput,
 };
 use mac_index::MacIndex;
-use watchlist::Watchlist;
 use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
 use scanner::{BleEvent, ScanEvent, WiFiEvent};
+use watchlist::Watchlist;
 
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{BLEAdvertisementData, BLEDevice, BLEScan, NimbleProperties};
@@ -137,7 +137,11 @@ fn main() -> anyhow::Result<()> {
     // Record boot time
     *BOOT_INSTANT.lock().unwrap() = Some(Instant::now());
 
-    log::info!("AirHound v{} starting on {} (std)", VERSION, board::BOARD_NAME);
+    log::info!(
+        "AirHound v{} starting on {} (std)",
+        VERSION,
+        board::BOARD_NAME
+    );
     log::info!(
         "Filter loaded: {} signatures, {} rules, {} MAC prefixes",
         defaults::SIG_COUNT,
@@ -759,18 +763,20 @@ fn ble_main(
     });
 
     // Create GATT service with same UUIDs as no_std version
-    let service_uuid = BleUuid::from_uuid128_string(comm::ble_uuids::SERVICE)
-        .expect("invalid service UUID");
-    let tx_uuid = BleUuid::from_uuid128_string(comm::ble_uuids::TX_CHAR)
-        .expect("invalid TX UUID");
-    let rx_uuid = BleUuid::from_uuid128_string(comm::ble_uuids::RX_CHAR)
-        .expect("invalid RX UUID");
+    let service_uuid =
+        BleUuid::from_uuid128_string(comm::ble_uuids::SERVICE).expect("invalid service UUID");
+    let tx_uuid = BleUuid::from_uuid128_string(comm::ble_uuids::TX_CHAR).expect("invalid TX UUID");
+    let rx_uuid = BleUuid::from_uuid128_string(comm::ble_uuids::RX_CHAR).expect("invalid RX UUID");
 
     let service = server.create_service(service_uuid);
 
-    let tx_char = service.lock().create_characteristic(tx_uuid, NimbleProperties::NOTIFY);
+    let tx_char = service
+        .lock()
+        .create_characteristic(tx_uuid, NimbleProperties::NOTIFY);
 
-    let rx_char = service.lock().create_characteristic(rx_uuid, NimbleProperties::WRITE);
+    let rx_char = service
+        .lock()
+        .create_characteristic(rx_uuid, NimbleProperties::WRITE);
 
     // RX write handler — parse incoming NDJSON commands
     let cmd_tx_clone = cmd_tx.clone();
@@ -793,7 +799,9 @@ fn ble_main(
 
     // Configure and start advertising
     let mut adv_data = BLEAdvertisementData::new();
-    adv_data.name(comm::BLE_ADV_NAME).add_service_uuid(service_uuid);
+    adv_data
+        .name(comm::BLE_ADV_NAME)
+        .add_service_uuid(service_uuid);
     ble_device
         .get_advertising()
         .lock()

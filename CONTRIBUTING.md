@@ -30,7 +30,20 @@ just docker-test             # Run unit tests
 just docker-clean            # Clean (required after dependency changes)
 ```
 
-### Native
+### Host library development
+
+The portable library tests and formatter work with stable Rust; no ESP toolchain
+or hardware is needed. The repository defaults to the `esp` toolchain for firmware,
+so select stable explicitly for host work:
+
+```bash
+cargo +stable test --locked --lib --no-default-features
+cargo +stable fmt --check
+cargo +stable fmt --manifest-path firmware-std/Cargo.toml --check
+node --test .github/scripts/preview-comment.test.js
+```
+
+### Native firmware
 
 Requires the ESP Rust toolchain via [`espup`](https://github.com/esp-rs/espup).
 
@@ -40,14 +53,14 @@ cargo install espup --locked && espup install
 
 just build-xiao
 just build-m5stickc
-just test                    # Run unit tests (requires nightly)
+just test                    # Run library tests using stable Rust
 ```
 
 ### Formatting
 
 ```bash
-cargo fmt --check            # Check (requires nightly)
-cargo fmt                    # Fix
+cargo +stable fmt --check    # Check
+cargo +stable fmt            # Fix
 ```
 
 ## Commit Conventions

@@ -8,7 +8,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use esp_idf_svc::hal::gpio::OutputPin;
-use esp_idf_svc::hal::ledc::{config::TimerConfig, LedcChannel, LedcDriver, LedcTimer, LedcTimerDriver, Resolution};
+use esp_idf_svc::hal::ledc::{
+    config::TimerConfig, LedcChannel, LedcDriver, LedcTimer, LedcTimerDriver, Resolution,
+};
 use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::units::Hertz;
 
@@ -19,11 +21,10 @@ pub fn buzzer_thread<T, C>(
     timer: impl Peripheral<P = T> + 'static,
     channel: impl Peripheral<P = C> + 'static,
     pin: impl Peripheral<P = impl OutputPin> + 'static,
-)
-where
+) where
     T: LedcTimer + 'static,
     C: LedcChannel<SpeedMode = T::SpeedMode> + 'static,
- {
+{
     let timer_config = TimerConfig::new()
         .frequency(Hertz(board::BUZZER_FREQ_HZ))
         .resolution(Resolution::Bits8);

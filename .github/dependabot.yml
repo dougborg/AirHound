@@ -14,6 +14,17 @@ updates:
         update-types: ["minor", "patch"]
         exclude-patterns: ["embassy-*"]
 
+  - package-ecosystem: "cargo"
+    directory: "/firmware-std"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

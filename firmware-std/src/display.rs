@@ -196,7 +196,10 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         );
     }
 
-    let last = crate::LAST_MATCH.lock().map(|s| s.clone()).unwrap_or_default();
+    let last = crate::LAST_MATCH
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
     if !last.is_empty() {
         row!(s, Rgb565::GREEN, " Last: {}", last);
     } else {
@@ -255,7 +258,8 @@ pub fn display_thread(
     log::info!("Display RST toggled");
 
     // SPI bus
-    let spi_driver = SpiDriver::new(spi, clk, mosi, None::<AnyIOPin>, &SpiDriverConfig::new()).unwrap();
+    let spi_driver =
+        SpiDriver::new(spi, clk, mosi, None::<AnyIOPin>, &SpiDriverConfig::new()).unwrap();
 
     let spi_config = SpiConfig::new()
         .baudrate(Hertz(board::DISPLAY_SPI_FREQ_MHZ * 1_000_000))
