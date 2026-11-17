@@ -14,6 +14,8 @@
 	<string>APPL</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>AirHound uses Bluetooth to detect nearby BLE devices and record their advertisements.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AirHound needs your location to tag WiFi and BLE observations with GPS coordinates for WiGLE CSV export.</string>
 	<key>NSLocationUsageDescription</key>
