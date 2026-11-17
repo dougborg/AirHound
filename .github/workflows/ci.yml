@@ -91,6 +91,18 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: nightly
 
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo clippy --locked --lib --no-default-features -- -D warnings
+        env:
+          RUSTUP_TOOLCHAIN: stable
+
   audit:
     runs-on: ubuntu-latest
     permissions:

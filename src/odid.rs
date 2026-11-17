@@ -19,7 +19,7 @@ fn decode_ascii_id<const N: usize>(id_bytes: &[u8]) -> heapless::String<N> {
         if b == 0 {
             break;
         }
-        if b >= 0x20 && b <= 0x7E {
+        if (0x20..=0x7E).contains(&b) {
             let _ = s.push(b as char);
         }
     }
@@ -325,12 +325,10 @@ pub fn parse_odid_ble(ad_data: &[u8]) -> Option<OdidFrame> {
         let payload = &ad_data[i + 2..i + 1 + len];
 
         // AD type 0x16 = Service Data - 16-bit UUID
-        if ad_type == 0x16 && payload.len() >= 3 + MESSAGE_SIZE {
-            if payload[0..2] == ODID_BLE_UUID {
-                // Skip the counter byte (1 byte after UUID) per ASTM F3411
-                let odid_payload = &payload[3..];
-                return decode_messages(odid_payload);
-            }
+        if ad_type == 0x16 && payload.len() >= 3 + MESSAGE_SIZE && payload[0..2] == ODID_BLE_UUID {
+            // Skip the counter byte (1 byte after UUID) per ASTM F3411
+            let odid_payload = &payload[3..];
+            return decode_messages(odid_payload);
         }
 
         i += 1 + len;

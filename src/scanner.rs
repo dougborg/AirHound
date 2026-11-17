@@ -299,7 +299,7 @@ fn extract_nan_odid_service_info(nan_body: &[u8]) -> Option<&[u8]> {
 ///
 /// `sda_body` starts at the SDA body (after the TLV header).
 /// `service_control` is byte 8 of the SDA body, indicating which optional fields are present.
-fn extract_sda_service_info<'a>(sda_body: &'a [u8], service_control: u8) -> Option<&'a [u8]> {
+fn extract_sda_service_info(sda_body: &[u8], service_control: u8) -> Option<&[u8]> {
     let has_service_info = (service_control & 0x02) != 0;
     let has_match_filter = (service_control & 0x04) != 0;
     let has_binding_bitmap = (service_control & 0x08) != 0;
@@ -406,10 +406,8 @@ impl BleAdvParser {
                     }
                 }
                 // Manufacturer specific data
-                0xFF => {
-                    if data.len() >= 2 {
-                        event.manufacturer_id = u16::from_le_bytes([data[0], data[1]]);
-                    }
+                0xFF if data.len() >= 2 => {
+                    event.manufacturer_id = u16::from_le_bytes([data[0], data[1]]);
                 }
                 _ => {}
             }

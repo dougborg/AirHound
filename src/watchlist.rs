@@ -64,6 +64,12 @@ pub struct Watchlist<const N: usize = DEFAULT_WATCHLIST_CAPACITY> {
     entries: heapless::Vec<WatchlistEntry, N>,
 }
 
+impl<const N: usize> Default for Watchlist<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> Watchlist<N> {
     pub const fn new() -> Self {
         Self {
@@ -77,7 +83,7 @@ impl<const N: usize> Watchlist<N> {
         if self.entries.iter().any(|e| e.id == entry.id) {
             return Err(entry);
         }
-        self.entries.push(entry).map_err(|e| e)
+        self.entries.push(entry)
     }
 
     /// Remove an entry by id. Returns `true` if found and removed.
