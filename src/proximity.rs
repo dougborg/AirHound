@@ -1,6 +1,6 @@
-/// RSSI-based proximity logic for distance estimation and buzzer cadence.
-///
-/// Pure math functions with no hardware or OS dependencies.
+//! RSSI-based proximity logic for distance estimation and buzzer cadence.
+//!
+//! Pure math functions with no hardware or OS dependencies.
 
 /// Minimum beep interval in milliseconds (closest proximity).
 const MIN_INTERVAL: u16 = 50;

@@ -44,6 +44,12 @@ pub struct SigMatchSet {
     bits: [u64; 4],
 }
 
+impl Default for SigMatchSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SigMatchSet {
     /// Create an empty match set (no signatures matched).
     pub const fn new() -> Self {

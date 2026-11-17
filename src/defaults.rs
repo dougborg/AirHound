@@ -1,8 +1,8 @@
-/// Default signature data for surveillance device detection.
-///
-/// MAC OUI prefixes merged from FlockOff (~88 entries), FlockSquawk (20 entries),
-/// and flock-you. SSID patterns, BLE name patterns, Raven UUIDs, and manufacturer
-/// IDs from FlockSquawk and flock-you.
+//! Default signature data for surveillance device detection.
+//!
+//! MAC OUI prefixes merged from FlockOff (~88 entries), FlockSquawk (20 entries),
+//! and flock-you. SSID patterns, BLE name patterns, Raven UUIDs, and manufacturer
+//! IDs from FlockSquawk and flock-you.
 
 /// Known MAC OUI prefixes (3-byte prefix, vendor name).
 ///
@@ -287,27 +287,27 @@ pub const SIG_COUNT: usize = SIG_IDX_BLE_AD_BYTES_START as usize + BLE_AD_BYTES_
 
 // Flock Safety Camera signatures
 /// MAC_PREFIXES[0] = Flock Safety OUI B4:1E:52
-const SIG_FLOCK_SAFETY_OUI: SigIdx = SIG_IDX_MAC_OUI_START + 0;
+const SIG_FLOCK_SAFETY_OUI: SigIdx = SIG_IDX_MAC_OUI_START;
 /// MAC_PREFIXES[1] = Silicon Labs 58:8E:81
 const SIG_SILABS_588E81: SigIdx = SIG_IDX_MAC_OUI_START + 1;
 /// MAC_PREFIXES[2] = Silicon Labs CC:CC:CC
 const SIG_SILABS_CCCCCC: SigIdx = SIG_IDX_MAC_OUI_START + 2;
 /// SSID_PATTERNS[0] = Flock-XXXXXX
-const SIG_FLOCK_SSID_PREFIX: SigIdx = SIG_IDX_SSID_PATTERN_START + 0;
+const SIG_FLOCK_SSID_PREFIX: SigIdx = SIG_IDX_SSID_PATTERN_START;
 /// SSID_EXACT[0] = "FS Ext Battery"
-const SIG_FS_EXT_BATTERY_SSID: SigIdx = SIG_IDX_SSID_EXACT_START + 0;
+const SIG_FS_EXT_BATTERY_SSID: SigIdx = SIG_IDX_SSID_EXACT_START;
 /// SSID_KEYWORDS[0] = "flock"
-const SIG_FLOCK_SSID_KEYWORD: SigIdx = SIG_IDX_SSID_KEYWORD_START + 0;
+const SIG_FLOCK_SSID_KEYWORD: SigIdx = SIG_IDX_SSID_KEYWORD_START;
 /// BLE_NAME_PATTERNS[0] = "Flock"
-const SIG_FLOCK_BLE_NAME: SigIdx = SIG_IDX_BLE_NAME_START + 0;
+const SIG_FLOCK_BLE_NAME: SigIdx = SIG_IDX_BLE_NAME_START;
 /// BLE_NAME_PATTERNS[2] = "FS Ext Battery"
 const SIG_FS_EXT_BATTERY_BLE: SigIdx = SIG_IDX_BLE_NAME_START + 2;
 /// BLE_MANUFACTURER_IDS[0] = 0x09C8 (XUNTONG)
-const SIG_XUNTONG_MFR: SigIdx = SIG_IDX_BLE_MFR_START + 0;
+const SIG_XUNTONG_MFR: SigIdx = SIG_IDX_BLE_MFR_START;
 
 // Raven Acoustic Sensor signatures
 /// BLE_SERVICE_UUIDS_16[0] = 0x3100
-const SIG_RAVEN_GPS_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 0;
+const SIG_RAVEN_GPS_UUID: SigIdx = SIG_IDX_BLE_UUID_START;
 /// BLE_SERVICE_UUIDS_16[1] = 0x3200
 const SIG_RAVEN_POWER_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 1;
 /// BLE_SERVICE_UUIDS_16[2] = 0x3300
@@ -319,7 +319,7 @@ const SIG_RAVEN_ERROR_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 4;
 
 // Apple AirTag signature
 /// BLE_AD_BYTES_PATTERNS[0] = Apple FindMy header
-const SIG_AIRTAG_FINDMY_AD: SigIdx = SIG_IDX_BLE_AD_BYTES_START + 0;
+const SIG_AIRTAG_FINDMY_AD: SigIdx = SIG_IDX_BLE_AD_BYTES_START;
 
 // Flipper Zero signatures
 /// BLE_AD_BYTES_PATTERNS[1] = Flipper Zero White

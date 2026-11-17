@@ -1,11 +1,11 @@
-/// O(1) MAC address lookup via open-addressing hash tables.
-///
-/// Two hash tables: `OuiIndex` for 3-byte OUI prefix lookups and
-/// `FullMacIndex` for 6-byte exact MAC lookups. Combined in `MacIndex`
-/// which provides a unified `lookup()` returning all matching info.
-///
-/// Uses FNV-1a hashing with linear probing. Sentinel-based empty/tombstone
-/// slots avoid enum overhead per slot.
+//! O(1) MAC address lookup via open-addressing hash tables.
+//!
+//! Two hash tables: `OuiIndex` for 3-byte OUI prefix lookups and
+//! `FullMacIndex` for 6-byte exact MAC lookups. Combined in `MacIndex`
+//! which provides a unified `lookup()` returning all matching info.
+//!
+//! Uses FNV-1a hashing with linear probing. Sentinel-based empty/tombstone
+//! slots avoid enum overhead per slot.
 
 /// FNV-1a hash for byte slices (32-bit).
 #[inline]
@@ -56,6 +56,12 @@ pub struct OuiIndex<const N: usize> {
     keys: [[u8; 3]; N],
     vals: [OuiValue; N],
     len: usize,
+}
+
+impl<const N: usize> Default for OuiIndex<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> OuiIndex<N> {
@@ -188,6 +194,12 @@ pub struct FullMacIndex<const N: usize> {
     keys: [[u8; 6]; N],
     vals: [FullMacValue; N],
     len: usize,
+}
+
+impl<const N: usize> Default for FullMacIndex<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> FullMacIndex<N> {
@@ -349,6 +361,12 @@ pub struct MacIndex<
 > {
     oui: OuiIndex<OUI_CAP>,
     full: FullMacIndex<MAC_CAP>,
+}
+
+impl<const OUI_CAP: usize, const MAC_CAP: usize> Default for MacIndex<OUI_CAP, MAC_CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const OUI_CAP: usize, const MAC_CAP: usize> MacIndex<OUI_CAP, MAC_CAP> {
