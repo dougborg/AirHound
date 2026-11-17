@@ -156,10 +156,10 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     let rssi = pkt.rx_cntl.rssi as i8;
     let channel = pkt.rx_cntl.channel as u8;
 
-    // Check for NAN ODID action frame first (not on ESP32 — DRAM constrained)
+    // Check for WiFi Remote ID before the generic WiFi path (not on ESP32 — DRAM constrained)
     #[cfg(not(feature = "esp32"))]
     {
-        if let Some(odid_event) = scanner::try_parse_odid_nan(pkt.data, rssi, channel) {
+        if let Some(odid_event) = scanner::try_parse_odid_wifi(pkt.data, rssi, channel) {
             let _ = SCAN_CHANNEL.try_send(ScanEvent::Odid(odid_event));
             return;
         }
@@ -552,12 +552,15 @@ async fn filter_task() {
             }
             #[cfg(not(feature = "esp32"))]
             ScanEvent::Odid(ref odid_event) => {
-                // NAN ODID events bypass normal filter path — category-based
+                if !config.wifi_enabled || odid_event.rssi < config.min_rssi {
+                    continue;
+                }
+                // WiFi ODID events bypass normal filter path — category-based
                 // runtime toggling is not yet implemented (DEFAULT_RULE_DB is
                 // immutable static; enable_category is parsed but has no effect).
 
                 // Parse raw ODID bytes deferred from scan time
-                let frame = match odid::parse_odid_wifi_nan(&odid_event.raw_data) {
+                let frame = match odid::parse_odid_service_info(&odid_event.raw_data) {
                     Some(f) if f.has_data() => f,
                     _ => continue,
                 };

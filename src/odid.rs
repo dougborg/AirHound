@@ -325,6 +325,12 @@ pub fn parse_odid_ble(ad_data: &[u8]) -> Option<OdidFrame> {
 /// (Service Descriptor Attribute). Per ASTM F3411 the service info is a
 /// message counter followed by a message pack.
 pub fn parse_odid_wifi_nan(service_info: &[u8]) -> Option<OdidFrame> {
+    parse_odid_service_info(service_info)
+}
+
+/// Decode a counter followed by a Remote ID message or pack, as carried by
+/// WiFi NAN service info and beacon vendor elements.
+pub fn parse_odid_service_info(service_info: &[u8]) -> Option<OdidFrame> {
     if service_info.len() < 1 + MESSAGE_SIZE {
         return None;
     }
