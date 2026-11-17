@@ -4,13 +4,14 @@
 // and WiFi beacon vendor IEs. Each encoded message is 25 bytes. This module
 // provides pure `no_std` parsing with no allocations.
 //
+// The transport framing (BLE service data, the beacon vendor IE, message
+// packs) is read with the `remoteid` crate, which is checked against the
+// opendroneid-core-c reference library and its public sample captures.
+//
 // Reference: ASTM F3411-22a, ASD-STAN prEN 4709-002.
 
 /// Size of a single encoded ODID message.
 const MESSAGE_SIZE: usize = 25;
-
-/// BLE service data UUID for ODID (little-endian: 0xFA, 0xFF).
-const ODID_BLE_UUID: [u8; 2] = [0xFA, 0xFF];
 
 /// Decode a null-terminated ASCII printable string from raw ODID ID bytes.
 fn decode_ascii_id<const N: usize>(id_bytes: &[u8]) -> heapless::String<N> {
@@ -25,9 +26,6 @@ fn decode_ascii_id<const N: usize>(id_bytes: &[u8]) -> heapless::String<N> {
     }
     s
 }
-
-/// WiFi vendor IE OUI for ODID (ASTM).
-const ODID_WIFI_OUI: [u8; 3] = [0x90, 0x3A, 0xE6];
 
 // Decoding constants (from ASTM F3411 spec).
 const LATLON_MULT: f64 = 10_000_000.0;
@@ -312,121 +310,50 @@ impl OdidFrame {
 
 /// Parse ODID from a BLE advertisement's AD structures.
 ///
-/// Scans AD structures for service data (type 0x16) with UUID 0xFFFA.
-/// The payload after the UUID is one or more 25-byte ODID messages.
+/// Scans AD structures for service data (type 0x16) with UUID 0xFFFA. Per
+/// ASTM F3411 the service data is the UUID, the application code 0x0D, a
+/// message counter, then one message (Bluetooth 4 legacy advertising) or a
+/// message pack (Bluetooth 5 extended / long range advertising).
 pub fn parse_odid_ble(ad_data: &[u8]) -> Option<OdidFrame> {
-    let mut i = 0;
-    while i + 1 < ad_data.len() {
-        let len = ad_data[i] as usize;
-        if len == 0 || i + 1 + len > ad_data.len() {
-            break;
-        }
-        let ad_type = ad_data[i + 1];
-        let payload = &ad_data[i + 2..i + 1 + len];
-
-        // AD type 0x16 = Service Data - 16-bit UUID
-        if ad_type == 0x16 && payload.len() >= 3 + MESSAGE_SIZE {
-            if payload[0..2] == ODID_BLE_UUID {
-                // Skip the counter byte (1 byte after UUID) per ASTM F3411
-                let odid_payload = &payload[3..];
-                return decode_messages(odid_payload);
-            }
-        }
-
-        i += 1 + len;
-    }
-    None
+    let rid = remoteid::ble::find_in_advertising_data(ad_data)?;
+    decode_payload(rid.payload)
 }
 
 /// Parse ODID from a WiFi NAN (Neighbor Awareness Networking) service info payload.
 ///
 /// The caller must extract the service info bytes from the NAN SDA
-/// (Service Descriptor Attribute). The payload starts with the ODID message(s).
+/// (Service Descriptor Attribute). Per ASTM F3411 the service info is a
+/// message counter followed by a message pack.
 pub fn parse_odid_wifi_nan(service_info: &[u8]) -> Option<OdidFrame> {
-    if service_info.len() < MESSAGE_SIZE {
+    if service_info.len() < 1 + MESSAGE_SIZE {
         return None;
     }
-    decode_messages(service_info)
+    decode_payload(&service_info[1..])
 }
 
 /// Parse ODID from a WiFi beacon or probe response vendor-specific IE.
 ///
-/// Scans IEs for vendor IE (tag 0xDD) with OUI 90:3A:E6 (ASTM ODID).
-/// `ie_data` should be the tagged parameters section of the frame.
+/// Scans IEs for the Remote ID vendor IE (tag 0xDD, ASD-STAN OUI FA:0B:BC,
+/// OUI type 0x0D), whose body after the OUI type is a message counter and
+/// a message pack. `ie_data` should be the tagged parameters section of the
+/// frame.
 pub fn parse_odid_wifi_beacon(ie_data: &[u8]) -> Option<OdidFrame> {
-    let mut i = 0;
-    while i + 1 < ie_data.len() {
-        let tag = ie_data[i];
-        let len = ie_data[i + 1] as usize;
-        if i + 2 + len > ie_data.len() {
-            break;
-        }
-        let body = &ie_data[i + 2..i + 2 + len];
-
-        // Vendor-specific IE with ODID OUI
-        if tag == 0xDD && len >= 4 + MESSAGE_SIZE && body[0..3] == ODID_WIFI_OUI {
-            // Skip OUI (3) + OUI type (1)
-            let odid_payload = &body[4..];
-            return decode_messages(odid_payload);
-        }
-
-        i += 2 + len;
-    }
-    None
+    let rid = remoteid::wifi::find_in_elements(ie_data)?;
+    decode_payload(rid.payload)
 }
 
 // ── Core decoder ───────────────────────────────────────────────────
 
-/// Decode one or more 25-byte ODID messages from a raw payload.
-fn decode_messages(data: &[u8]) -> Option<OdidFrame> {
+/// Decode a Remote ID payload: a single 25-byte message or a message pack.
+fn decode_payload(payload: &[u8]) -> Option<OdidFrame> {
     let mut frame = OdidFrame::default();
-    let mut offset = 0;
-
-    while offset + MESSAGE_SIZE <= data.len() {
-        let msg = &data[offset..offset + MESSAGE_SIZE];
-        match MessageType::from_byte(msg[0]) {
-            Some(MessageType::BasicId) => {
-                if let Some(bid) = decode_basic_id(msg) {
-                    frame.basic_id = Some(bid);
-                }
+    match remoteid::Frame::decode(payload).ok()? {
+        remoteid::Frame::Message(_) => decode_into_frame(&mut frame, &payload[..MESSAGE_SIZE]),
+        remoteid::Frame::Pack(pack) => {
+            for msg in pack.raw_messages() {
+                decode_into_frame(&mut frame, msg);
             }
-            Some(MessageType::Location) => {
-                if let Some(loc) = decode_location(msg) {
-                    frame.location = Some(loc);
-                }
-            }
-            Some(MessageType::System) => {
-                if let Some(sys) = decode_system(msg) {
-                    frame.system = Some(sys);
-                }
-            }
-            Some(MessageType::OperatorId) => {
-                if let Some(oid) = decode_operator_id(msg) {
-                    frame.operator_id = Some(oid);
-                }
-            }
-            Some(MessageType::Packed) => {
-                // Pack header: byte 0 = type+version, byte 1 = single message
-                // size, byte 2 = message count, bytes 3+ = inner messages.
-                let single_size = msg[1] as usize;
-                let count = msg[2] as usize;
-                if single_size == MESSAGE_SIZE {
-                    let pack_data_start = offset + 3; // skip 3-byte header
-                    let pack_data = &data[pack_data_start..];
-                    for i in 0..count {
-                        let start = i * MESSAGE_SIZE;
-                        if start + MESSAGE_SIZE <= pack_data.len() {
-                            let inner = &pack_data[start..start + MESSAGE_SIZE];
-                            decode_into_frame(&mut frame, inner);
-                        }
-                    }
-                    offset = pack_data_start + count * MESSAGE_SIZE;
-                    continue;
-                }
-            }
-            _ => {} // Auth, SelfId, unknown — skip
         }
-        offset += MESSAGE_SIZE;
     }
 
     if frame.has_data() {
@@ -882,22 +809,25 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_messages_single() {
+    fn test_decode_single_message() {
         let msg = make_basic_id(2, 1, b"TESTDRONE001");
-        let frame = decode_messages(&msg).unwrap();
+        let frame = decode_payload(&msg).unwrap();
         assert!(frame.basic_id.is_some());
         assert!(frame.location.is_none());
     }
 
     #[test]
-    fn test_decode_messages_multiple() {
+    fn test_decode_pack_of_two() {
         let bid = make_basic_id(2, 1, b"MULTI001");
         let loc = make_location(51.5074, -0.1278, 120.0, 2);
-        let mut data = [0u8; MESSAGE_SIZE * 2];
-        data[..MESSAGE_SIZE].copy_from_slice(&bid);
-        data[MESSAGE_SIZE..].copy_from_slice(&loc);
+        let mut data = [0u8; 3 + MESSAGE_SIZE * 2];
+        data[0] = (MessageType::Packed as u8) << 4 | 0x02;
+        data[1] = MESSAGE_SIZE as u8;
+        data[2] = 2;
+        data[3..3 + MESSAGE_SIZE].copy_from_slice(&bid);
+        data[3 + MESSAGE_SIZE..].copy_from_slice(&loc);
 
-        let frame = decode_messages(&data).unwrap();
+        let frame = decode_payload(&data).unwrap();
         assert!(frame.basic_id.is_some());
         assert!(frame.location.is_some());
         assert_eq!(frame.basic_id.unwrap().uas_id.as_str(), "MULTI001");
@@ -908,17 +838,18 @@ mod tests {
     fn test_parse_odid_ble() {
         // Construct a BLE AD structure with ODID service data
         let msg = make_basic_id(2, 1, b"BLETEST001");
-        // AD: length, type=0x16, UUID (2 bytes LE), counter byte, message
-        let ad_len = 1 + 2 + 1 + MESSAGE_SIZE; // type + uuid + counter + msg
+        // AD: length, type=0x16, UUID (2 bytes LE), app code, counter, message
+        let ad_len = 1 + 2 + 1 + 1 + MESSAGE_SIZE; // type + uuid + app code + counter + msg
         let mut ad_data = [0u8; 64];
         ad_data[0] = ad_len as u8;
         ad_data[1] = 0x16; // Service Data - 16-bit UUID
         ad_data[2] = 0xFA; // UUID low byte
         ad_data[3] = 0xFF; // UUID high byte
-        ad_data[4] = 0x00; // counter byte
-        ad_data[5..5 + MESSAGE_SIZE].copy_from_slice(&msg);
+        ad_data[4] = 0x0D; // application code
+        ad_data[5] = 0x00; // counter byte
+        ad_data[6..6 + MESSAGE_SIZE].copy_from_slice(&msg);
 
-        let frame = parse_odid_ble(&ad_data[..5 + MESSAGE_SIZE]).unwrap();
+        let frame = parse_odid_ble(&ad_data[..6 + MESSAGE_SIZE]).unwrap();
         assert!(frame.basic_id.is_some());
         assert_eq!(frame.basic_id.unwrap().uas_id.as_str(), "BLETEST001");
     }
@@ -933,18 +864,19 @@ mod tests {
     #[test]
     fn test_parse_odid_wifi_beacon() {
         let msg = make_basic_id(1, 1, b"WIFIBEACON01");
-        // Vendor IE: tag=0xDD, length, OUI (3), OUI type (1), message
-        let ie_len = 3 + 1 + MESSAGE_SIZE;
+        // Vendor IE: tag=0xDD, length, OUI (3), OUI type (1), counter, message
+        let ie_len = 3 + 1 + 1 + MESSAGE_SIZE;
         let mut ie_data = [0u8; 64];
         ie_data[0] = 0xDD;
         ie_data[1] = ie_len as u8;
-        ie_data[2] = 0x90; // OUI byte 0
-        ie_data[3] = 0x3A; // OUI byte 1
-        ie_data[4] = 0xE6; // OUI byte 2
-        ie_data[5] = 0x01; // OUI type
-        ie_data[6..6 + MESSAGE_SIZE].copy_from_slice(&msg);
+        ie_data[2] = 0xFA; // ASD-STAN OUI byte 0
+        ie_data[3] = 0x0B; // OUI byte 1
+        ie_data[4] = 0xBC; // OUI byte 2
+        ie_data[5] = 0x0D; // OUI type
+        ie_data[6] = 0x00; // counter
+        ie_data[7..7 + MESSAGE_SIZE].copy_from_slice(&msg);
 
-        let frame = parse_odid_wifi_beacon(&ie_data[..6 + MESSAGE_SIZE]).unwrap();
+        let frame = parse_odid_wifi_beacon(&ie_data[..7 + MESSAGE_SIZE]).unwrap();
         assert!(frame.basic_id.is_some());
         assert_eq!(frame.basic_id.unwrap().uas_id.as_str(), "WIFIBEACON01");
     }
@@ -952,7 +884,13 @@ mod tests {
     #[test]
     fn test_parse_odid_wifi_nan() {
         let msg = make_location(35.6762, 139.6503, 100.0, 2);
-        let frame = parse_odid_wifi_nan(&msg).unwrap();
+        // Service info: message counter, then a pack holding the message.
+        let mut info = [0u8; 1 + 3 + MESSAGE_SIZE];
+        info[1] = (MessageType::Packed as u8) << 4 | 0x02;
+        info[2] = MESSAGE_SIZE as u8;
+        info[3] = 1;
+        info[4..].copy_from_slice(&msg);
+        let frame = parse_odid_wifi_nan(&info).unwrap();
         let loc = frame.location.unwrap();
         assert_eq!(loc.status, Status::Airborne);
         assert!((loc.latitude - 35.6762).abs() < 0.0001);
@@ -1183,25 +1121,22 @@ mod tests {
     /// We parse just the vendor IE portion and validate all three are decoded.
     #[test]
     fn test_reference_wifi_beacon_vendor_ie() {
-        // From the C test's expectedBuffer, extract the vendor IE starting at
-        // tag 0xDD. The OUI in that test is FA:0B:BC (ASD-STAN), not the ASTM
-        // OUI 90:3A:E6. Both are valid per the spec. Let's test with the ASTM
-        // OUI since that's what our parser checks.
-        //
-        // Build a vendor IE with ASTM OUI wrapping the BasicID from the test.
+        // From the C test's expectedBuffer: the vendor IE uses the ASD-STAN
+        // OUI FA:0B:BC with OUI type 0x0D, then a message counter.
         let basic_id_bytes: [u8; MESSAGE_SIZE] = [
             0x02, 0x14, b'U', b'S', b'S', b'-', b'E', b'n', b't', b'e', b'r', b'p', b'r', b'i',
             b's', b'e', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        let ie_len = 3 + 1 + MESSAGE_SIZE; // OUI + type + message
+        let ie_len = 3 + 1 + 1 + MESSAGE_SIZE; // OUI + type + counter + message
         let mut ie = [0u8; 64];
         ie[0] = 0xDD;
         ie[1] = ie_len as u8;
-        ie[2..5].copy_from_slice(&ODID_WIFI_OUI);
+        ie[2..5].copy_from_slice(&[0xFA, 0x0B, 0xBC]);
         ie[5] = 0x0D; // OUI type
-        ie[6..6 + MESSAGE_SIZE].copy_from_slice(&basic_id_bytes);
+        ie[6] = 0x00; // counter
+        ie[7..7 + MESSAGE_SIZE].copy_from_slice(&basic_id_bytes);
 
-        let frame = parse_odid_wifi_beacon(&ie[..6 + MESSAGE_SIZE]).unwrap();
+        let frame = parse_odid_wifi_beacon(&ie[..7 + MESSAGE_SIZE]).unwrap();
         let bid = frame.basic_id.unwrap();
         assert_eq!(bid.uas_id.as_str(), "USS-Enterprise");
         assert_eq!(bid.ua_type, UaType::HybridLift);
@@ -1260,7 +1195,7 @@ mod tests {
         data[3..3 + MESSAGE_SIZE].copy_from_slice(&bid);
         data[3 + MESSAGE_SIZE..3 + MESSAGE_SIZE * 2].copy_from_slice(&loc);
 
-        let frame = decode_messages(&data).unwrap();
+        let frame = decode_payload(&data).unwrap();
         let bid = frame.basic_id.unwrap();
         assert_eq!(bid.uas_id.as_str(), "PACKED001");
         assert_eq!(bid.ua_type, UaType::HelicopterOrMultirotor);
@@ -1279,7 +1214,7 @@ mod tests {
         data[1] = 30; // wrong single message size (not 25)
         data[2] = 1;
 
-        let result = decode_messages(&data);
+        let result = decode_payload(&data);
         assert!(result.is_none());
     }
 
@@ -1291,5 +1226,60 @@ mod tests {
         let loc = decode_location(&msg).unwrap();
         assert!((loc.latitude - (-23.5505)).abs() < 0.0001);
         assert!((loc.longitude - (-46.6333)).abs() < 0.0001);
+    }
+
+    // ── Frames captured from a real transmitter ────────────────────
+    // From the public Open Drone ID sample captures,
+    // https://github.com/opendroneid/wireshark-dissector (Apache-2.0).
+
+    fn unhex<const N: usize>(s: &str) -> heapless::Vec<u8, N> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Bluetooth 5 long range advertising data (odid_bt5_lr_sample.pcapng).
+    #[test]
+    fn test_capture_ble5_long_range() {
+        let ad: heapless::Vec<u8, 256> = unhex(concat!(
+            "e916faff0d38f019040012535345565446473933373030303730000000000000",
+            "00001023b5ff7e000000000000000062070000cf07005000000100300044726f",
+            "6e652049442064656d6f00000000000000000000400400000000000000000100",
+            "0000000000110000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "00000000000000000000",
+        ));
+        let frame = parse_odid_ble(&ad).unwrap();
+        let bid = frame.basic_id.unwrap();
+        assert_eq!(bid.uas_id.as_str(), "SSEVTFG93700070");
+        assert_eq!(bid.id_type, IdType::SerialNumber);
+        assert_eq!(bid.ua_type, UaType::HelicopterOrMultirotor);
+        assert_eq!(frame.location.unwrap().status, Status::Airborne);
+        assert!(frame.system.is_some());
+    }
+
+    /// Wi-Fi Beacon tagged parameters (odid_wifi_bcn_sample.pcap).
+    #[test]
+    fn test_capture_wifi_beacon() {
+        let ies: heapless::Vec<u8, 256> = unhex(concat!(
+            "030106000e4742522d4f502d31323341424344dd85fa0bbc0dd0f0190500004d",
+            "464731413031323334353637383900000000000050f610005c527ebcba251ba8",
+            "8cb4b60000aa099808394100000a00300052656372656174696f6e616c000000",
+            "00000000000000004004a485251b6edbb3b60100320000000015000000000000",
+            "0050004742522d4f502d31323341424344000000000000000000",
+        ));
+        let frame = parse_odid_wifi_beacon(&ies).unwrap();
+        assert_eq!(frame.basic_id.unwrap().uas_id.as_str(), "MFG1A0123456789");
+        let op = frame.operator_id.unwrap();
+        assert_eq!(op.operator_id.as_str(), "GBR-OP-123ABCD");
+        let loc = frame.location.unwrap();
+        assert!((loc.latitude - 45.5457468).abs() < 1e-6);
+        assert!((loc.longitude - (-122.9681496)).abs() < 1e-6);
+        assert!((loc.altitude_geo - 237.0).abs() < 0.01);
+        assert!((loc.speed_horizontal - 20.5).abs() < 0.01);
+        assert!(frame.system.is_some());
     }
 }

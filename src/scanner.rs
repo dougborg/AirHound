@@ -98,8 +98,10 @@ pub struct OdidEvent {
     pub source: OdidSource,
     pub mac: [u8; 6],
     pub rssi: i8,
-    /// Raw ODID service info bytes — parsed by the filter task via `odid::parse_odid_wifi_nan()`.
-    pub raw_data: heapless::Vec<u8, 64>,
+    /// Raw ODID service info bytes (message counter + message pack) — parsed
+    /// by the filter task via `odid::parse_odid_wifi_nan()`. Sized for a full
+    /// pack of 9 messages.
+    pub raw_data: heapless::Vec<u8, 256>,
 }
 
 /// Unified scan event for the filter task
@@ -240,17 +242,15 @@ pub fn try_parse_odid_nan(frame: &[u8], rssi: i8, _channel: u8) -> Option<OdidEv
     // Extract transmitter MAC (Address 2, offset 10)
     let mac: [u8; 6] = frame[10..16].try_into().ok()?;
 
-    // NAN body starts at offset 30. Search for Service Descriptor Attribute
-    // containing ODID service info. NAN attributes are TLV:
-    //   Attribute ID (1 byte), Length (2 bytes LE), Body (Length bytes)
-    // SDA = attribute ID 0x03. Within SDA, service info starts after
-    // fixed fields and contains ODID messages.
-    let nan_body = &frame[30..];
-    let service_info = extract_nan_odid_service_info(nan_body)?;
+    // Walk the NAN attributes for the Service Descriptor Attribute with the
+    // Remote ID service ID and read its service info (message counter +
+    // message pack), honouring the optional SDA fields that precede it.
+    let rid = remoteid::wifi::parse_nan_action(&frame[24..]).ok()?;
 
     // Store raw service info bytes — parsing deferred to filter task
-    let mut raw_data: heapless::Vec<u8, 64> = heapless::Vec::new();
-    raw_data.extend(service_info.iter().copied().take(64));
+    let mut raw_data: heapless::Vec<u8, 256> = heapless::Vec::new();
+    raw_data.push(rid.counter).ok()?;
+    raw_data.extend_from_slice(rid.payload).ok()?;
 
     Some(OdidEvent {
         source: OdidSource::WiFiNan,
@@ -258,95 +258,6 @@ pub fn try_parse_odid_nan(frame: &[u8], rssi: i8, _channel: u8) -> Option<OdidEv
         rssi,
         raw_data,
     })
-}
-
-#[cfg(not(feature = "esp32"))]
-/// Extract service info payload from NAN Service Descriptor Attributes.
-///
-/// Searches NAN TLV attributes for a Service Descriptor Attribute (0x03)
-/// that contains service info and returns its payload. Does not verify
-/// the payload is ODID-specific — callers must validate the contents.
-fn extract_nan_odid_service_info(nan_body: &[u8]) -> Option<&[u8]> {
-    let mut i = 0;
-    while i + 3 <= nan_body.len() {
-        let attr_id = nan_body[i];
-        let attr_len = u16::from_le_bytes([nan_body[i + 1], nan_body[i + 2]]) as usize;
-        let attr_end = i + 3 + attr_len;
-
-        if attr_end > nan_body.len() {
-            break;
-        }
-
-        // Service Descriptor Attribute (SDA) = 0x03
-        if attr_id == 0x03 && attr_len >= 13 {
-            let sda_body = &nan_body[i + 3..attr_end];
-            // SDA fixed fields: Service ID (6) + Instance ID (1) +
-            // Requestor Instance ID (1) + Service Control (1) = 9 bytes minimum
-            if sda_body.len() >= 9 {
-                if let Some(info) = extract_sda_service_info(sda_body, sda_body[8]) {
-                    return Some(info);
-                }
-            }
-        }
-
-        i = attr_end;
-    }
-    None
-}
-
-#[cfg(not(feature = "esp32"))]
-/// Parse the optional fields of a NAN SDA to extract the Service Info payload.
-///
-/// `sda_body` starts at the SDA body (after the TLV header).
-/// `service_control` is byte 8 of the SDA body, indicating which optional fields are present.
-fn extract_sda_service_info<'a>(sda_body: &'a [u8], service_control: u8) -> Option<&'a [u8]> {
-    let has_service_info = (service_control & 0x02) != 0;
-    let has_match_filter = (service_control & 0x04) != 0;
-    let has_binding_bitmap = (service_control & 0x08) != 0;
-    let has_service_response_filter = (service_control & 0x10) != 0;
-
-    let mut offset = 9;
-
-    // Skip Binding Bitmap if present (1 byte bitmap control + N bytes bitmap)
-    if has_binding_bitmap {
-        if offset >= sda_body.len() {
-            return None;
-        }
-        let bitmap_len = 1 + ((sda_body[offset] & 0x0F) as usize + 1);
-        offset += bitmap_len;
-    }
-
-    // Skip Match Filter if present (1 byte length + N bytes)
-    if has_match_filter {
-        if offset >= sda_body.len() {
-            return None;
-        }
-        let mf_len = sda_body[offset] as usize;
-        offset += 1 + mf_len;
-    }
-
-    // Skip Service Response Filter if present (1 byte length + N bytes)
-    if has_service_response_filter {
-        if offset >= sda_body.len() {
-            return None;
-        }
-        let srf_len = sda_body[offset] as usize;
-        offset += 1 + srf_len;
-    }
-
-    // Service Info: 1 byte length + N bytes payload
-    if has_service_info {
-        if offset >= sda_body.len() {
-            return None;
-        }
-        let si_len = sda_body[offset] as usize;
-        offset += 1;
-        if offset + si_len <= sda_body.len() && si_len >= 25 {
-            return Some(&sda_body[offset..offset + si_len]);
-        }
-    }
-
-    None
 }
 
 /// Parse BLE advertisement data (AD structures) to extract service UUIDs
@@ -697,23 +608,28 @@ mod tests {
         // Attribute ID
         let _ = frame.push(0x03);
         // Calculate SDA body length: 6 (service_id) + 1 (instance) + 1 (req_instance)
-        //   + 1 (control) + 1 (service_info_len) + odid_msg.len()
-        let sda_len = 9 + 1 + odid_msg.len();
+        //   + 1 (control) + 1 (service_info_len) + 1 (counter) + pack
+        let pack_len = 3 + odid_msg.len();
+        let sda_len = 9 + 1 + 1 + pack_len;
         let _ = frame.push((sda_len & 0xFF) as u8);
         let _ = frame.push(((sda_len >> 8) & 0xFF) as u8);
-        // Service ID (6 bytes) — ODID service hash
-        for _ in 0..6 {
-            let _ = frame.push(0x00);
+        // Service ID (6 bytes) — hash of "org.opendroneid.remoteid"
+        for &b in &[0x88, 0x69, 0x19, 0x9D, 0x92, 0x09] {
+            let _ = frame.push(b);
         }
         // Instance ID
         let _ = frame.push(0x01);
         // Requestor Instance ID
         let _ = frame.push(0x00);
-        // Service Control: Service Info present (bit 1) = 0x02
-        let _ = frame.push(0x02);
+        // Service Control: Service Info present (bit 4) = 0x10
+        let _ = frame.push(0x10);
         // Service Info length
-        let _ = frame.push(odid_msg.len() as u8);
-        // Service Info = ODID message(s)
+        let _ = frame.push((1 + pack_len) as u8);
+        // Service Info = message counter, then a message pack
+        let _ = frame.push(0x00);
+        let _ = frame.push(0xF2); // pack, protocol version 2
+        let _ = frame.push(25); // single message size
+        let _ = frame.push((odid_msg.len() / 25) as u8);
         for &b in odid_msg {
             let _ = frame.push(b);
         }
@@ -726,8 +642,8 @@ mod tests {
         let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
         // Build a BasicId ODID message (type 0, 25 bytes)
         let mut odid_msg = [0u8; 25];
-        odid_msg[0] = 0x02; // MessageType::BasicId (0 << 4) | IdType::SerialNumber (2)
-        odid_msg[1] = 0x02; // UaType::HelicopterOrMultirotor
+        odid_msg[0] = 0x02; // MessageType::BasicId (0 << 4) | protocol version 2
+        odid_msg[1] = 0x12; // IdType::SerialNumber (1 << 4) | UaType::HelicopterOrMultirotor (2)
                             // UAS ID: "TEST1234" null-terminated
         odid_msg[2..10].copy_from_slice(b"TEST1234");
 
@@ -743,6 +659,28 @@ mod tests {
         let parsed = crate::odid::parse_odid_wifi_nan(&event.raw_data);
         assert!(parsed.is_some());
         assert!(parsed.unwrap().has_data());
+    }
+
+    /// A NAN action frame from the public Open Drone ID sample capture
+    /// odid_wifi_sample.pcap (github.com/opendroneid/wireshark-dissector).
+    #[test]
+    fn try_parse_odid_nan_captured_frame() {
+        let hex = concat!(
+            "d0000000516f9a01000084cca8604324506f9a01017950060409506f9a130327",
+            "008869199d92090100101d22f0190150004742522d4f502d3132334142434400",
+            "00000000000000000e040001000222",
+        );
+        let frame: Vec<u8, 128> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let event = try_parse_odid_nan(&frame, -60, 6).unwrap();
+        assert_eq!(event.mac, [0x84, 0xcc, 0xa8, 0x60, 0x43, 0x24]);
+        let parsed = crate::odid::parse_odid_wifi_nan(&event.raw_data).unwrap();
+        assert_eq!(
+            parsed.operator_id.unwrap().operator_id.as_str(),
+            "GBR-OP-123ABCD"
+        );
     }
 
     #[test]
