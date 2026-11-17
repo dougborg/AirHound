@@ -87,6 +87,25 @@ An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demon
 - **135x240 TFT display** (ST7789V2) — status screen with match counts, uptime, and last detection
 - **Passive buzzer** (GPIO2) — short alert beep on surveillance device match, togglable via BLE command
 
+#### Remote ID support and memory
+
+The `no_std` M5StickC firmware excludes WiFi Remote ID events to limit static
+RAM use; legacy BLE Remote ID decoding remains available. The XIAO `no_std`
+firmware and both ESP-IDF (`firmware-std`) builds include WiFi Remote ID events.
+NAN, beacon, and probe-response payloads use a bounded 256-byte event buffer so
+complete message packs survive the scan queue without relying on transmitter
+MAC prefixes.
+
+Switching to ESP-IDF does not remove the hardware's RAM limit. The `no_std`
+firmware stores its scan queue statically; ESP-IDF uses a heap-backed queue and
+separate thread stacks. Both need memory headroom while WiFi and BLE are active.
+
+Extended/Coded PHY BLE Remote ID reception is tracked in
+[#132](https://github.com/dougborg/AirHound/issues/132). The decoder accepts full
+extended-advertisement captures, but the firmware's generic BLE event currently
+retains only 62 bytes. Decoder tests alone do not establish end-to-end
+long-range reception.
+
 ### Quick Start
 
 Pre-built binaries are available on the [Releases](https://github.com/dougborg/AirHound/releases) page. To flash:

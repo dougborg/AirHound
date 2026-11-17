@@ -109,8 +109,8 @@ unsafe extern "C" fn promisc_rx_cb(
     // u8 has no alignment requirements.
     let payload = unsafe { std::slice::from_raw_parts(pkt.payload.as_ptr(), sig_len) };
 
-    // Check for NAN ODID action frame first
-    if let Some(odid_event) = scanner::try_parse_odid_nan(payload, rssi, channel) {
+    // Check for WiFi Remote ID before the generic WiFi path
+    if let Some(odid_event) = scanner::try_parse_odid_wifi(payload, rssi, channel) {
         if let Ok(guard) = SCAN_TX.try_lock() {
             if let Some(ref tx) = *guard {
                 let _ = tx.try_send(ScanEvent::Odid(odid_event));
@@ -357,12 +357,15 @@ fn filter_thread(
                 );
             }
             ScanEvent::Odid(ref odid_event) => {
-                // NAN ODID events bypass normal filter path — category-based
+                if !config.wifi_enabled || odid_event.rssi < config.min_rssi {
+                    continue;
+                }
+                // WiFi ODID events bypass normal filter path — category-based
                 // runtime toggling is not yet implemented (DEFAULT_RULE_DB is
                 // immutable static; enable_category is parsed but has no effect).
 
                 // Parse raw ODID bytes deferred from scan time
-                let frame = match odid::parse_odid_wifi_nan(&odid_event.raw_data) {
+                let frame = match odid::parse_odid_service_info(&odid_event.raw_data) {
                     Some(f) if f.has_data() => f,
                     _ => continue,
                 };

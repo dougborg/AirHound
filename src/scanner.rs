@@ -99,7 +99,7 @@ pub struct OdidEvent {
     pub mac: [u8; 6],
     pub rssi: i8,
     /// Raw ODID service info bytes (message counter + message pack) — parsed
-    /// by the filter task via `odid::parse_odid_wifi_nan()`. Sized for a full
+    /// by the filter task via `odid::parse_odid_service_info()`. Sized for a full
     /// pack of 9 messages.
     pub raw_data: heapless::Vec<u8, 256>,
 }
@@ -208,53 +208,31 @@ fn build_wifi_event(
 ///
 /// Returns `Some(OdidEvent)` if valid ODID data is found in the NAN frame.
 pub fn try_parse_odid_nan(frame: &[u8], rssi: i8, _channel: u8) -> Option<OdidEvent> {
-    // Minimum: 24 (MAC header) + 1 (category) + 1 (action) + 3 (OUI) + 1 (OUI type) = 30
-    if frame.len() < 30 {
+    if frame.first() != Some(&0xD0) {
         return None;
     }
+    try_parse_odid_wifi(frame, rssi, _channel)
+}
 
-    // Frame control check: Action frame = subtype 0xD (bits 7:4 of byte 0)
-    // Type = Management (0b00), subtype = Action (0b1101) → frame[0] = 0xD0
-    if frame[0] != 0xD0 {
-        return None;
-    }
-
-    // Category: Public Action = 0x04
-    if frame[24] != 0x04 {
-        return None;
-    }
-
-    // Action: Vendor Specific = 0x09
-    if frame[25] != 0x09 {
-        return None;
-    }
-
-    // OUI: Wi-Fi Alliance = 50:6F:9A
-    if frame[26..29] != [0x50, 0x6F, 0x9A] {
-        return None;
-    }
-
-    // OUI Type: NAN = 0x13
-    if frame[29] != 0x13 {
-        return None;
-    }
-
-    // Extract transmitter MAC (Address 2, offset 10)
-    let mac: [u8; 6] = frame[10..16].try_into().ok()?;
-
-    // Walk the NAN attributes for the Service Descriptor Attribute with the
-    // Remote ID service ID and read its service info (message counter +
-    // message pack), honouring the optional SDA fields that precede it.
-    let rid = remoteid::wifi::parse_nan_action(&frame[24..]).ok()?;
-
-    // Store raw service info bytes — parsing deferred to filter task
-    let mut raw_data: heapless::Vec<u8, 256> = heapless::Vec::new();
+/// Extract Remote ID from a complete WiFi beacon, probe response or NAN frame.
+///
+/// Copy only the Remote ID service data before the generic WiFi path truncates
+/// its IEs. A transmitter's MAC OUI is not a Remote ID protocol identifier.
+/// Decoding remains deferred to the filter task, outside the radio callback.
+#[cfg(not(feature = "esp32"))]
+pub fn try_parse_odid_wifi(frame: &[u8], rssi: i8, _channel: u8) -> Option<OdidEvent> {
+    let rid = remoteid::wifi::parse_frame(frame).ok()?;
+    let source = match rid.kind {
+        remoteid::wifi::WifiKind::Beacon => OdidSource::WiFiBeacon,
+        remoteid::wifi::WifiKind::Nan => OdidSource::WiFiNan,
+    };
+    let mut raw_data = heapless::Vec::new();
     raw_data.push(rid.counter).ok()?;
     raw_data.extend_from_slice(rid.payload).ok()?;
 
     Some(OdidEvent {
-        source: OdidSource::WiFiNan,
-        mac,
+        source,
+        mac: rid.source,
         rssi,
         raw_data,
     })
@@ -308,6 +286,14 @@ impl BleAdvParser {
                         let uuid = u16::from_le_bytes([data[i], data[i + 1]]);
                         let _ = event.service_uuids_16.push(uuid);
                         i += 2;
+                    }
+                }
+                // Service Data carries its UUID even when no UUID-list AD
+                // structure is present (e.g. legacy Remote ID advertising).
+                0x16 if data.len() >= 2 => {
+                    let uuid = u16::from_le_bytes([data[0], data[1]]);
+                    if !event.service_uuids_16.contains(&uuid) {
+                        let _ = event.service_uuids_16.push(uuid);
                     }
                 }
                 // Shortened or Complete local name
@@ -447,6 +433,36 @@ mod tests {
     // ── BleAdvParser tests ──────────────────────────────────────────
 
     #[test]
+    fn legacy_remote_id_service_data_matches_drone_rule() {
+        let mut ad = [0u8; 31];
+        ad[..6].copy_from_slice(&[30, 0x16, 0xFA, 0xFF, 0x0D, 7]);
+        ad[6] = 0x02;
+        ad[7] = 0x12;
+        ad[8..16].copy_from_slice(b"LEGACY01");
+        let event = BleAdvParser::parse(&[0x02; 6], -50, &ad);
+        let input = crate::filter::BleScanInput {
+            mac: &event.mac,
+            name: event.name.as_str(),
+            rssi: event.rssi,
+            service_uuids_16: &event.service_uuids_16,
+            manufacturer_id: event.manufacturer_id,
+            raw_ad: &event.raw_ad,
+        };
+        let index = crate::mac_index::MacIndex::new();
+        let result = crate::filter::filter_ble_with_rules(
+            &input,
+            &crate::filter::FilterConfig::new(),
+            &crate::defaults::DEFAULT_RULE_DB,
+            &index,
+        );
+        assert!(result
+            .rule_categories
+            .contains(&crate::rules::MatchCategory::Drone));
+        let decoded = crate::odid::parse_odid_ble(&event.raw_ad).unwrap();
+        assert_eq!(decoded.basic_id.unwrap().uas_id.as_str(), "LEGACY01");
+    }
+
+    #[test]
     fn ble_parse_empty_ad_data() {
         let addr = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
         let event = BleAdvParser::parse(&addr, -50, &[]);
@@ -568,7 +584,7 @@ mod tests {
     // ── try_parse_odid_nan tests ─────────────────────────────────────
 
     /// Build a minimal NAN action frame with ODID service info.
-    fn make_nan_odid_frame(mac: &[u8; 6], odid_msg: &[u8]) -> Vec<u8, 256> {
+    fn make_nan_odid_frame(mac: &[u8; 6], odid_msg: &[u8]) -> Vec<u8, 512> {
         let mut frame = Vec::new();
         // Frame control: Action frame (0xD0, 0x00)
         let _ = frame.push(0xD0);
@@ -633,6 +649,67 @@ mod tests {
         }
 
         frame
+    }
+
+    #[test]
+    fn captured_beacon_survives_scanner_without_mac_signature() {
+        // Tagged parameters from odid_wifi_bcn_sample.pcap, Open Drone ID
+        // wireshark-dissector captures (Apache-2.0), as in odid.rs.
+        let hex = concat!(
+            "030106000e4742522d4f502d31323341424344dd85fa0bbc0dd0f0190500004d",
+            "464731413031323334353637383900000000000050f610005c527ebcba251ba8",
+            "8cb4b60000aa099808394100000a00300052656372656174696f6e616c000000",
+            "00000000000000004004a485251b6edbb3b60100320000000015000000000000",
+            "0050004742522d4f502d31323341424344000000000000000000",
+        );
+        let ies: Vec<u8, 256> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let mac = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
+        let mut frame: Vec<u8, 512> = Vec::new();
+        frame.resize(36, 0).unwrap();
+        frame[0] = 0x80;
+        frame[10..16].copy_from_slice(&mac);
+        // Ordinary IEs before Remote ID can exceed the old 64-byte buffer.
+        frame.extend_from_slice(&[1, 80]).unwrap();
+        frame.extend_from_slice(&[0; 80]).unwrap();
+        frame.extend_from_slice(&ies).unwrap();
+        for subtype in [0x80, 0x50] {
+            frame[0] = subtype; // beacon and probe response
+            let event = try_parse_odid_wifi(&frame, -60, 6).unwrap();
+            assert_eq!(event.source, OdidSource::WiFiBeacon);
+            assert_eq!(event.mac, mac);
+            assert_eq!(event.rssi, -60);
+            let decoded = crate::odid::parse_odid_service_info(&event.raw_data).unwrap();
+            assert_eq!(decoded.basic_id.unwrap().uas_id.as_str(), "MFG1A0123456789");
+            assert_eq!(
+                decoded.operator_id.unwrap().operator_id.as_str(),
+                "GBR-OP-123ABCD"
+            );
+        }
+        // Every truncation inside the vendor IE must fail instead of emitting
+        // a partial service payload. Earlier complete, unrelated IEs are fine.
+        for end in 0..frame.len() {
+            assert!(try_parse_odid_wifi(&frame[..end], -60, 6).is_none());
+        }
+    }
+
+    #[test]
+    fn nan_preserves_full_nine_message_pack() {
+        let mut messages = [0u8; 9 * 25];
+        messages[0] = 0x02; // Basic ID
+        messages[1] = 0x12;
+        messages[2..10].copy_from_slice(b"FULLPACK");
+        for message in messages[25..].chunks_exact_mut(25) {
+            message[0] = 0x22; // Authentication pages
+        }
+        let frame = make_nan_odid_frame(&[0x02; 6], &messages);
+        let event = try_parse_odid_wifi(&frame, -55, 6).unwrap();
+        assert_eq!(event.raw_data.len(), 1 + 3 + 9 * 25);
+        assert_eq!(&event.raw_data[4..], &messages);
+        let decoded = crate::odid::parse_odid_service_info(&event.raw_data).unwrap();
+        assert_eq!(decoded.basic_id.unwrap().uas_id.as_str(), "FULLPACK");
     }
 
     #[test]
