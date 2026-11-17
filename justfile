@@ -59,7 +59,7 @@ check-m5stickc:
 # Run library unit tests on host
 [group('host')]
 test:
-    cargo test --lib --no-default-features
+    cargo +stable test --locked --lib --no-default-features
 
 # Flash XIAO ESP32-S3 and open serial monitor
 [group('host')]

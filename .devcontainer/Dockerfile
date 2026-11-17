@@ -1,4 +1,4 @@
-FROM espressif/idf-rust:all_latest
+FROM espressif/idf-rust:all_1.90.0.0
 
 # just is the only addition — espflash ships in the base image
 RUN cargo install just --locked

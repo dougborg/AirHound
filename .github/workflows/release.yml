@@ -46,7 +46,7 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
 
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v4
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -58,7 +58,7 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf-rust:${{ matrix.chip }}_latest
+      image: espressif/idf-rust:all_1.90.0.0
       options: --user root
       env:
         RUSTUP_HOME: /home/esp/.rustup
@@ -81,7 +81,7 @@ jobs:
         run: |
           export PATH="/home/esp/.cargo/bin:$PATH"
           . /home/esp/export-esp.sh
-          cargo build --no-default-features --features ${{ matrix.features }} --release --target ${{ matrix.target }} -Z build-std=core,alloc
+          cargo build --locked --no-default-features --features ${{ matrix.features }} --release --target ${{ matrix.target }} -Z build-std=core,alloc
 
       - name: Create flashable binary
         run: |
@@ -109,7 +109,7 @@ jobs:
       # release-please-config.json). Immutable releases reject asset uploads
       # once a release is published, so the binaries have to go on while it is
       # still a draft — this step attaches them and publishes in one call.
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
           files: "*.bin"
