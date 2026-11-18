@@ -143,8 +143,7 @@ impl<const N: usize> Watchlist<N> {
     pub fn active_channels(&self, since_ms: u32, now_ms: u32) -> heapless::Vec<u8, 13> {
         let mut channels = heapless::Vec::<u8, 13>::new();
         for entry in &self.entries {
-            for i in 0..entry.recent_len as usize {
-                let s = &entry.recent[i];
+            for s in &entry.recent[..entry.recent_len as usize] {
                 let age = now_ms.wrapping_sub(s.ts);
                 if age <= since_ms && !channels.contains(&s.channel) {
                     let _ = channels.push(s.channel);
@@ -159,8 +158,7 @@ impl<const N: usize> Watchlist<N> {
     pub fn is_channel_hopping(&self, id: u16, window_ms: u32, now_ms: u32) -> bool {
         if let Some(entry) = self.entries.iter().find(|e| e.id == id) {
             let mut seen_channels = heapless::Vec::<u8, SIGHTING_RING_SIZE>::new();
-            for i in 0..entry.recent_len as usize {
-                let s = &entry.recent[i];
+            for s in &entry.recent[..entry.recent_len as usize] {
                 let age = now_ms.wrapping_sub(s.ts);
                 if age <= window_ms && !seen_channels.contains(&s.channel) {
                     let _ = seen_channels.push(s.channel);
