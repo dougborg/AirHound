@@ -87,7 +87,7 @@ jobs:
         run: |
           export PATH="/home/esp/.cargo/bin:$PATH"
           . /home/esp/export-esp.sh
-          espflash save-image --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
+          espflash save-image --merge --skip-padding --chip ${{ matrix.chip }} target/${{ matrix.target }}/release/airhound airhound-${{ matrix.name }}.bin
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
@@ -105,6 +105,13 @@ jobs:
           pattern: release-bin-*
           merge-multiple: true
 
+      - name: Verify asset set and generate checksums
+        run: |
+          test -s airhound-xiao.bin
+          test -s airhound-m5stickc.bin
+          sha256sum airhound-xiao.bin airhound-m5stickc.bin > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
       # release-please creates the release as a draft (draft: true in
       # release-please-config.json). Immutable releases reject asset uploads
       # once a release is published, so the binaries have to go on while it is
@@ -112,5 +119,9 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: "*.bin"
+          files: |
+            airhound-xiao.bin
+            airhound-m5stickc.bin
+            SHA256SUMS
+          fail_on_unmatched_files: true
           draft: false

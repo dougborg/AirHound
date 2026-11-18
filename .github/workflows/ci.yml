@@ -289,7 +289,7 @@ jobs:
           name: elf-${{ matrix.name }}
 
       - name: Create flashable binary
-        run: espflash save-image --chip ${{ matrix.chip }} airhound airhound-${{ matrix.name }}.bin
+        run: espflash save-image --merge --skip-padding --chip ${{ matrix.chip }} airhound airhound-${{ matrix.name }}.bin
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
@@ -319,7 +319,7 @@ jobs:
           name: elf-${{ matrix.name }}
 
       - name: Create flashable binary
-        run: espflash save-image --chip ${{ matrix.chip }} airhound-std airhound-${{ matrix.name }}.bin
+        run: espflash save-image --merge --skip-padding --chip ${{ matrix.chip }} airhound-std airhound-${{ matrix.name }}.bin
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
