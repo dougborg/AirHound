@@ -108,21 +108,34 @@ long-range reception.
 
 ### Quick Start
 
-Pre-built binaries are available on the [Releases](https://github.com/dougborg/AirHound/releases) page. To flash:
+Check the assets on the [Releases](https://github.com/dougborg/AirHound/releases)
+page before downloading: v0.1.1 has no firmware assets. Build from source below
+when no binaries are attached. Future release binaries produced by this workflow
+are merged no_std images containing the bootloader, partition table and application.
+ESP-IDF builds are currently CI previews, not release assets.
+
+Download the binary for your board and `SHA256SUMS` from the same release.
+Verify its checksum (`shasum -a 256 airhound-xiao.bin` on macOS or
+`sha256sum airhound-xiao.bin` on Linux) against the corresponding manifest entry.
+Then flash the merged binary at address zero:
 
 ```bash
 # 1. Install espflash
 cargo install espflash --locked
 
 # 2. Connect your board via USB and flash
-espflash flash --chip esp32s3 airhound-xiao.bin             # XIAO ESP32-S3
-espflash flash --chip esp32 airhound-m5stickc.bin           # M5StickC Plus2
+espflash write-bin --chip esp32s3 0x0 airhound-xiao.bin             # XIAO ESP32-S3
+espflash write-bin --chip esp32 0x0 airhound-m5stickc.bin           # M5StickC Plus2
 
 # 3. Connect from a companion app over BLE, or monitor serial output
 espflash monitor --speed 115200
 ```
 
 AirHound starts scanning immediately on boot. Matched devices appear as NDJSON on both BLE GATT notifications and serial.
+
+Live radio coexistence, runtime memory headroom, buzzer behavior and board
+flashing remain tracked in [#141](https://github.com/dougborg/AirHound/issues/141).
+Successful compilation and generated images do not establish those results.
 
 ### Building
 
@@ -157,7 +170,7 @@ just build-m5stickc
 #### Flash
 
 ```bash
-# Flash pre-built binaries (espflash auto-detects serial port)
+# Flash locally built ELF files (espflash auto-detects serial port)
 espflash flash --chip esp32s3 target/xtensa-esp32s3-none-elf/release/airhound
 espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/airhound
 
