@@ -155,9 +155,9 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - name: Install BLE dev dependencies
+      - name: Install scanner dev dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libpcap-dev
       - name: Check
         run: cd hostd && cargo check --locked
       - name: Clippy

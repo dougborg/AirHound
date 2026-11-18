@@ -422,3 +422,28 @@ overrides this default. NDJSON remains on stdout.
 `--output observations.csv` selects the CSV destination. Existing files are
 refused unless `--overwrite` is also supplied. Without `--output`, a timestamped
 filename is created with the same protection against overwriting existing data.
+
+### Linux WiFi capture
+
+Install `libpcap-dev`, `libdbus-1-dev`, and `pkg-config` before building hostd
+(Debian/Ubuntu package names). Supply an existing monitor-mode interface:
+
+```bash
+cargo run --manifest-path hostd/Cargo.toml -- \
+  --wifi-interface mon0 --no-ble --output capture.csv
+```
+
+The process needs permission to capture packets on that interface. Configure
+monitor mode and the channel externally using your distribution's network tools;
+AirHound does not change interface mode, disconnect NetworkManager, hop channels,
+or transmit packets. Without `--wifi-interface`, Linux runs BLE only.
+
+The adapter requires radiotap headers with channel and dBm signal fields. It
+supports 2.4 GHz and 5 GHz channels 36–177; 6 GHz awaits explicit band information
+in the shared event model. Truncated packets, failed CRCs, padded payloads and
+missing/unsupported metadata are discarded. Capture and the bounded event queue
+are best effort under load. Parsed WiFi observations use the shared signature
+filter and WiGLE writer; Remote ID NAN/beacon/probe-response payloads also emit
+`drone` messages. Linux currently leaves CSV security and GPS fields unknown.
+Hardware reception, driver compatibility and packet loss require live validation
+tracked in [#141](https://github.com/dougborg/AirHound/issues/141).

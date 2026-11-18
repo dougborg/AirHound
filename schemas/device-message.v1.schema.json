@@ -132,8 +132,8 @@
         "ch": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 14,
-          "description": "WiFi channel (2.4 GHz, 1–14). ESP32/ESP32-S3 are 2.4 GHz only."
+          "maximum": 177,
+          "description": "WiFi channel: firmware supports 2.4 GHz; desktop capture also supports 5 GHz (36–177)."
         },
         "frame": {
           "$ref": "#/$defs/wifi_frame_type",
