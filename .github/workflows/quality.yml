@@ -38,7 +38,7 @@ jobs:
           components: llvm-tools-preview
       - name: Install desktop dependencies
         if: runner.os == 'Linux' && matrix.suite == 'hostd'
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libpcap-dev
       - name: Install coverage tool
         run: cargo install cargo-llvm-cov --version 0.9.1 --locked
       - name: Measure coverage and enforce baseline

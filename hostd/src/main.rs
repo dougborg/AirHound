@@ -9,6 +9,10 @@
 mod ble;
 #[cfg(target_os = "macos")]
 mod location_macos;
+#[cfg(any(target_os = "linux", test))]
+mod radiotap;
+#[cfg(target_os = "linux")]
+mod wifi_linux;
 #[cfg(target_os = "macos")]
 mod wifi_macos;
 mod wigle;
@@ -55,7 +59,12 @@ struct Args {
     rssi: i8,
     /// Disable BLE scanning
     #[arg(long, conflicts_with = "no_wifi")]
+    #[cfg_attr(target_os = "linux", arg(requires = "wifi_interface"))]
     no_ble: bool,
+    /// Linux monitor-mode interface (must be configured externally)
+    #[cfg(target_os = "linux")]
+    #[arg(long, conflicts_with = "no_wifi")]
+    wifi_interface: Option<String>,
     /// Disable WiFi scanning
     #[arg(long)]
     no_wifi: bool,
@@ -197,7 +206,16 @@ async fn main() {
         if let Err(e) = wifi_macos::scan_loop(wifi_tx).await {
             log::error!("WiFi scan error: {e}");
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        match args.wifi_interface {
+            Some(interface) => {
+                if let Err(e) = wifi_linux::scan_loop(&interface, wifi_tx).await {
+                    log::error!("WiFi scan error: {e}");
+                }
+            }
+            None => log::info!("WiFi disabled: select a monitor interface with --wifi-interface"),
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = wifi_tx;
             log::info!("WiFi scanning not available on this platform");
@@ -345,8 +363,13 @@ async fn filter_task<W: Write>(
                 // Run filter and emit NDJSON if matched
                 handle_wifi_event(wifi_event, &cfg, &mac_index, start_time);
             }
-            #[allow(unreachable_patterns)]
-            _ => {}
+            ScanEvent::Odid(ref event) => {
+                if cfg.wifi_enabled && event.rssi >= cfg.min_rssi {
+                    if let Some(frame) = airhound::odid::parse_odid_service_info(&event.raw_data) {
+                        emit_odid(&frame, event, start_time);
+                    }
+                }
+            }
         }
     }
 
@@ -515,6 +538,40 @@ async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instan
     if let Err(e) = command_loop(cmd_rx, config, &SCANNING, start_time, io::stdout()).await {
         log::error!("Command output failed: {e}");
     }
+}
+
+fn emit_odid(
+    frame: &airhound::odid::OdidFrame,
+    event: &airhound::scanner::OdidEvent,
+    start: Instant,
+) {
+    let mut mac = protocol::MacString::new();
+    protocol::format_mac(&event.mac, &mut mac);
+    let uas_id = frame.basic_id.as_ref().map(|id| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&id.uas_id);
+        s
+    });
+    let operator_id = frame.operator_id.as_ref().map(|id| {
+        let mut s = protocol::NameString::new();
+        let _ = s.push_str(&id.operator_id);
+        s
+    });
+    emit_message(&DeviceMessage::DroneSighting {
+        mac: &mac,
+        rssi: event.rssi,
+        source: event.source.as_str(),
+        uas_id: uas_id.as_ref(),
+        ua_type: frame.basic_id.as_ref().map(|id| id.ua_type as u8),
+        lat: frame.location.as_ref().map(|l| l.latitude),
+        lon: frame.location.as_ref().map(|l| l.longitude),
+        alt: frame.location.as_ref().map(|l| l.altitude_geo),
+        speed: frame.location.as_ref().map(|l| l.speed_horizontal),
+        operator_id: operator_id.as_ref(),
+        rule: Some("Open Drone ID"),
+        category: Some("drone"),
+        ts: start.elapsed().as_millis() as u32,
+    });
 }
 
 #[cfg(test)]
