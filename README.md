@@ -409,3 +409,16 @@ and best-effort: an overlong line, full ingress queue, or disconnected client
 can still lose a request/response. A missing response is not confirmation of
 success. These additive messages extend the v1 schema; consumers should ignore
 unknown message types when using newer firmware.
+
+### Desktop scanner configuration
+
+Run `cargo run --manifest-path hostd/Cargo.toml -- --help` for options.
+`--no-ble` and `--no-wifi` disable the corresponding scanner; at least one
+must remain enabled. `--rssi -70` sets the detection threshold (default -90 dBm,
+range -128 through 0); WiGLE CSV continues to record all observed networks.
+`-v` enables debug logging and `-vv` trace logging on stderr; `RUST_LOG`
+overrides this default. NDJSON remains on stdout.
+
+`--output observations.csv` selects the CSV destination. Existing files are
+refused unless `--overwrite` is also supplied. Without `--output`, a timestamped
+filename is created with the same protection against overwriting existing data.

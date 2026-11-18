@@ -46,6 +46,31 @@ struct Args {
     /// Output WiGLE CSV file path [default: airhound-YYYYMMDD-HHMMSS.csv]
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Replace an existing output file (requires --output)
+    #[arg(long, requires = "output")]
+    overwrite: bool,
+    /// Minimum RSSI for detection messages; CSV still records all observations
+    #[arg(long, default_value_t = -90, allow_hyphen_values = true,
+          value_parser = clap::value_parser!(i8).range(-128..=0))]
+    rssi: i8,
+    /// Disable BLE scanning
+    #[arg(long, conflicts_with = "no_wifi")]
+    no_ble: bool,
+    /// Disable WiFi scanning
+    #[arg(long)]
+    no_wifi: bool,
+    /// Increase diagnostic verbosity (-v debug, -vv trace); RUST_LOG overrides
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+}
+
+fn open_output(path: &std::path::Path, overwrite: bool) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(overwrite)
+        .truncate(overwrite)
+        .create_new(!overwrite)
+        .open(path)
 }
 
 /// Serialize and flush one NDJSON message, reporting serialization and I/O failures.
@@ -83,11 +108,15 @@ fn get_location() -> Option<Location> {
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    let args = Args::parse();
+    let level = match args.verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
         .format_timestamp_millis()
         .init();
-
-    let args = Args::parse();
 
     log::info!(
         "AirHound hostd v{} starting on {}",
@@ -95,13 +124,9 @@ async fn main() {
         BOARD_NAME
     );
 
-    // Initialize CoreLocation for GPS
-    #[cfg(target_os = "macos")]
-    location_macos::start();
-
     // Open WiGLE CSV output file
     let output_path = args.output.unwrap_or_else(default_output_path);
-    let csv_file = match std::fs::File::create(&output_path) {
+    let csv_file = match open_output(&output_path, args.overwrite) {
         Ok(f) => f,
         Err(e) => {
             log::error!(
@@ -120,8 +145,15 @@ async fn main() {
     };
     log::info!("WiGLE CSV output: {}", output_path.display());
 
+    #[cfg(target_os = "macos")]
+    location_macos::start();
+
     // Shared state
-    let config = Arc::new(Mutex::new(FilterConfig::new()));
+    let config = Arc::new(Mutex::new(FilterConfig {
+        min_rssi: args.rssi,
+        ble_enabled: !args.no_ble,
+        wifi_enabled: !args.no_wifi,
+    }));
     let mac_index = Arc::new(MacIndex::from_defaults());
     let start_time = Instant::now();
 
@@ -138,6 +170,9 @@ async fn main() {
     // Spawn BLE scanner
     let ble_tx = scan_tx.clone();
     let ble_handle = tokio::spawn(async move {
+        if args.no_ble {
+            return;
+        }
         let adapter = match ble::get_adapter().await {
             Ok(a) => a,
             Err(e) => {
@@ -155,6 +190,9 @@ async fn main() {
     // Spawn WiFi scanner (macOS: CoreWLAN; other platforms: no-op)
     let wifi_tx = scan_tx.clone();
     let wifi_handle = tokio::spawn(async move {
+        if args.no_wifi {
+            return;
+        }
         #[cfg(target_os = "macos")]
         if let Err(e) = wifi_macos::scan_loop(wifi_tx).await {
             log::error!("WiFi scan error: {e}");
@@ -198,11 +236,11 @@ async fn main() {
     // closes the scan channel and lets filter_task drain and exit naturally.
     tokio::spawn(async move {
         let _ = ble_handle.await;
-        log::warn!("BLE scanner exited");
+        log::debug!("BLE scanner exited");
     });
     tokio::spawn(async move {
         let _ = wifi_handle.await;
-        log::warn!("WiFi scanner exited");
+        log::debug!("WiFi scanner exited");
     });
     tokio::spawn(async move {
         let _ = stdin_handle.await;
@@ -482,6 +520,49 @@ async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instan
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    #[test]
+    fn cli_validates_configuration() {
+        use clap::Parser;
+        let args =
+            super::Args::try_parse_from(["hostd", "--rssi", "-128", "--no-wifi", "-vv"]).unwrap();
+        assert_eq!(args.rssi, -128);
+        assert!(args.no_wifi);
+        assert_eq!(args.verbose, 2);
+        for flags in [
+            vec!["--rssi", "1"],
+            vec!["--rssi", "-129"],
+            vec!["--no-ble", "--no-wifi"],
+            vec!["--overwrite"],
+        ] {
+            assert!(super::Args::try_parse_from(std::iter::once("hostd").chain(flags)).is_err());
+        }
+    }
+
+    #[test]
+    fn existing_output_requires_explicit_overwrite() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!(
+            "airhound-output-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        super::open_output(&path, false)
+            .unwrap()
+            .write_all(b"keep me")
+            .unwrap();
+        assert_eq!(
+            super::open_output(&path, false).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep me");
+        drop(super::open_output(&path, true).unwrap());
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        std::fs::remove_file(path).unwrap();
+    }
+
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
