@@ -500,9 +500,21 @@ mod tests {
     async fn command_input_changes_state_and_returns_status_in_order() {
         let (tx, rx) = mpsc::channel(1);
         let input = b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n{\"cmd\":\"set_rssi\",\"min_rssi\":-65}\n{\"cmd\":\"start\"}\n{\"cmd\":\"status\"}";
-        // One-byte reads exercise commands split at every possible byte boundary.
+        // BufReader may bypass its buffer for large reads, so constrain the
+        // underlying stream itself to one byte per read.
+        struct Bytewise(&'static [u8]);
+        impl io::Read for Bytewise {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                if out.is_empty() || self.0.is_empty() {
+                    return Ok(0);
+                }
+                out[0] = self.0[0];
+                self.0 = &self.0[1..];
+                Ok(1)
+            }
+        }
         let producer = std::thread::spawn(move || {
-            read_commands(io::BufReader::with_capacity(1, &input[..]), tx)
+            read_commands(io::BufReader::with_capacity(1, Bytewise(input)), tx)
         });
         let config = Arc::new(Mutex::new(FilterConfig::new()));
         let scanning = AtomicBool::new(true);
