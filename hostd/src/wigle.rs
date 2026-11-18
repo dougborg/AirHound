@@ -286,7 +286,8 @@ mod tests {
             accuracy: 4.0,
         };
 
-        let cases: Vec<(&str, Box<dyn Fn(&mut WigleWriter<&mut Vec<u8>>)>)> = vec![
+        type WriteCase<'a> = Box<dyn Fn(&mut WigleWriter<&mut Vec<u8>>) + 'a>;
+        let cases: Vec<(&str, WriteCase<'_>)> = vec![
             (
                 "wifi+loc",
                 Box::new(|w| {

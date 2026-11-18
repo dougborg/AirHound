@@ -167,7 +167,7 @@ async fn main() {
     let filter_config = config.clone();
     let filter_mac_index = mac_index.clone();
     let filter_start = start_time;
-    let filter_handle = tokio::spawn(async move {
+    let mut filter_handle = tokio::spawn(async move {
         filter_task(
             scan_rx,
             filter_config,
@@ -184,6 +184,9 @@ async fn main() {
     let stdin_handle = tokio::spawn(async move {
         stdin_command_loop(cmd_config, cmd_start).await;
     });
+
+    let ble_abort = ble_handle.abort_handle();
+    let wifi_abort = wifi_handle.abort_handle();
 
     // Scanner exits are non-fatal — they drop their tx handles, which eventually
     // closes the scan channel and lets filter_task drain and exit naturally.
@@ -204,25 +207,44 @@ async fn main() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             log::info!("Shutting down...");
+            ble_abort.abort();
+            wifi_abort.abort();
+            // Let the output task drain the bounded queue and flush the CSV.
+            if let Err(e) = filter_handle.await {
+                log::error!("Output task failed during shutdown: {e}");
+            }
         }
-        _ = filter_handle => {
+        _ = &mut filter_handle => {
             log::info!("All scanners exited, shutting down");
         }
     }
 }
 
 /// Filter task: receives ScanEvents, writes ALL to WiGLE CSV, emits NDJSON for matches.
-async fn filter_task(
+async fn filter_task<W: Write>(
     mut rx: mpsc::Receiver<ScanEvent>,
     config: Arc<Mutex<FilterConfig>>,
     mac_index: Arc<MacIndex>,
     start_time: Instant,
-    mut wigle: WigleWriter<std::fs::File>,
+    mut wigle: WigleWriter<W>,
 ) {
     let mut mac_buf = protocol::MacString::new();
-    let mut last_flush = Instant::now();
+    let mut flush_tick = tokio::time::interval(std::time::Duration::from_secs(5));
+    flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    while let Some(event) = rx.recv().await {
+    loop {
+        let event = tokio::select! {
+            event = rx.recv() => match event {
+                Some(event) => event,
+                None => break,
+            },
+            _ = flush_tick.tick() => {
+                if let Err(e) = wigle.flush() {
+                    log::warn!("WiGLE flush error: {e}");
+                }
+                continue;
+            }
+        };
         if !SCANNING.load(Ordering::Relaxed) {
             continue;
         }
@@ -273,14 +295,6 @@ async fn filter_task(
             }
             #[allow(unreachable_patterns)]
             _ => {}
-        }
-
-        // Flush periodically (every 5s) to balance durability and I/O overhead
-        if last_flush.elapsed() >= std::time::Duration::from_secs(5) {
-            if let Err(e) = wigle.flush() {
-                log::warn!("WiGLE flush error: {e}");
-            }
-            last_flush = Instant::now();
         }
     }
 
@@ -419,5 +433,65 @@ async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instan
             };
             emit_message(&msg);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[derive(Clone, Default)]
+    struct RecordingWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        flushes: Arc<AtomicUsize>,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.bytes.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn output_flushes_while_scanners_are_idle_and_on_channel_close() {
+        let recording = RecordingWriter::default();
+        let writer = WigleWriter::new(recording.clone()).unwrap();
+        let (tx, rx) = mpsc::channel(2);
+        let output = tokio::spawn(filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            writer,
+        ));
+        // Let the initial interval tick finish before queuing an observation.
+        tokio::task::yield_now().await;
+        let initial_flushes = recording.flushes.load(Ordering::Relaxed);
+        let event = airhound::scanner::BleAdvParser::parse(&[0x12; 6], -55, &[]);
+        tx.send(ScanEvent::Ble(event)).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        assert!(recording.flushes.load(Ordering::Relaxed) > initial_flushes);
+        let bytes = recording.bytes.lock().unwrap().clone();
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("12:12:12:12:12:12"));
+
+        let event = airhound::scanner::BleAdvParser::parse(&[0x34; 6], -55, &[]);
+        tx.send(ScanEvent::Ble(event)).await.unwrap();
+        drop(tx);
+        output.await.unwrap();
+        let bytes = recording.bytes.lock().unwrap().clone();
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("34:34:34:34:34:34"));
     }
 }

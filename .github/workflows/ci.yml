@@ -129,22 +129,27 @@ jobs:
           RUSTUP_TOOLCHAIN: nightly
 
   hostd:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # stable
         with:
+          toolchain: stable
           components: clippy
       - name: Install BLE dev dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - name: Check
-        run: cd hostd && cargo check
+        run: cd hostd && cargo check --locked
       - name: Clippy
-        run: cd hostd && cargo clippy -- -D warnings
+        run: cd hostd && cargo clippy --locked --all-targets -- -D warnings
       - name: Test
-        run: cd hostd && cargo test
+        run: cd hostd && cargo test --locked
 
   build:
     runs-on: ubuntu-latest
