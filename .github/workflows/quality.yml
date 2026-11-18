@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RUSTUP_TOOLCHAIN: nightly-2026-11-18
+
 jobs:
   coverage:
     name: coverage (${{ matrix.suite }}, ${{ matrix.os }})
