@@ -360,3 +360,39 @@ Desktop integration tests exercise chunked command input through state changes
 and status output, oversized-line rejection, output errors, and shutdown while
 scanner tasks are idle or blocked on a full queue. They use in-memory streams and
 scanner tasks, so they do not establish driver or physical-radio behavior.
+
+### Command results and runtime support
+
+Each command dequeued by a runtime emits a `command_result` after applying its
+supported state changes. A `status` request also emits the existing status
+message. Malformed or unknown input that reaches the command queue returns
+`invalid_command` with `cmd: "unknown"`.
+
+```json
+{"type":"command_result","cmd":"start","ok":true}
+{"type":"command_result","cmd":"export_wigle","ok":false,"error":"unsupported"}
+```
+
+| Command | no_std firmware | ESP-IDF firmware | hostd |
+|---|---|---|---|
+| start / stop / status / set_rssi | Supported | Supported | Supported |
+| set_buzzer | Supported on configured buzzer boards | M5StickC only | Unsupported |
+| add_watchlist / remove_watchlist | Supported, volatile | Supported, volatile | Unsupported |
+| set_mode / proximity commands / enable_category / export_wigle | Unsupported | Unsupported | Unsupported |
+
+Firmware command ingestion uses BLE GATT; hostd accepts NDJSON on stdin.
+Stopping pauses detection/output; it does not promise that the radio hardware
+is powered off. hostd already writes WiGLE CSV continuously, but does not
+implement an on-demand export command.
+
+Error codes are `invalid_command`, `invalid_argument`, `unsupported`,
+`duplicate`, `capacity`, and `not_found`. Watchlist changes update the list and
+lookup index together, reject duplicate IDs/targets, and roll back if the index
+cannot accept an entry. RSSI must be between -128 and 0 dBm.
+
+Responses have no request IDs; clients should send one command at a time and
+wait for its result. BLE ingress/output queues and notifications remain bounded
+and best-effort: an overlong line, full ingress queue, or disconnected client
+can still lose a request/response. A missing response is not confirmation of
+success. These additive messages extend the v1 schema; consumers should ignore
+unknown message types when using newer firmware.

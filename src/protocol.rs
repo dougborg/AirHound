@@ -33,6 +33,14 @@ pub struct MatchReason {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum DeviceMessage<'a> {
+    /// Outcome of one parsed command, after its state changes have completed.
+    #[serde(rename = "command_result")]
+    CommandResult {
+        cmd: &'static str,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<CommandError>,
+    },
     /// WiFi scan result
     #[serde(rename = "wifi")]
     WiFiScan {
@@ -153,6 +161,18 @@ pub enum DeviceMessage<'a> {
         /// Firmware version
         version: &'static str,
     },
+}
+
+/// Stable machine-readable command failure codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandError {
+    InvalidCommand,
+    InvalidArgument,
+    Unsupported,
+    Duplicate,
+    Capacity,
+    NotFound,
 }
 
 /// Operating mode for the device.

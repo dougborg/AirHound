@@ -86,7 +86,7 @@ type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 8>;
 type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
 type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
 type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
-type CommandChannel = Channel<CriticalSectionRawMutex, HostCommand, 4>;
+type CommandChannel = Channel<CriticalSectionRawMutex, Option<HostCommand>, 4>;
 
 // ── Static channels and shared state ─────────────────────────────────
 
@@ -505,9 +505,7 @@ async fn handle_gatt_connection<'s, P: PacketPool>(
                             if write_event.handle() == server.airhound_service.rx.handle {
                                 for &byte in write_event.data() {
                                     if let Some(line) = line_reader.feed(byte) {
-                                        if let Some(cmd) = comm::parse_command(line) {
-                                            let _ = CMD_CHANNEL.try_send(cmd);
-                                        }
+                                        let _ = CMD_CHANNEL.try_send(comm::parse_command(line));
                                     }
                                 }
                             }
@@ -851,68 +849,45 @@ async fn command_task() {
 
     loop {
         let cmd = cmd_rx.receive().await;
+        let Some(cmd) = cmd else {
+            let msg = comm::command_response(None, Err(protocol::CommandError::InvalidCommand));
+            let mut buf = MsgBuffer::new();
+            buf.resize_default(MAX_MSG_LEN).ok();
+            if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+                buf.truncate(len);
+                output_tx.send(buf).await;
+            }
+            continue;
+        };
         let is_status_request = matches!(cmd, HostCommand::GetStatus);
-
         let mut config = get_filter_config();
         let mut scanning = SCANNING.load(Ordering::Relaxed);
-
-        let buzzer_state = comm::handle_command(&cmd, &mut config, &mut scanning);
-
-        if let Some(enabled) = buzzer_state {
+        let result = critical_section::with(|cs| {
+            comm::execute_command(
+                &cmd,
+                &mut config,
+                &mut scanning,
+                board::HAS_BUZZER,
+                Some((
+                    &mut WATCHLIST.borrow(cs).borrow_mut(),
+                    &mut MAC_INDEX.borrow(cs).borrow_mut(),
+                )),
+            )
+        });
+        if let Ok(Some(enabled)) = result {
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
         }
-
-        // Handle watchlist mutations — update both Watchlist and MacIndex
-        match &cmd {
-            HostCommand::AddWatchlist {
-                id,
-                mac,
-                full_mac,
-                label,
-            } => {
-                critical_section::with(|cs| {
-                    let mut wl = WATCHLIST.borrow(cs).borrow_mut();
-                    let mut idx = MAC_INDEX.borrow(cs).borrow_mut();
-                    let oui = [mac[0], mac[1], mac[2]];
-                    let match_type = if *full_mac {
-                        watchlist::WatchlistMatch::MacFull(*mac)
-                    } else {
-                        watchlist::WatchlistMatch::MacPrefix(oui)
-                    };
-                    let entry = watchlist::WatchlistEntry::new(*id, match_type, label.as_str());
-                    if wl.add(entry).is_ok() {
-                        if *full_mac {
-                            idx.add_watchlist_full(*mac, *id);
-                        } else {
-                            idx.add_watchlist_oui(oui, *id);
-                        }
-                    }
-                });
-            }
-            HostCommand::RemoveWatchlist { id } => {
-                critical_section::with(|cs| {
-                    let mut wl = WATCHLIST.borrow(cs).borrow_mut();
-                    let mut idx = MAC_INDEX.borrow(cs).borrow_mut();
-                    // Find the entry before removing to get its match info
-                    if let Some(entry) = wl.entries().iter().find(|e| e.id == *id) {
-                        match &entry.match_type {
-                            watchlist::WatchlistMatch::MacFull(mac) => {
-                                idx.remove_watchlist_full(mac);
-                            }
-                            watchlist::WatchlistMatch::MacPrefix(oui) => {
-                                idx.remove_watchlist_oui(oui);
-                            }
-                        }
-                    }
-                    wl.remove(*id);
-                });
-            }
-            _ => {}
-        }
-
         // Write back updated state
         critical_section::with(|cs| FILTER_CONFIG.borrow(cs).set(config));
         SCANNING.store(scanning, Ordering::Relaxed);
+
+        let msg = comm::command_response(Some(&cmd), result.map(|_| ()));
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            output_tx.send(buf).await;
+        }
 
         // GetStatus: build and send a live status response
         if is_status_request {

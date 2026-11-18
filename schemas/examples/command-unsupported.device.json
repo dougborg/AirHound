@@ -1,0 +1,6 @@
+{
+  "type": "command_result",
+  "cmd": "export_wigle",
+  "ok": false,
+  "error": "unsupported"
+}

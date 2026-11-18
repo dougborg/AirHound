@@ -1,0 +1,6 @@
+{
+  "type": "command_result",
+  "cmd": "unknown",
+  "ok": false,
+  "error": "invalid_command"
+}

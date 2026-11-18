@@ -3,7 +3,7 @@
 /// Pure protocol logic with no hardware or OS dependencies.
 /// BLE GATT definitions and channel types are in the firmware binary (`main.rs`).
 use crate::filter::FilterConfig;
-use crate::protocol::{DeviceMessage, HostCommand, RawCommand, MAX_MSG_LEN};
+use crate::protocol::{CommandError, DeviceMessage, HostCommand, RawCommand, MAX_MSG_LEN};
 
 /// BLE GATT service UUIDs for AirHound.
 ///
@@ -71,7 +71,10 @@ pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
     if trimmed.is_empty() {
         return None;
     }
-    let (raw, _) = serde_json_core::from_slice::<RawCommand>(trimmed).ok()?;
+    let (raw, used) = serde_json_core::from_slice::<RawCommand>(trimmed).ok()?;
+    if used != trimmed.len() {
+        return None;
+    }
     match raw.cmd.as_str() {
         "start" => Some(HostCommand::Start),
         "stop" => Some(HostCommand::Stop),
@@ -132,89 +135,115 @@ pub fn parse_command(data: &[u8]) -> Option<HostCommand> {
     }
 }
 
-/// Process a received host command and update state accordingly.
-///
-/// Updates `config` and `scanning` as directed. Returns `Some(enabled)` for
-/// `SetBuzzer` commands so the caller can apply hardware-specific side effects.
-pub fn handle_command(
+/// Wire command name. Invalid input uses "unknown" in its response.
+pub fn command_name(cmd: &HostCommand) -> &'static str {
+    match cmd {
+        HostCommand::Start => "start",
+        HostCommand::Stop => "stop",
+        HostCommand::GetStatus => "status",
+        HostCommand::SetRssi { .. } => "set_rssi",
+        HostCommand::SetBuzzer { .. } => "set_buzzer",
+        HostCommand::SetMode { .. } => "set_mode",
+        HostCommand::AddProximityTarget { .. } => "add_proximity",
+        HostCommand::RemoveProximityTarget { .. } => "remove_proximity",
+        HostCommand::ClearProximityTargets => "clear_proximity",
+        HostCommand::AddWatchlist { .. } => "add_watchlist",
+        HostCommand::RemoveWatchlist { .. } => "remove_watchlist",
+        HostCommand::EnableCategory { .. } => "enable_category",
+        HostCommand::ExportWigle => "export_wigle",
+    }
+}
+
+pub fn command_response(
+    cmd: Option<&HostCommand>,
+    result: Result<(), CommandError>,
+) -> DeviceMessage<'static> {
+    DeviceMessage::CommandResult {
+        cmd: cmd.map_or("unknown", command_name),
+        ok: result.is_ok(),
+        error: result.err(),
+    }
+}
+
+/// Execute supported state changes. Runtime-only features are explicitly rejected.
+/// A returned buzzer value must be applied by the caller before acknowledging.
+/// Watchlist/index mutations must be protected by the same runtime locks.
+pub fn execute_command(
     cmd: &HostCommand,
     config: &mut FilterConfig,
     scanning: &mut bool,
-) -> Option<bool> {
+    has_buzzer: bool,
+    watchlist: Option<(
+        &mut crate::watchlist::Watchlist,
+        &mut crate::mac_index::MacIndex,
+    )>,
+) -> Result<Option<bool>, CommandError> {
+    use crate::watchlist::{WatchlistEntry, WatchlistMatch};
     match cmd {
-        HostCommand::Start => {
-            *scanning = true;
-            log::info!("Scanning started by host command");
-            None
-        }
-        HostCommand::Stop => {
-            *scanning = false;
-            log::info!("Scanning stopped by host command");
-            None
-        }
-        HostCommand::GetStatus => {
-            // Status message will be constructed by the caller with real uptime/heap data
-            None
-        }
+        HostCommand::Start => *scanning = true,
+        HostCommand::Stop => *scanning = false,
+        HostCommand::GetStatus => {}
         HostCommand::SetRssi { min_rssi } => {
+            if *min_rssi > 0 {
+                return Err(CommandError::InvalidArgument);
+            }
             config.min_rssi = *min_rssi;
-            log::info!("RSSI threshold set to {}", min_rssi);
-            None
         }
-        HostCommand::SetBuzzer { enabled } => {
-            log::info!("Buzzer {}", if *enabled { "enabled" } else { "disabled" });
-            Some(*enabled)
-        }
-        HostCommand::SetMode { mode } => {
-            log::info!("Set mode: {:?}", mode);
-            None
-        }
-        HostCommand::AddProximityTarget { mac, label } => {
-            let mut mac_str = crate::protocol::MacString::new();
-            crate::protocol::format_mac(mac, &mut mac_str);
-            log::info!("Add proximity target: {} label={}", mac_str, label.as_str());
-            None
-        }
-        HostCommand::RemoveProximityTarget { mac } => {
-            let mut mac_str = crate::protocol::MacString::new();
-            crate::protocol::format_mac(mac, &mut mac_str);
-            log::info!("Remove proximity target: {}", mac_str);
-            None
-        }
-        HostCommand::ClearProximityTargets => {
-            log::info!("Clear all proximity targets");
-            None
-        }
+        HostCommand::SetBuzzer { enabled } if has_buzzer => return Ok(Some(*enabled)),
         HostCommand::AddWatchlist {
             id,
             mac,
             full_mac,
             label,
         } => {
-            let mut mac_str = crate::protocol::MacString::new();
-            crate::protocol::format_mac(mac, &mut mac_str);
-            log::info!(
-                "Add watchlist: id={} mac={} full={} label={}",
-                id,
-                mac_str,
-                full_mac,
-                label.as_str()
-            );
-            None
+            let (wl, idx) = watchlist.ok_or(CommandError::Unsupported)?;
+            if *id == crate::mac_index::NO_ID {
+                return Err(CommandError::InvalidArgument);
+            }
+            let oui = [mac[0], mac[1], mac[2]];
+            let target = if *full_mac {
+                WatchlistMatch::MacFull(*mac)
+            } else {
+                WatchlistMatch::MacPrefix(oui)
+            };
+            if wl.entries().iter().any(|e| {
+                e.id == *id
+                    || match (&e.match_type, &target) {
+                        (WatchlistMatch::MacFull(a), WatchlistMatch::MacFull(b)) => a == b,
+                        (WatchlistMatch::MacPrefix(a), WatchlistMatch::MacPrefix(b)) => a == b,
+                        _ => false,
+                    }
+            }) {
+                return Err(CommandError::Duplicate);
+            }
+            wl.add(WatchlistEntry::new(*id, target, label.as_str()))
+                .map_err(|_| CommandError::Capacity)?;
+            let inserted = if *full_mac {
+                idx.add_watchlist_full(*mac, *id)
+            } else {
+                idx.add_watchlist_oui(oui, *id)
+            };
+            if !inserted {
+                wl.remove(*id);
+                return Err(CommandError::Capacity);
+            }
         }
         HostCommand::RemoveWatchlist { id } => {
-            log::info!("Remove watchlist: id={}", id);
-            None
+            let (wl, idx) = watchlist.ok_or(CommandError::Unsupported)?;
+            let entry = wl
+                .entries()
+                .iter()
+                .find(|e| e.id == *id)
+                .ok_or(CommandError::NotFound)?;
+            match &entry.match_type {
+                WatchlistMatch::MacFull(mac) => idx.remove_watchlist_full(mac),
+                WatchlistMatch::MacPrefix(oui) => idx.remove_watchlist_oui(oui),
+            }
+            wl.remove(*id);
         }
-        HostCommand::EnableCategory { category, enabled } => {
-            log::info!("Enable category: {} = {}", category.as_str(), enabled);
-            None
-        }
-        HostCommand::ExportWigle => {
-            log::info!("Export WiGLE requested");
-            None
-        }
+        _ => return Err(CommandError::Unsupported),
     }
+    Ok(None)
 }
 
 // ── Serial NDJSON reader ───────────────────────────────────────────────
@@ -430,7 +459,7 @@ mod tests {
         let cmd = parse_command(br#"{"cmd":"set_rssi","min_rssi":-75}"#).unwrap();
         let mut config = FilterConfig::new();
         let mut scanning = true;
-        handle_command(&cmd, &mut config, &mut scanning);
+        execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert_eq!(config.min_rssi, -75);
         assert!(scanning); // set_rssi should not change scanning state
     }
@@ -608,7 +637,7 @@ mod tests {
     // ── handle_command for new commands ────────────────────────────
 
     #[test]
-    fn handle_new_commands_return_none() {
+    fn unavailable_commands_are_rejected_without_state_changes() {
         let mut config = FilterConfig::new();
         let mut scanning = true;
 
@@ -637,8 +666,8 @@ mod tests {
         ];
 
         for cmd in &commands {
-            let result = handle_command(cmd, &mut config, &mut scanning);
-            assert!(result.is_none(), "New command {:?} should return None", cmd);
+            let result = execute_command(cmd, &mut config, &mut scanning, false, None);
+            assert_eq!(result, Err(CommandError::Unsupported));
         }
         // None of these should change scanning state
         assert!(scanning);
@@ -651,7 +680,7 @@ mod tests {
         let cmd = HostCommand::Start;
         let mut config = FilterConfig::new();
         let mut scanning = false;
-        let result = handle_command(&cmd, &mut config, &mut scanning);
+        let result = execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert!(scanning);
         assert!(result.is_none());
     }
@@ -661,7 +690,7 @@ mod tests {
         let cmd = HostCommand::Stop;
         let mut config = FilterConfig::new();
         let mut scanning = true;
-        let result = handle_command(&cmd, &mut config, &mut scanning);
+        let result = execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert!(!scanning);
         assert!(result.is_none());
     }
@@ -671,7 +700,7 @@ mod tests {
         let cmd = HostCommand::SetRssi { min_rssi: -75 };
         let mut config = FilterConfig::new();
         let mut scanning = true;
-        handle_command(&cmd, &mut config, &mut scanning);
+        execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert_eq!(config.min_rssi, -75);
     }
 
@@ -680,11 +709,11 @@ mod tests {
         let cmd = HostCommand::SetBuzzer { enabled: false };
         let mut config = FilterConfig::new();
         let mut scanning = true;
-        let result = handle_command(&cmd, &mut config, &mut scanning);
+        let result = execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert_eq!(result, Some(false));
 
         let cmd = HostCommand::SetBuzzer { enabled: true };
-        let result = handle_command(&cmd, &mut config, &mut scanning);
+        let result = execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert_eq!(result, Some(true));
     }
 
@@ -693,10 +722,148 @@ mod tests {
         let cmd = HostCommand::GetStatus;
         let mut config = FilterConfig::new();
         let mut scanning = true;
-        let result = handle_command(&cmd, &mut config, &mut scanning);
+        let result = execute_command(&cmd, &mut config, &mut scanning, true, None).unwrap();
         assert!(result.is_none());
         // Should not modify state
         assert!(scanning);
+    }
+
+    #[test]
+    fn command_failures_do_not_mutate_configuration() {
+        let mut config = FilterConfig::new();
+        let before = config.min_rssi;
+        let mut scanning = false;
+        assert_eq!(
+            execute_command(
+                &HostCommand::SetRssi { min_rssi: 1 },
+                &mut config,
+                &mut scanning,
+                false,
+                None
+            ),
+            Err(CommandError::InvalidArgument)
+        );
+        assert_eq!(config.min_rssi, before);
+        assert!(!scanning);
+        assert_eq!(
+            execute_command(
+                &HostCommand::SetBuzzer { enabled: true },
+                &mut config,
+                &mut scanning,
+                false,
+                None
+            ),
+            Err(CommandError::Unsupported)
+        );
+        assert!(parse_command(br#"{"cmd":"start"} trailing"#).is_none());
+    }
+
+    #[test]
+    fn watchlist_commands_are_atomic_and_preserve_signature_entries() {
+        let mut config = FilterConfig::new();
+        let mut scanning = true;
+        let mut wl = crate::watchlist::Watchlist::new();
+        let mut idx = crate::mac_index::MacIndex::from_defaults();
+        let prefix = crate::defaults::MAC_PREFIXES[0].0;
+        let mac = [prefix[0], prefix[1], prefix[2], 1, 2, 3];
+        let signature = idx.lookup(&mac).sig_idx;
+        let add = |id, mac, full_mac| HostCommand::AddWatchlist {
+            id,
+            mac,
+            full_mac,
+            label: heapless::String::new(),
+        };
+        assert_eq!(
+            execute_command(
+                &add(1, mac, false),
+                &mut config,
+                &mut scanning,
+                false,
+                Some((&mut wl, &mut idx))
+            ),
+            Ok(None)
+        );
+        assert_eq!(idx.lookup(&mac).sig_idx, signature);
+        assert_eq!(idx.lookup(&mac).oui_watchlist_id, 1);
+        assert_eq!(
+            execute_command(
+                &add(2, mac, false),
+                &mut config,
+                &mut scanning,
+                false,
+                Some((&mut wl, &mut idx))
+            ),
+            Err(CommandError::Duplicate)
+        );
+        assert_eq!(wl.len(), 1);
+        assert_eq!(
+            execute_command(
+                &HostCommand::RemoveWatchlist { id: 99 },
+                &mut config,
+                &mut scanning,
+                false,
+                Some((&mut wl, &mut idx))
+            ),
+            Err(CommandError::NotFound)
+        );
+        assert_eq!(
+            execute_command(
+                &HostCommand::RemoveWatchlist { id: 1 },
+                &mut config,
+                &mut scanning,
+                false,
+                Some((&mut wl, &mut idx))
+            ),
+            Ok(None)
+        );
+        assert!(wl.is_empty());
+        assert_eq!(idx.lookup(&mac).sig_idx, signature);
+        assert_eq!(idx.lookup(&mac).oui_watchlist_id, crate::mac_index::NO_ID);
+        // Fill the full-MAC index independently, then prove an insertion failure
+        // does not leave a watchlist entry that the filter cannot find.
+        for i in 0..crate::mac_index::DEFAULT_MAC_CAP {
+            assert!(idx.add_watchlist_full([2, 0, 0, 0, 0, i as u8], i as u16));
+        }
+        assert_eq!(
+            execute_command(
+                &add(100, [3; 6], true),
+                &mut config,
+                &mut scanning,
+                false,
+                Some((&mut wl, &mut idx))
+            ),
+            Err(CommandError::Capacity)
+        );
+        assert!(wl.is_empty());
+    }
+
+    #[test]
+    fn command_results_match_schema_fixtures() {
+        let cases = [
+            (
+                Some(HostCommand::Start),
+                Ok(()),
+                include_str!("../schemas/examples/command-success.device.json"),
+            ),
+            (
+                Some(HostCommand::ExportWigle),
+                Err(CommandError::Unsupported),
+                include_str!("../schemas/examples/command-unsupported.device.json"),
+            ),
+            (
+                None,
+                Err(CommandError::InvalidCommand),
+                include_str!("../schemas/examples/command-invalid.device.json"),
+            ),
+        ];
+        for (cmd, result, expected) in cases {
+            let mut buf = [0; MAX_MSG_LEN];
+            let n = serialize_message(&command_response(cmd.as_ref(), result), &mut buf).unwrap();
+            assert_eq!(
+                core::str::from_utf8(&buf[..n]).unwrap().trim_end(),
+                expected.split_whitespace().collect::<std::string::String>()
+            );
+        }
     }
 
     // ── LineReader tests ────────────────────────────────────────────
