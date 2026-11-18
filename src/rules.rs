@@ -215,6 +215,7 @@ pub fn evaluate_rules(db: &RuleDb, matched: &SigMatchSet) -> Vec<RuleMatch, 4> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -257,6 +257,7 @@ pub const MAX_MSG_LEN: usize = 512;
 pub type MsgBuffer = Vec<u8, MAX_MSG_LEN>;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

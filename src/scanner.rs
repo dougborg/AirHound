@@ -325,6 +325,7 @@ impl BleAdvParser {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -709,7 +710,7 @@ mod tests {
         messages[0] = 0x02; // Basic ID
         messages[1] = 0x12;
         messages[2..10].copy_from_slice(b"FULLPACK");
-        for message in messages[25..].chunks_exact_mut(25) {
+        for message in messages[25..].as_chunks_mut::<25>().0 {
             message[0] = 0x22; // Authentication pages
         }
         let frame = make_nan_odid_frame(&[0x02; 6], &messages);

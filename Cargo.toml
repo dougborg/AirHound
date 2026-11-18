@@ -5,6 +5,13 @@ edition = "2021"
 license = "MIT"
 description = "RF wardriving companion device for ESP32"
 
+[[bin]]
+name = "airhound"
+path = "src/main.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
 [features]
 default = ["xiao"]
 
@@ -124,3 +131,6 @@ incremental = false
 lto = "thin"
 opt-level = 3
 overflow-checks = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }

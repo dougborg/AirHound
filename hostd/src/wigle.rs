@@ -41,7 +41,7 @@ impl<W: Write> WigleWriter<W> {
             .has_headers(false)
             .from_writer(inner);
         writer.write_record(COLUMNS).map_err(io::Error::other)?;
-        writer.flush().map_err(io::Error::other)?;
+        writer.flush()?;
         Ok(Self { writer })
     }
 
@@ -96,7 +96,7 @@ impl<W: Write> WigleWriter<W> {
 
     /// Flush buffered writes to the underlying writer.
     pub fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush().map_err(io::Error::other)
+        self.writer.flush()
     }
 }
 
@@ -142,6 +142,7 @@ pub fn channel_to_frequency(ch: u8) -> u32 {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

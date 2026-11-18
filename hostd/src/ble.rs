@@ -116,6 +116,7 @@ fn address_to_bytes(addr: &btleplug::api::BDAddr) -> [u8; 6] {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use btleplug::api::{BDAddr, PeripheralProperties};

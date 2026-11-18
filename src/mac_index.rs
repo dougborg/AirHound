@@ -442,6 +442,7 @@ impl<const OUI_CAP: usize, const MAC_CAP: usize> MacIndex<OUI_CAP, MAC_CAP> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

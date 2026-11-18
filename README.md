@@ -313,3 +313,49 @@ Contributions are welcome — especially new device signatures. See [CONTRIBUTIN
 ## License
 
 MIT
+
+## Testing and analysis
+
+CI runs the portable core tests, desktop tests on Linux and macOS, strict Clippy
+(including core test code), formatting, schema checks, dependency audits for all
+four lockfiles, workflow/shell linting, and all four firmware builds. Dependabot
+covers the core, both runtimes, fuzz harness, Actions and development container.
+Firmware compilation is not hardware execution. Wokwi is explicitly skipped when
+its token is unavailable; live board, radio and memory checks remain in
+[#141](https://github.com/dougborg/AirHound/issues/141).
+
+Coverage uses `cargo-llvm-cov 0.9.1` and `nightly-2026-11-18`, with test bodies
+excluded via `coverage(off)`. Run `bash .github/scripts/coverage.sh core` or
+`bash .github/scripts/coverage.sh hostd` with that toolchain selected and
+`llvm-tools-preview` installed. CI uploads HTML and JSON reports and publishes
+line/function/region totals in its job summary. Coverage directories are separate
+from ordinary builds; do not mix compiler versions in them.
+
+The initial macOS production-line baseline is 89.44% for the core and 37.52% for
+hostd. Enforced floors are 89% and 37% respectively, recorded in
+[`.github/coverage-thresholds.json`](.github/coverage-thresholds.json). Linux and
+macOS desktop coverage run separately: each must meet the desktop floor.
+These are regression guards, not quality targets. Startup, OS radio adapters,
+permissions and hardware-specific paths remain major gaps; branch coverage is
+not measured. New behavior should add tests rather than lower these floors.
+
+Parser fuzzing uses `cargo-fuzz 0.13.2` with the same nightly toolchain and address
+sanitizer. The `commands` target checks bounded line framing and recovery as well
+as JSON parsing. The `frames` target exercises BLE, WiFi and Remote ID parsing,
+seeded with valid advertisements and the public NAN capture already used by our
+regression tests. To run locally:
+
+```bash
+cargo +nightly-2026-11-18 fuzz run commands -- -max_total_time=60 -max_len=4096
+cargo +nightly-2026-11-18 fuzz run frames -- -max_total_time=60 -max_len=4096
+```
+
+CI runs each target for 30 seconds per PR/push, and for 10 minutes weekly.
+Crashes and timeouts fail the job and their reproducer artifacts are uploaded.
+Only named seed inputs are checked in; promote findings into deterministic
+regression tests. A clean fuzz run does not prove absence of parser bugs.
+
+Desktop integration tests exercise chunked command input through state changes
+and status output, oversized-line rejection, output errors, and shutdown while
+scanner tasks are idle or blocked on a full queue. They use in-memory streams and
+scanner tasks, so they do not establish driver or physical-radio behavior.

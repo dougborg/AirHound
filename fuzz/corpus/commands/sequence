@@ -1,0 +1,3 @@
+{"cmd":"stop"}
+{"cmd":"set_rssi","min_rssi":-70}
+{"cmd":"start"}

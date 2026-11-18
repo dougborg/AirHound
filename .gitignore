@@ -28,3 +28,16 @@ Thumbs.db
 credentials.json
 service-account*.json
 **/secrets/
+
+# Fuzz build output, findings and generated corpus additions (named seeds are tracked)
+/fuzz/target
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/corpus/*/*
+!/fuzz/corpus/commands/status
+!/fuzz/corpus/commands/sequence
+!/fuzz/corpus/commands/oversized
+!/fuzz/corpus/frames/ble-name
+!/fuzz/corpus/frames/nan-capture
+!/fuzz/corpus/frames/beacon
+/coverage/

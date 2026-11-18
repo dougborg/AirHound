@@ -25,6 +25,25 @@ updates:
       minor-and-patch:
         update-types: ["minor", "patch"]
 
+  - package-ecosystem: "cargo"
+    directory: "/hostd"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "test"
+      include: "scope"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
