@@ -11,7 +11,7 @@ esac
 export CARGO_LLVM_COV_TARGET_DIR="$PWD/target/coverage-$suite"
 report_dir="$PWD/coverage/$suite"
 mkdir -p "$report_dir"
-floor=$(python3 -c 'import json,sys; print(json.load(open(".github/coverage-thresholds.json"))[sys.argv[1]])' "$suite")
+floor=$(python3 -c 'import json,sys; key = sys.argv[1] if sys.argv[1] == "core" else "hostd-" + sys.platform; print(json.load(open(".github/coverage-thresholds.json"))[key])' "$suite")
 status=0
 cargo llvm-cov "${args[@]}" --locked --json --summary-only \
   --fail-under-lines "$floor" --output-path "$report_dir/summary.json" || status=$?

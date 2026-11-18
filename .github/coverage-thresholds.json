@@ -1,4 +1,5 @@
 {
   "core": 89,
-  "hostd": 37
+  "hostd-linux": 48,
+  "hostd-darwin": 37
 }
