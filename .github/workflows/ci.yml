@@ -13,6 +13,14 @@ permissions:
   contents: read
 
 jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Lint workflows and embedded shell scripts
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
   # Rebase merges land every commit on main as written, and release-please reads
   # each one, so every commit in the pull request must be Conventional.
   lint-commits:
@@ -52,6 +60,9 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: nightly
       - run: cd hostd && cargo fmt --check
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --check
         env:
           RUSTUP_TOOLCHAIN: nightly
       - run: cargo fmt --manifest-path firmware-std/Cargo.toml --check
@@ -102,7 +113,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - run: cargo clippy --locked --lib --no-default-features -- -D warnings
+      - run: cargo clippy --locked --lib --tests --no-default-features -- -D warnings
         env:
           RUSTUP_TOOLCHAIN: stable
 
@@ -121,6 +132,7 @@ jobs:
         run: |
           cargo audit
           cargo audit --file firmware-std/Cargo.lock
+          cargo audit --file fuzz/Cargo.lock
         env:
           RUSTUP_TOOLCHAIN: nightly
       - name: Audit hostd dependencies
@@ -217,24 +229,36 @@ jobs:
           path: firmware-std/target/${{ matrix.target }}/release/airhound-std
           retention-days: 7
 
-  # Wokwi simulation smoke test — add WOKWI_CLI_TOKEN repo secret to enable
+  simulation-config:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.token.outputs.enabled }}
+    steps:
+      - id: token
+        env:
+          TOKEN_SET: ${{ secrets.WOKWI_CLI_TOKEN != '' }}
+        run: |
+          echo "enabled=$TOKEN_SET" >> "$GITHUB_OUTPUT"
+          if [ "$TOKEN_SET" != "true" ]; then
+            echo "### Wokwi: not run (WOKWI_CLI_TOKEN is unavailable)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Optional execution evidence, never a substitute for hardware validation.
   wokwi:
-    needs: build
+    needs: [build, simulation-config]
+    if: needs.simulation-config.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     env:
       WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
     steps:
-      - if: env.WOKWI_CLI_TOKEN != ''
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - if: env.WOKWI_CLI_TOKEN != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: elf-m5stickc
           path: target/xtensa-esp32-none-elf/release/
 
       - name: Simulate firmware
-        if: env.WOKWI_CLI_TOKEN != ''
         uses: wokwi/wokwi-ci-action@11ddc3fe66a14fcd46683fb21ae5c77657ad4606 # v1
         with:
           token: ${{ secrets.WOKWI_CLI_TOKEN }}

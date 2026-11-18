@@ -619,6 +619,7 @@ fn decode_timestamp(enc: u16) -> Option<f32> {
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1095,7 +1096,7 @@ mod tests {
         let mut msg = [0u8; MESSAGE_SIZE];
         msg[0] = 0x42; // System + proto v2
                        // OperatorLocationType=Takeoff(0), ClassificationType=EU(1)
-        msg[1] = 0x00 | (0x01 << 2);
+        msg[1] = 0x01 << 2;
         msg[2..6].copy_from_slice(&lat_enc.to_le_bytes());
         msg[6..10].copy_from_slice(&lon_enc.to_le_bytes());
         msg[10..12].copy_from_slice(&35u16.to_le_bytes()); // AreaCount

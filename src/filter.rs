@@ -381,6 +381,7 @@ pub fn format_mac(mac: &[u8; 6], buf: &mut crate::protocol::MacString) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -855,7 +856,7 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi(&input, &config, &test_mac_index());
-        assert!(result.sig_matches.get(defaults::SIG_IDX_MAC_OUI_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_MAC_OUI_START));
     }
 
     #[test]
@@ -867,13 +868,9 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi(&input, &config, &test_mac_index());
-        assert!(result
-            .sig_matches
-            .get(defaults::SIG_IDX_SSID_PATTERN_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_PATTERN_START));
         // Also sets keyword "flock"
-        assert!(result
-            .sig_matches
-            .get(defaults::SIG_IDX_SSID_KEYWORD_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_KEYWORD_START));
     }
 
     #[test]
@@ -885,9 +882,7 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi(&input, &config, &test_mac_index());
-        assert!(result
-            .sig_matches
-            .get(defaults::SIG_IDX_SSID_EXACT_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_EXACT_START));
     }
 
     #[test]
@@ -902,7 +897,7 @@ mod tests {
             raw_ad: &[],
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_NAME_START + 0)); // "Flock"
+        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_NAME_START)); // "Flock"
     }
 
     #[test]
@@ -917,7 +912,7 @@ mod tests {
             raw_ad: &[],
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_UUID_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_UUID_START));
     }
 
     #[test]
@@ -932,7 +927,7 @@ mod tests {
             raw_ad: &[],
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_MFR_START + 0));
+        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_MFR_START));
     }
 
     #[test]
@@ -951,9 +946,7 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result
-            .sig_matches
-            .get(defaults::SIG_IDX_BLE_AD_BYTES_START + 0)); // AirTag
+        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_AD_BYTES_START)); // AirTag
     }
 
     // ── Rule integration tests ──────────────────────────────────────
@@ -1364,12 +1357,9 @@ mod tests {
 
     #[test]
     fn sig_count_fits_in_bitset() {
-        assert!(
-            defaults::SIG_COUNT <= crate::rules::MAX_SIGNATURES,
-            "SIG_COUNT {} exceeds MAX_SIGNATURES {}",
-            defaults::SIG_COUNT,
-            crate::rules::MAX_SIGNATURES
-        );
+        const {
+            assert!(defaults::SIG_COUNT <= crate::rules::MAX_SIGNATURES);
+        }
     }
 
     #[test]
@@ -1460,7 +1450,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.iter().any(|&n| n == "Card Skimmer"));
+        assert!(result.rule_names.contains(&"Card Skimmer"));
     }
 
     #[test]
@@ -1477,7 +1467,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.iter().any(|&n| n == "Card Skimmer"));
+        assert!(result.rule_names.contains(&"Card Skimmer"));
     }
 
     // ── Pwnagotchi rule tests ────────────────────────────────────────
@@ -1493,7 +1483,7 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.iter().any(|&n| n == "Pwnagotchi"));
+        assert!(result.rule_names.contains(&"Pwnagotchi"));
     }
 
     #[test]
@@ -1506,7 +1496,7 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
-        assert!(!result.rule_names.iter().any(|&n| n == "Pwnagotchi"));
+        assert!(!result.rule_names.contains(&"Pwnagotchi"));
     }
 
     // ── Open Drone ID rule tests ──────────────────────────────────────
@@ -1525,7 +1515,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.iter().any(|&n| n == "Open Drone ID"));
+        assert!(result.rule_names.contains(&"Open Drone ID"));
         assert!(result
             .rule_categories
             .iter()
@@ -1543,7 +1533,7 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.iter().any(|&n| n == "Open Drone ID"));
+        assert!(result.rule_names.contains(&"Open Drone ID"));
         assert!(result
             .rule_categories
             .iter()
@@ -1563,6 +1553,6 @@ mod tests {
             raw_ad: &[],
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
-        assert!(!result.rule_names.iter().any(|&n| n == "Open Drone ID"));
+        assert!(!result.rule_names.contains(&"Open Drone ID"));
     }
 }

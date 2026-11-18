@@ -52,6 +52,7 @@ pub fn rssi_to_distance_estimate(rssi: i8, tx_power: i8) -> f32 {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

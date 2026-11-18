@@ -26,3 +26,6 @@ objc2 = "0.6"
 [dev-dependencies]
 uuid = "1"
 tokio = { version = "1", features = ["test-util"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }

@@ -14,6 +14,7 @@
 //! - **Layer 2** (planned): `gps`, `tracker`, `channel`, `export`, `wids` —
 //!   behind feature gates, progressively requiring `alloc` or `std`.
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #![cfg_attr(not(test), no_std)]
 
 pub mod board;

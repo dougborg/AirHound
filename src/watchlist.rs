@@ -185,6 +185,7 @@ impl<const N: usize> Watchlist<N> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

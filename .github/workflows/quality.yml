@@ -1,0 +1,84 @@
+name: Coverage and fuzzing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: coverage (${{ matrix.suite }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: core
+            os: ubuntu-latest
+          - suite: hostd
+            os: ubuntu-latest
+          - suite: hostd
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: nightly-2026-11-18
+          components: llvm-tools-preview
+      - name: Install desktop dependencies
+        if: runner.os == 'Linux' && matrix.suite == 'hostd'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: Install coverage tool
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Measure coverage and enforce baseline
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-11-18
+          SUITE: ${{ matrix.suite }}
+        run: bash .github/scripts/coverage.sh "$SUITE"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        if: always()
+        with:
+          name: coverage-${{ matrix.suite }}-${{ matrix.os }}
+          path: coverage/${{ matrix.suite }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [commands, frames]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: nightly-2026-11-18
+      - name: Install fuzzing tool
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz parsers with address sanitizer
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-11-18
+          TARGET: ${{ matrix.target }}
+          SECONDS_LIMIT: ${{ github.event_name == 'schedule' && '600' || '30' }}
+        run: |
+          cargo fetch --manifest-path fuzz/Cargo.toml --locked
+          CARGO_NET_OFFLINE=true cargo fuzz run "$TARGET" -- -max_total_time="$SECONDS_LIMIT" -max_len=4096 -rss_limit_mb=2048 -timeout=10
+          git diff --exit-code -- fuzz/Cargo.lock
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        if: failure()
+        with:
+          name: fuzz-failures-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

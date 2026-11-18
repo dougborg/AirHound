@@ -4,6 +4,8 @@
 //! WiGLE CSV v1.6 format, and outputs NDJSON matches to stdout for matched
 //! surveillance devices.
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 mod ble;
 #[cfg(target_os = "macos")]
 mod location_macos;
@@ -46,14 +48,18 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-/// Serialize a `DeviceMessage` and write it as NDJSON to stdout.
-fn emit_message(msg: &DeviceMessage<'_>) {
+/// Serialize and flush one NDJSON message, reporting serialization and I/O failures.
+fn write_message(out: &mut impl Write, msg: &DeviceMessage<'_>) -> io::Result<()> {
     let mut buf = [0u8; protocol::MAX_MSG_LEN];
-    if let Some(len) = comm::serialize_message(msg, &mut buf) {
-        let stdout = io::stdout();
-        let mut out = stdout.lock();
-        let _ = out.write_all(&buf[..len]);
-        let _ = out.flush();
+    let len = comm::serialize_message(msg, &mut buf)
+        .ok_or_else(|| io::Error::other("NDJSON message exceeds output buffer"))?;
+    out.write_all(&buf[..len])?;
+    out.flush()
+}
+
+fn emit_message(msg: &DeviceMessage<'_>) {
+    if let Err(e) = write_message(&mut io::stdout().lock(), msg) {
+        log::error!("NDJSON output failed: {e}");
     }
 }
 
@@ -175,7 +181,7 @@ async fn main() {
             filter_start,
             wigle_writer,
         )
-        .await;
+        .await
     });
 
     // Spawn stdin command reader
@@ -207,17 +213,31 @@ async fn main() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             log::info!("Shutting down...");
-            ble_abort.abort();
-            wifi_abort.abort();
-            // Let the output task drain the bounded queue and flush the CSV.
-            if let Err(e) = filter_handle.await {
+            if let Err(e) = shutdown_scanners(&[ble_abort, wifi_abort], filter_handle).await {
                 log::error!("Output task failed during shutdown: {e}");
             }
         }
-        _ = &mut filter_handle => {
-            log::info!("All scanners exited, shutting down");
+        result = &mut filter_handle => {
+            ble_abort.abort();
+            wifi_abort.abort();
+            match result {
+                Ok(Ok(())) => log::info!("All scanners exited, shutting down"),
+                Ok(Err(e)) => log::error!("CSV output failed: {e}"),
+                Err(e) => log::error!("Output task failed: {e}"),
+            }
         }
     }
+}
+
+async fn shutdown_scanners(
+    scanners: &[tokio::task::AbortHandle],
+    output: tokio::task::JoinHandle<io::Result<()>>,
+) -> io::Result<()> {
+    for scanner in scanners {
+        scanner.abort();
+    }
+    // Aborted scanners drop their senders; drain observations before flushing.
+    output.await.map_err(io::Error::other)?
 }
 
 /// Filter task: receives ScanEvents, writes ALL to WiGLE CSV, emits NDJSON for matches.
@@ -227,7 +247,7 @@ async fn filter_task<W: Write>(
     mac_index: Arc<MacIndex>,
     start_time: Instant,
     mut wigle: WigleWriter<W>,
-) {
+) -> io::Result<()> {
     let mut mac_buf = protocol::MacString::new();
     let mut flush_tick = tokio::time::interval(std::time::Duration::from_secs(5));
     flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -239,9 +259,7 @@ async fn filter_task<W: Write>(
                 None => break,
             },
             _ = flush_tick.tick() => {
-                if let Err(e) = wigle.flush() {
-                    log::warn!("WiGLE flush error: {e}");
-                }
+                wigle.flush()?;
                 continue;
             }
         };
@@ -258,16 +276,14 @@ async fn filter_task<W: Write>(
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
                 protocol::format_mac(&ble_event.mac, &mut mac_buf);
-                if let Err(e) = wigle.write_ble(
+                wigle.write_ble(
                     &mac_buf,
                     ble_event.name.as_str(),
                     &now,
                     ble_event.rssi,
                     ble_event.manufacturer_id,
                     location.as_ref(),
-                ) {
-                    log::warn!("WiGLE write error: {e}");
-                }
+                )?;
 
                 // Run filter and emit NDJSON if matched
                 handle_ble_event(ble_event, &cfg, &mac_index, start_time);
@@ -277,7 +293,7 @@ async fn filter_task<W: Write>(
                 mac_buf.clear();
                 protocol::format_mac(&wifi_event.mac, &mut mac_buf);
                 let freq = wigle::channel_to_frequency(wifi_event.channel);
-                if let Err(e) = wigle.write_wifi(
+                wigle.write_wifi(
                     &mac_buf,
                     wifi_event.ssid.as_str(),
                     wifi_event.security.as_str(),
@@ -286,9 +302,7 @@ async fn filter_task<W: Write>(
                     freq,
                     wifi_event.rssi,
                     location.as_ref(),
-                ) {
-                    log::warn!("WiGLE write error: {e}");
-                }
+                )?;
 
                 // Run filter and emit NDJSON if matched
                 handle_wifi_event(wifi_event, &cfg, &mac_index, start_time);
@@ -299,9 +313,7 @@ async fn filter_task<W: Write>(
     }
 
     // Flush remaining buffered writes on shutdown
-    if let Err(e) = wigle.flush() {
-        log::warn!("WiGLE flush error on shutdown: {e}");
-    }
+    wigle.flush()
 }
 
 /// Filter and emit a BLE scan event (NDJSON on stdout if matched).
@@ -392,51 +404,76 @@ fn handle_wifi_event(
     emit_message(&msg);
 }
 
-/// Read NDJSON commands from stdin and dispatch them.
-async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instant) {
-    // Run stdin reading in a blocking thread
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<HostCommand>(8);
-
-    std::thread::spawn(move || {
-        let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => break,
-            };
-            if let Some(cmd) = comm::parse_command(line.as_bytes()) {
-                if cmd_tx.blocking_send(cmd).is_err() {
-                    break;
+/// Read bounded command lines, preserving framing across arbitrary read chunks.
+fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<HostCommand>) -> io::Result<()> {
+    let mut framing = comm::LineReader::new();
+    let mut bytes = [0u8; 256];
+    loop {
+        let count = reader.read(&mut bytes)?;
+        let input = if count == 0 {
+            &b"\n"[..]
+        } else {
+            &bytes[..count]
+        };
+        for &byte in input {
+            if let Some(line) = framing.feed(byte) {
+                if let Some(cmd) = comm::parse_command(line) {
+                    if tx.blocking_send(cmd).is_err() {
+                        return Ok(());
+                    }
                 }
             }
         }
-    });
-
-    while let Some(cmd) = cmd_rx.recv().await {
-        let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
-        let mut scanning = SCANNING.load(Ordering::Relaxed);
-
-        comm::handle_command(&cmd, &mut cfg, &mut scanning);
-        SCANNING.store(scanning, Ordering::Relaxed);
-
-        // Handle status request
-        if matches!(cmd, HostCommand::GetStatus) {
-            let uptime_secs = start_time.elapsed().as_secs() as u32;
-            let msg = DeviceMessage::Status {
-                scanning,
-                uptime: uptime_secs,
-                heap_free: 0, // not meaningful on host
-                ble_clients: 0,
-                board: BOARD_NAME,
-                version: protocol::VERSION,
-            };
-            emit_message(&msg);
+        if count == 0 {
+            return Ok(());
         }
     }
 }
 
+async fn command_loop(
+    mut commands: mpsc::Receiver<HostCommand>,
+    config: Arc<Mutex<FilterConfig>>,
+    scanning_state: &AtomicBool,
+    start_time: Instant,
+    mut output: impl Write,
+) -> io::Result<()> {
+    while let Some(cmd) = commands.recv().await {
+        let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
+        let mut scanning = scanning_state.load(Ordering::Relaxed);
+        comm::handle_command(&cmd, &mut cfg, &mut scanning);
+        scanning_state.store(scanning, Ordering::Relaxed);
+        if matches!(cmd, HostCommand::GetStatus) {
+            write_message(
+                &mut output,
+                &DeviceMessage::Status {
+                    scanning,
+                    uptime: start_time.elapsed().as_secs() as u32,
+                    heap_free: 0,
+                    ble_clients: 0,
+                    board: BOARD_NAME,
+                    version: protocol::VERSION,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Read NDJSON commands from stdin and dispatch them.
+async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instant) {
+    let (cmd_tx, cmd_rx) = mpsc::channel(8);
+    std::thread::spawn(move || {
+        if let Err(e) = read_commands(io::stdin().lock(), cmd_tx) {
+            log::error!("Command input failed: {e}");
+        }
+    });
+    if let Err(e) = command_loop(cmd_rx, config, &SCANNING, start_time, io::stdout()).await {
+        log::error!("Command output failed: {e}");
+    }
+}
+
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
@@ -457,6 +494,161 @@ mod tests {
             self.flushes.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn command_input_changes_state_and_returns_status_in_order() {
+        let (tx, rx) = mpsc::channel(1);
+        let input = b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n{\"cmd\":\"set_rssi\",\"min_rssi\":-65}\n{\"cmd\":\"start\"}\n{\"cmd\":\"status\"}";
+        // One-byte reads exercise commands split at every possible byte boundary.
+        let producer = std::thread::spawn(move || {
+            read_commands(io::BufReader::with_capacity(1, &input[..]), tx)
+        });
+        let config = Arc::new(Mutex::new(FilterConfig::new()));
+        let scanning = AtomicBool::new(true);
+        let output = RecordingWriter::default();
+        command_loop(
+            rx,
+            config.clone(),
+            &scanning,
+            Instant::now(),
+            output.clone(),
+        )
+        .await
+        .unwrap();
+        producer.join().unwrap().unwrap();
+        assert!(scanning.load(Ordering::Relaxed));
+        assert_eq!(config.lock().unwrap().min_rssi, -65);
+        let bytes = output.bytes.lock().unwrap().clone();
+        let text = String::from_utf8(bytes).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"scanning\":false"));
+        assert!(lines[1].contains("\"scanning\":true"));
+        assert_eq!(output.flushes.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn oversized_command_cannot_execute_its_suffix() {
+        let (tx, mut rx) = mpsc::channel(2);
+        let producer = std::thread::spawn(move || {
+            let mut input = vec![b'x'; protocol::MAX_MSG_LEN + 1];
+            input.extend_from_slice(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n");
+            read_commands(io::Cursor::new(input), tx)
+        });
+        assert!(matches!(rx.recv().await, Some(HostCommand::GetStatus)));
+        assert!(rx.recv().await.is_none());
+        producer.join().unwrap().unwrap();
+    }
+
+    struct FailingWriter;
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn command_output_failure_is_returned() {
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(HostCommand::GetStatus).await.unwrap();
+        drop(tx);
+        let err = command_loop(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            &AtomicBool::new(true),
+            Instant::now(),
+            FailingWriter,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_idle_and_backpressured_scanners_and_drains_output() {
+        for busy in [false, true] {
+            let recording = RecordingWriter::default();
+            let writer = WigleWriter::new(recording.clone()).unwrap();
+            let (tx, rx) = mpsc::channel(1);
+            let event = airhound::scanner::BleAdvParser::parse(&[0x56; 6], -55, &[]);
+            tx.send(ScanEvent::Ble(event.clone())).await.unwrap();
+            let scanner = tokio::spawn(async move {
+                if busy {
+                    loop {
+                        if tx.send(ScanEvent::Ble(event.clone())).await.is_err() {
+                            break;
+                        }
+                    }
+                } else {
+                    let _hold_sender = tx;
+                    std::future::pending::<()>().await;
+                }
+            });
+            tokio::task::yield_now().await;
+            let output = tokio::spawn(filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                writer,
+            ));
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                shutdown_scanners(&[scanner.abort_handle()], output),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(scanner.await.unwrap_err().is_cancelled());
+            assert!(String::from_utf8(recording.bytes.lock().unwrap().clone())
+                .unwrap()
+                .contains("56:56:56:56:56:56"));
+        }
+    }
+
+    #[tokio::test]
+    async fn csv_failure_terminates_output_and_closes_scan_channel() {
+        struct FailAfterHeader {
+            fail: Arc<AtomicBool>,
+        }
+        impl Write for FailAfterHeader {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if self.fail.load(Ordering::Relaxed) {
+                    Err(io::ErrorKind::StorageFull.into())
+                } else {
+                    Ok(bytes.len())
+                }
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                if self.fail.load(Ordering::Relaxed) {
+                    Err(io::ErrorKind::StorageFull.into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let fail = Arc::new(AtomicBool::new(false));
+        let writer = WigleWriter::new(FailAfterHeader { fail: fail.clone() }).unwrap();
+        fail.store(true, Ordering::Relaxed);
+        let (tx, rx) = mpsc::channel(1);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                writer,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::StorageFull);
+        assert!(tx.is_closed());
     }
 
     #[tokio::test(start_paused = true)]
@@ -488,7 +680,7 @@ mod tests {
         let event = airhound::scanner::BleAdvParser::parse(&[0x34; 6], -55, &[]);
         tx.send(ScanEvent::Ble(event)).await.unwrap();
         drop(tx);
-        output.await.unwrap();
+        output.await.unwrap().unwrap();
         let bytes = recording.bytes.lock().unwrap().clone();
         assert!(String::from_utf8(bytes)
             .unwrap()

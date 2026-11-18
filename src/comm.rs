@@ -224,6 +224,7 @@ pub fn handle_command(
 pub struct LineReader {
     buf: [u8; MAX_MSG_LEN],
     pos: usize,
+    discarding: bool,
 }
 
 impl Default for LineReader {
@@ -237,6 +238,7 @@ impl LineReader {
         Self {
             buf: [0; MAX_MSG_LEN],
             pos: 0,
+            discarding: false,
         }
     }
 
@@ -244,6 +246,11 @@ impl LineReader {
     /// when one is detected.
     pub fn feed(&mut self, byte: u8) -> Option<&[u8]> {
         if byte == b'\n' || byte == b'\r' {
+            if self.discarding {
+                self.discarding = false;
+                self.pos = 0;
+                return None;
+            }
             if self.pos > 0 {
                 let line = &self.buf[..self.pos];
                 self.pos = 0;
@@ -251,12 +258,15 @@ impl LineReader {
             } else {
                 None
             }
+        } else if self.discarding {
+            None
         } else if self.pos < self.buf.len() {
             self.buf[self.pos] = byte;
             self.pos += 1;
             None
         } else {
-            // Overflow — discard and reset
+            // Discard the entire oversized line, including command-looking suffixes.
+            self.discarding = true;
             self.pos = 0;
             None
         }
@@ -277,6 +287,7 @@ fn trim_trailing_whitespace(data: &[u8]) -> &[u8] {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::protocol::{
@@ -746,6 +757,24 @@ mod tests {
         reader.feed(b'k');
         let line = reader.feed(b'\n').unwrap();
         assert_eq!(line, b"ok");
+    }
+
+    #[test]
+    fn oversized_line_discards_command_suffix_and_recovers() {
+        let mut reader = LineReader::new();
+        for _ in 0..=MAX_MSG_LEN {
+            assert!(reader.feed(b'x').is_none());
+        }
+        for &byte in b"{\"cmd\":\"stop\"}\n" {
+            assert!(reader.feed(byte).is_none());
+        }
+        for &byte in b"{\"cmd\":\"status\"}" {
+            assert!(reader.feed(byte).is_none());
+        }
+        assert!(matches!(
+            parse_command(reader.feed(b'\n').unwrap()),
+            Some(HostCommand::GetStatus)
+        ));
     }
 
     #[test]
