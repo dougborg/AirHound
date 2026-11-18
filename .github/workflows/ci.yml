@@ -280,7 +280,7 @@ jobs:
           path: target/xtensa-esp32-none-elf/release/
 
       - name: Simulate firmware
-        uses: wokwi/wokwi-ci-action@11ddc3fe66a14fcd46683fb21ae5c77657ad4606 # v1
+        uses: wokwi/wokwi-ci-action@09e807a07e05b6f2498e43e3fb7ffcf38c277af7 # v1
         with:
           token: ${{ secrets.WOKWI_CLI_TOKEN }}
           timeout: 10000
