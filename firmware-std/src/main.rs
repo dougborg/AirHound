@@ -173,7 +173,7 @@ fn main() -> anyhow::Result<()> {
     let (scan_tx, scan_rx) = mpsc::sync_channel::<ScanEvent>(16);
     let (output_tx, output_rx) = mpsc::sync_channel::<MsgBuffer>(8);
     let (ble_output_tx, ble_output_rx) = mpsc::sync_channel::<MsgBuffer>(4);
-    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HostCommand>(4);
+    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<Option<HostCommand>>(4);
     #[cfg(feature = "m5stickc")]
     let (buzzer_tx, buzzer_rx) = mpsc::sync_channel::<()>(1);
 
@@ -662,67 +662,45 @@ fn status_thread(output_tx: SyncSender<MsgBuffer>) {
 
 // ── Command thread ───────────────────────────────────────────────────
 
-fn command_thread(cmd_rx: mpsc::Receiver<HostCommand>, output_tx: SyncSender<MsgBuffer>) {
+fn command_thread(cmd_rx: mpsc::Receiver<Option<HostCommand>>, output_tx: SyncSender<MsgBuffer>) {
     while let Ok(cmd) = cmd_rx.recv() {
+        let Some(cmd) = cmd else {
+            let msg = comm::command_response(None, Err(protocol::CommandError::InvalidCommand));
+            let mut buf = MsgBuffer::new();
+            buf.resize_default(MAX_MSG_LEN).ok();
+            if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+                buf.truncate(len);
+                let _ = output_tx.send(buf);
+            }
+            continue;
+        };
         let is_status_request = matches!(cmd, HostCommand::GetStatus);
-
         let mut config = *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
         let mut scanning = SCANNING.load(Ordering::Relaxed);
-
-        let buzzer_state = comm::handle_command(&cmd, &mut config, &mut scanning);
-
-        if let Some(enabled) = buzzer_state {
+        let result = {
+            let mut wl = WATCHLIST.lock().unwrap_or_else(|e| e.into_inner());
+            let mut idx = MAC_INDEX.lock().unwrap_or_else(|e| e.into_inner());
+            comm::execute_command(
+                &cmd,
+                &mut config,
+                &mut scanning,
+                cfg!(feature = "m5stickc"),
+                Some((&mut wl, &mut idx)),
+            )
+        };
+        if let Ok(Some(enabled)) = result {
             BUZZER_ENABLED.store(enabled, Ordering::Relaxed);
         }
-
-        // Handle watchlist mutations — update both Watchlist and MacIndex
-        match &cmd {
-            HostCommand::AddWatchlist {
-                id,
-                mac,
-                full_mac,
-                label,
-            } => {
-                let match_type = if *full_mac {
-                    watchlist::WatchlistMatch::MacFull(*mac)
-                } else {
-                    watchlist::WatchlistMatch::MacPrefix([mac[0], mac[1], mac[2]])
-                };
-                let entry = watchlist::WatchlistEntry::new(*id, match_type, label.as_str());
-                if let Ok(mut wl) = WATCHLIST.lock() {
-                    if wl.add(entry).is_ok() {
-                        if let Ok(mut idx) = MAC_INDEX.lock() {
-                            if *full_mac {
-                                idx.add_watchlist_full(*mac, *id);
-                            } else {
-                                idx.add_watchlist_oui([mac[0], mac[1], mac[2]], *id);
-                            }
-                        }
-                    }
-                }
-            }
-            HostCommand::RemoveWatchlist { id } => {
-                if let Ok(mut wl) = WATCHLIST.lock() {
-                    if let Some(entry) = wl.entries().iter().find(|e| e.id == *id) {
-                        if let Ok(mut idx) = MAC_INDEX.lock() {
-                            match &entry.match_type {
-                                watchlist::WatchlistMatch::MacFull(mac) => {
-                                    idx.remove_watchlist_full(mac);
-                                }
-                                watchlist::WatchlistMatch::MacPrefix(oui) => {
-                                    idx.remove_watchlist_oui(oui);
-                                }
-                            }
-                        }
-                    }
-                    wl.remove(*id);
-                }
-            }
-            _ => {}
-        }
-
         *FILTER_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = config;
         SCANNING.store(scanning, Ordering::Relaxed);
+
+        let msg = comm::command_response(Some(&cmd), result.map(|_| ()));
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            let _ = output_tx.send(buf);
+        }
 
         if is_status_request {
             let heap_free = unsafe { esp_get_free_heap_size() };
@@ -749,7 +727,7 @@ fn command_thread(cmd_rx: mpsc::Receiver<HostCommand>, output_tx: SyncSender<Msg
 
 fn ble_main(
     scan_tx: SyncSender<ScanEvent>,
-    cmd_tx: SyncSender<HostCommand>,
+    cmd_tx: SyncSender<Option<HostCommand>>,
     ble_output_rx: mpsc::Receiver<MsgBuffer>,
 ) -> ! {
     let ble_device = BLEDevice::take();
@@ -792,9 +770,7 @@ fn ble_main(
             let mut lr = lr.borrow_mut();
             for &byte in args.recv_data() {
                 if let Some(line) = lr.feed(byte) {
-                    if let Some(cmd) = comm::parse_command(line) {
-                        let _ = cmd_tx_clone.try_send(cmd);
-                    }
+                    let _ = cmd_tx_clone.try_send(comm::parse_command(line));
                 }
             }
         });

@@ -93,6 +93,8 @@ jobs:
         run: just check-schemas
       - name: Validate examples against schemas
         run: just check-examples
+      - name: Validate serialized command response fixtures
+        run: check-jsonschema --schemafile schemas/device-message.v1.schema.json schemas/examples/*.device.json
 
   test:
     runs-on: ubuntu-latest

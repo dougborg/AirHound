@@ -405,7 +405,7 @@ fn handle_wifi_event(
 }
 
 /// Read bounded command lines, preserving framing across arbitrary read chunks.
-fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<HostCommand>) -> io::Result<()> {
+fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<Option<HostCommand>>) -> io::Result<()> {
     let mut framing = comm::LineReader::new();
     let mut bytes = [0u8; 256];
     loop {
@@ -417,10 +417,8 @@ fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<HostCommand>) -> io:
         };
         for &byte in input {
             if let Some(line) = framing.feed(byte) {
-                if let Some(cmd) = comm::parse_command(line) {
-                    if tx.blocking_send(cmd).is_err() {
-                        return Ok(());
-                    }
+                if tx.blocking_send(comm::parse_command(line)).is_err() {
+                    return Ok(());
                 }
             }
         }
@@ -431,7 +429,7 @@ fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<HostCommand>) -> io:
 }
 
 async fn command_loop(
-    mut commands: mpsc::Receiver<HostCommand>,
+    mut commands: mpsc::Receiver<Option<HostCommand>>,
     config: Arc<Mutex<FilterConfig>>,
     scanning_state: &AtomicBool,
     start_time: Instant,
@@ -440,9 +438,13 @@ async fn command_loop(
     while let Some(cmd) = commands.recv().await {
         let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
         let mut scanning = scanning_state.load(Ordering::Relaxed);
-        comm::handle_command(&cmd, &mut cfg, &mut scanning);
+        let result = match cmd.as_ref() {
+            Some(cmd) => comm::execute_command(cmd, &mut cfg, &mut scanning, false, None).map(|_| ()),
+            None => Err(protocol::CommandError::InvalidCommand),
+        };
         scanning_state.store(scanning, Ordering::Relaxed);
-        if matches!(cmd, HostCommand::GetStatus) {
+        write_message(&mut output, &comm::command_response(cmd.as_ref(), result))?;
+        if matches!(cmd, Some(HostCommand::GetStatus)) {
             write_message(
                 &mut output,
                 &DeviceMessage::Status {
@@ -533,11 +535,12 @@ mod tests {
         assert_eq!(config.lock().unwrap().min_rssi, -65);
         let bytes = output.bytes.lock().unwrap().clone();
         let text = String::from_utf8(bytes).unwrap();
-        let lines: Vec<_> = text.lines().collect();
+        let lines: Vec<_> = text.lines().filter(|line| line.contains("\"type\":\"status\"")).collect();
+        assert_eq!(text.lines().filter(|line| line.contains("\"type\":\"command_result\"")).count(), 5);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"scanning\":false"));
         assert!(lines[1].contains("\"scanning\":true"));
-        assert_eq!(output.flushes.load(Ordering::Relaxed), 2);
+        assert_eq!(output.flushes.load(Ordering::Relaxed), 7);
     }
 
     #[tokio::test]
@@ -553,6 +556,22 @@ mod tests {
         producer.join().unwrap().unwrap();
     }
 
+    #[tokio::test]
+    async fn command_errors_are_observable_without_state_changes() {
+        let (tx, rx) = mpsc::channel(1);
+        let producer = std::thread::spawn(move || read_commands(io::Cursor::new(b"oops\n{\"cmd\":\"set_rssi\",\"min_rssi\":1}\n{\"cmd\":\"set_mode\",\"mode\":\"ap\"}\n"), tx));
+        let config = Arc::new(Mutex::new(FilterConfig::new()));
+        let scanning = AtomicBool::new(true);
+        let mut output = Vec::new();
+        command_loop(rx, config.clone(), &scanning, Instant::now(), &mut output).await.unwrap();
+        producer.join().unwrap().unwrap();
+        let output = String::from_utf8(output).unwrap();
+        for error in ["invalid_command", "invalid_argument", "unsupported"] { assert!(output.contains(error)); }
+        assert_eq!(output.lines().count(), 3);
+        assert_eq!(config.lock().unwrap().min_rssi, -90);
+        assert!(scanning.load(Ordering::Relaxed));
+    }
+
     struct FailingWriter;
     impl Write for FailingWriter {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
@@ -566,7 +585,7 @@ mod tests {
     #[tokio::test]
     async fn command_output_failure_is_returned() {
         let (tx, rx) = mpsc::channel(1);
-        tx.send(HostCommand::GetStatus).await.unwrap();
+        tx.send(Some(HostCommand::GetStatus)).await.unwrap();
         drop(tx);
         let err = command_loop(
             rx,
