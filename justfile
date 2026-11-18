@@ -91,7 +91,7 @@ clean:
 # Build the host daemon
 [group('hostd')]
 build-hostd:
-    cd hostd && cargo build --release
+    cd hostd && cargo build --locked --release
 
 # Assemble macOS .app bundle (needed for Location Services permission)
 [group('hostd')]
@@ -120,12 +120,12 @@ run-hostd: build-hostd
 # Type-check the host daemon
 [group('hostd')]
 check-hostd:
-    cd hostd && cargo check
+    cd hostd && cargo check --locked
 
 # Run host daemon unit tests
 [group('hostd')]
 test-hostd:
-    cd hostd && cargo test
+    cd hostd && cargo test --locked
 
 # Check host daemon formatting (requires rustfmt)
 [group('hostd')]
@@ -135,7 +135,7 @@ fmt-hostd:
 # Run clippy on the host daemon
 [group('hostd')]
 clippy-hostd:
-    cd hostd && cargo clippy -- -D warnings
+    cd hostd && cargo clippy --locked --all-targets -- -D warnings
 
 # Configure git hooks for this repository
 [group('host')]
