@@ -26,7 +26,8 @@ pub fn rssi_to_beep_interval(rssi: i8, min_rssi: i8, max_rssi: i8) -> u16 {
     let clamped = rssi.clamp(min_rssi, max_rssi);
 
     // Normalize to 0.0 (min_rssi) .. 1.0 (max_rssi)
-    let t = (clamped - min_rssi) as f32 / (max_rssi - min_rssi) as f32;
+    let t = (i16::from(clamped) - i16::from(min_rssi)) as f32
+        / (i16::from(max_rssi) - i16::from(min_rssi)) as f32;
 
     // Interpolate: 1.0 (closest) → MIN_INTERVAL, 0.0 (farthest) → MAX_INTERVAL
     let interval = MAX_INTERVAL as f32 - t * (MAX_INTERVAL - MIN_INTERVAL) as f32;
@@ -57,6 +58,29 @@ mod tests {
     use super::*;
 
     // ── rssi_to_beep_interval tests ─────────────────────────────────
+
+    #[test]
+    fn interval_is_bounded_and_monotonic_for_every_ordered_i8_range() {
+        for min in i8::MIN..i8::MAX {
+            for max in (i16::from(min) + 1)..=i16::from(i8::MAX) {
+                let max = max as i8;
+                let mut previous = MAX_INTERVAL;
+                for rssi in i8::MIN..=i8::MAX {
+                    let interval = rssi_to_beep_interval(rssi, min, max);
+                    assert!((MIN_INTERVAL..=MAX_INTERVAL).contains(&interval));
+                    assert!(interval <= previous);
+                    if rssi <= min {
+                        assert_eq!(interval, MAX_INTERVAL);
+                    }
+                    if rssi >= max {
+                        assert_eq!(interval, MIN_INTERVAL);
+                    }
+                    previous = interval;
+                }
+            }
+        }
+        assert_eq!(rssi_to_beep_interval(-64, -128, 0), 1025);
+    }
 
     #[test]
     fn interval_at_max_rssi() {
