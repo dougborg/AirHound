@@ -331,10 +331,11 @@ excluded via `coverage(off)`. Run `bash .github/scripts/coverage.sh core` or
 line/function/region totals in its job summary. Coverage directories are separate
 from ordinary builds; do not mix compiler versions in them.
 
-The initial macOS production-line baseline is 89.44% for the core and 37.52% for
-hostd. Enforced floors are 89% and 37% respectively, recorded in
+The initial production-line baselines are 89.44% for the core, 48.22% for Linux
+hostd and 37.52% for macOS hostd. Enforced floors are 89%, 48% and 37%
+respectively, recorded in
 [`.github/coverage-thresholds.json`](.github/coverage-thresholds.json). Linux and
-macOS desktop coverage run separately: each must meet the desktop floor.
+macOS desktop coverage run separately against their own measured floors.
 These are regression guards, not quality targets. Startup, OS radio adapters,
 permissions and hardware-specific paths remain major gaps; branch coverage is
 not measured. New behavior should add tests rather than lower these floors.
