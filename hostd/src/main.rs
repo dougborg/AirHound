@@ -91,12 +91,6 @@ fn write_message(out: &mut impl Write, msg: &DeviceMessage<'_>) -> io::Result<()
     out.flush()
 }
 
-fn emit_message(msg: &DeviceMessage<'_>) {
-    if let Err(e) = write_message(&mut io::stdout().lock(), msg) {
-        log::error!("NDJSON output failed: {e}");
-    }
-}
-
 /// Generate default output filename with current timestamp.
 fn default_output_path() -> PathBuf {
     let ts = Local::now().format("%Y%m%d-%H%M%S");
@@ -115,8 +109,25 @@ fn get_location() -> Option<Location> {
     }
 }
 
+fn prepare_output(args: &Args) -> io::Result<WigleWriter<std::fs::File>> {
+    let path = args.output.clone().unwrap_or_else(default_output_path);
+    let writer = WigleWriter::new(open_output(&path, args.overwrite)?)?;
+    log::info!("WiGLE CSV output: {}", path.display());
+    Ok(writer)
+}
+
+impl Args {
+    fn filter_config(&self) -> FilterConfig {
+        FilterConfig {
+            min_rssi: self.rssi,
+            ble_enabled: !self.no_ble,
+            wifi_enabled: !self.no_wifi,
+        }
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> io::Result<()> {
     let args = Args::parse();
     let level = match args.verbose {
         0 => "info",
@@ -126,163 +137,123 @@ async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
         .format_timestamp_millis()
         .init();
+    let writer = prepare_output(&args)?;
+    #[cfg(target_os = "macos")]
+    location_macos::start();
+    run_session(
+        args.filter_config(),
+        writer,
+        io::stdout(),
+        Scanners {
+            ble: |tx| async move {
+                let adapter = ble::get_adapter().await.map_err(io::Error::other)?;
+                ble::scan_loop(adapter, tx).await.map_err(io::Error::other)
+            },
+            wifi: |tx| async move {
+                #[cfg(target_os = "macos")]
+                {
+                    wifi_macos::scan_loop(tx).await.map_err(io::Error::other)
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    match args.wifi_interface {
+                        Some(interface) => wifi_linux::scan_loop(&interface, tx)
+                            .await
+                            .map_err(io::Error::other),
+                        None => {
+                            log::info!(
+                                "WiFi disabled: select a monitor interface with --wifi-interface"
+                            );
+                            Ok(())
+                        }
+                    }
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                {
+                    drop(tx);
+                    Ok(())
+                }
+            },
+        },
+        stdin_command_loop,
+        tokio::signal::ctrl_c(),
+    )
+    .await
+}
 
+struct Scanners<B, W> {
+    ble: B,
+    wifi: W,
+}
+
+// Inject only the OS boundaries; startup, task ownership and shutdown are shared
+// unchanged between the executable and in-memory integration tests.
+async fn run_session<W, O, B, BF, F, FF, C, CF, S>(
+    config: FilterConfig,
+    writer: WigleWriter<W>,
+    output: O,
+    scanners: Scanners<B, F>,
+    commands: C,
+    shutdown: S,
+) -> io::Result<()>
+where
+    W: Write + Send + 'static,
+    O: Write + Send + 'static,
+    B: FnOnce(mpsc::Sender<ScanEvent>) -> BF + Send + 'static,
+    BF: std::future::Future<Output = io::Result<()>> + Send,
+    F: FnOnce(mpsc::Sender<ScanEvent>) -> FF + Send + 'static,
+    FF: std::future::Future<Output = io::Result<()>> + Send,
+    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant) -> CF,
+    CF: std::future::Future<Output = ()> + Send + 'static,
+    S: std::future::Future<Output = io::Result<()>>,
+{
     log::info!(
         "AirHound hostd v{} starting on {}",
         protocol::VERSION,
         BOARD_NAME
     );
-
-    // Open WiGLE CSV output file
-    let output_path = args.output.unwrap_or_else(default_output_path);
-    let csv_file = match open_output(&output_path, args.overwrite) {
-        Ok(f) => f,
-        Err(e) => {
-            log::error!(
-                "Failed to create output file {}: {e}",
-                output_path.display()
-            );
-            std::process::exit(1);
+    let config = Arc::new(Mutex::new(config));
+    let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
+    let start = Instant::now();
+    let (tx, rx) = mpsc::channel(32);
+    let ble_tx = tx.clone();
+    let ble = tokio::spawn(async move {
+        if cfg.ble_enabled {
+            if let Err(e) = (scanners.ble)(ble_tx).await {
+                log::error!("BLE scan error: {e}");
+            }
+        }
+    });
+    let wifi = tokio::spawn(async move {
+        if cfg.wifi_enabled {
+            if let Err(e) = (scanners.wifi)(tx).await {
+                log::error!("WiFi scan error: {e}");
+            }
+        }
+    });
+    let mut filter = tokio::spawn(filter_task(
+        rx,
+        config.clone(),
+        Arc::new(MacIndex::from_defaults()),
+        start,
+        writer,
+        output,
+    ));
+    let command_task = tokio::spawn(commands(config, start));
+    let result = tokio::select! {
+        signal = shutdown => {
+            let drain = shutdown_scanners(&[ble.abort_handle(), wifi.abort_handle()], filter).await;
+            signal.and(drain)
+        }
+        result = &mut filter => {
+            ble.abort(); wifi.abort();
+            result.map_err(io::Error::other).and_then(|result| result)
         }
     };
-    let wigle_writer = match WigleWriter::new(csv_file) {
-        Ok(w) => w,
-        Err(e) => {
-            log::error!("Failed to write WiGLE header: {e}");
-            std::process::exit(1);
-        }
-    };
-    log::info!("WiGLE CSV output: {}", output_path.display());
-
-    #[cfg(target_os = "macos")]
-    location_macos::start();
-
-    // Shared state
-    let config = Arc::new(Mutex::new(FilterConfig {
-        min_rssi: args.rssi,
-        ble_enabled: !args.no_ble,
-        wifi_enabled: !args.no_wifi,
-    }));
-    let mac_index = Arc::new(MacIndex::from_defaults());
-    let start_time = Instant::now();
-
-    log::info!(
-        "Filter loaded: {} signatures, {} rules, {} MAC prefixes",
-        defaults::SIG_COUNT,
-        defaults::DEFAULT_RULE_DB.rules.len(),
-        defaults::MAC_PREFIXES.len(),
-    );
-
-    // Unified channel: scanners → filter task
-    let (scan_tx, scan_rx) = mpsc::channel::<ScanEvent>(32);
-
-    // Spawn BLE scanner
-    let ble_tx = scan_tx.clone();
-    let ble_handle = tokio::spawn(async move {
-        if args.no_ble {
-            return;
-        }
-        let adapter = match ble::get_adapter().await {
-            Ok(a) => a,
-            Err(e) => {
-                log::error!("No BLE adapter found: {e}");
-                return;
-            }
-        };
-        log::info!("BLE adapter found");
-
-        if let Err(e) = ble::scan_loop(adapter, ble_tx).await {
-            log::error!("BLE scan error: {e}");
-        }
-    });
-
-    // Spawn WiFi scanner (macOS: CoreWLAN; other platforms: no-op)
-    let wifi_tx = scan_tx.clone();
-    let wifi_handle = tokio::spawn(async move {
-        if args.no_wifi {
-            return;
-        }
-        #[cfg(target_os = "macos")]
-        if let Err(e) = wifi_macos::scan_loop(wifi_tx).await {
-            log::error!("WiFi scan error: {e}");
-        }
-        #[cfg(target_os = "linux")]
-        match args.wifi_interface {
-            Some(interface) => {
-                if let Err(e) = wifi_linux::scan_loop(&interface, wifi_tx).await {
-                    log::error!("WiFi scan error: {e}");
-                }
-            }
-            None => log::info!("WiFi disabled: select a monitor interface with --wifi-interface"),
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            let _ = wifi_tx;
-            log::info!("WiFi scanning not available on this platform");
-        }
-    });
-
-    // Drop the original sender so the channel closes when all scanners exit
-    drop(scan_tx);
-
-    // Spawn filter + output task (owns wigle writer exclusively — no Arc/Mutex needed)
-    let filter_config = config.clone();
-    let filter_mac_index = mac_index.clone();
-    let filter_start = start_time;
-    let mut filter_handle = tokio::spawn(async move {
-        filter_task(
-            scan_rx,
-            filter_config,
-            filter_mac_index,
-            filter_start,
-            wigle_writer,
-        )
-        .await
-    });
-
-    // Spawn stdin command reader
-    let cmd_config = config.clone();
-    let cmd_start = start_time;
-    let stdin_handle = tokio::spawn(async move {
-        stdin_command_loop(cmd_config, cmd_start).await;
-    });
-
-    let ble_abort = ble_handle.abort_handle();
-    let wifi_abort = wifi_handle.abort_handle();
-
-    // Scanner exits are non-fatal — they drop their tx handles, which eventually
-    // closes the scan channel and lets filter_task drain and exit naturally.
-    tokio::spawn(async move {
-        let _ = ble_handle.await;
-        log::debug!("BLE scanner exited");
-    });
-    tokio::spawn(async move {
-        let _ = wifi_handle.await;
-        log::debug!("WiFi scanner exited");
-    });
-    tokio::spawn(async move {
-        let _ = stdin_handle.await;
-        log::debug!("Stdin reader exited");
-    });
-
-    // Shut down on ctrl-c or when the filter task exits (all scanners gone)
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            log::info!("Shutting down...");
-            if let Err(e) = shutdown_scanners(&[ble_abort, wifi_abort], filter_handle).await {
-                log::error!("Output task failed during shutdown: {e}");
-            }
-        }
-        result = &mut filter_handle => {
-            ble_abort.abort();
-            wifi_abort.abort();
-            match result {
-                Ok(Ok(())) => log::info!("All scanners exited, shutting down"),
-                Ok(Err(e)) => log::error!("CSV output failed: {e}"),
-                Err(e) => log::error!("Output task failed: {e}"),
-            }
-        }
-    }
+    command_task.abort();
+    // Observe cancellation/panic completion before returning to the caller.
+    let _ = tokio::join!(ble, wifi, command_task);
+    result
 }
 
 async fn shutdown_scanners(
@@ -297,12 +268,13 @@ async fn shutdown_scanners(
 }
 
 /// Filter task: receives ScanEvents, writes ALL to WiGLE CSV, emits NDJSON for matches.
-async fn filter_task<W: Write>(
+async fn filter_task<W: Write, O: Write>(
     mut rx: mpsc::Receiver<ScanEvent>,
     config: Arc<Mutex<FilterConfig>>,
     mac_index: Arc<MacIndex>,
     start_time: Instant,
     mut wigle: WigleWriter<W>,
+    mut output: O,
 ) -> io::Result<()> {
     let mut mac_buf = protocol::MacString::new();
     let mut flush_tick = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -342,7 +314,7 @@ async fn filter_task<W: Write>(
                 )?;
 
                 // Run filter and emit NDJSON if matched
-                handle_ble_event(ble_event, &cfg, &mac_index, start_time);
+                handle_ble_event(ble_event, &cfg, &mac_index, start_time, &mut output)?;
             }
             ScanEvent::WiFi(ref wifi_event) => {
                 // Write observation to WiGLE CSV (all networks, not just matches)
@@ -361,12 +333,12 @@ async fn filter_task<W: Write>(
                 )?;
 
                 // Run filter and emit NDJSON if matched
-                handle_wifi_event(wifi_event, &cfg, &mac_index, start_time);
+                handle_wifi_event(wifi_event, &cfg, &mac_index, start_time, &mut output)?;
             }
             ScanEvent::Odid(ref event) => {
                 if cfg.wifi_enabled && event.rssi >= cfg.min_rssi {
                     if let Some(frame) = airhound::odid::parse_odid_service_info(&event.raw_data) {
-                        emit_odid(&frame, event, start_time);
+                        emit_odid(&frame, event, start_time, &mut output)?;
                     }
                 }
             }
@@ -383,7 +355,8 @@ fn handle_ble_event(
     cfg: &FilterConfig,
     mac_index: &MacIndex,
     start_time: Instant,
-) {
+    output: &mut impl Write,
+) -> io::Result<()> {
     let input = BleScanInput {
         mac: &event.mac,
         name: event.name.as_str(),
@@ -395,7 +368,7 @@ fn handle_ble_event(
 
     let result = filter_ble_with_rules(&input, cfg, &defaults::DEFAULT_RULE_DB, mac_index);
     if !result.matched {
-        return;
+        return Ok(());
     }
 
     let mut mac_str = protocol::MacString::new();
@@ -425,7 +398,7 @@ fn handle_ble_event(
         ts,
     };
 
-    emit_message(&msg);
+    write_message(output, &msg)
 }
 
 /// Filter and emit a WiFi scan event (NDJSON on stdout if matched).
@@ -434,7 +407,8 @@ fn handle_wifi_event(
     cfg: &FilterConfig,
     mac_index: &MacIndex,
     start_time: Instant,
-) {
+    output: &mut impl Write,
+) -> io::Result<()> {
     let input = WiFiScanInput {
         mac: &event.mac,
         ssid: event.ssid.as_str(),
@@ -443,7 +417,7 @@ fn handle_wifi_event(
 
     let result = filter_wifi_with_rules(&input, cfg, &defaults::DEFAULT_RULE_DB, mac_index);
     if !result.matched {
-        return;
+        return Ok(());
     }
 
     let mut mac_str = protocol::MacString::new();
@@ -462,7 +436,7 @@ fn handle_wifi_event(
         ts,
     };
 
-    emit_message(&msg);
+    write_message(output, &msg)
 }
 
 /// Read bounded command lines, preserving framing across arbitrary read chunks.
@@ -529,13 +503,30 @@ async fn command_loop(
 
 /// Read NDJSON commands from stdin and dispatch them.
 async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instant) {
+    input_command_loop(
+        io::BufReader::new(io::stdin()),
+        io::stdout(),
+        config,
+        start_time,
+        &SCANNING,
+    )
+    .await;
+}
+
+async fn input_command_loop(
+    input: impl BufRead + Send + 'static,
+    output: impl Write,
+    config: Arc<Mutex<FilterConfig>>,
+    start_time: Instant,
+    scanning: &AtomicBool,
+) {
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     std::thread::spawn(move || {
-        if let Err(e) = read_commands(io::stdin().lock(), cmd_tx) {
+        if let Err(e) = read_commands(input, cmd_tx) {
             log::error!("Command input failed: {e}");
         }
     });
-    if let Err(e) = command_loop(cmd_rx, config, &SCANNING, start_time, io::stdout()).await {
+    if let Err(e) = command_loop(cmd_rx, config, scanning, start_time, output).await {
         log::error!("Command output failed: {e}");
     }
 }
@@ -544,7 +535,8 @@ fn emit_odid(
     frame: &airhound::odid::OdidFrame,
     event: &airhound::scanner::OdidEvent,
     start: Instant,
-) {
+    output: &mut impl Write,
+) -> io::Result<()> {
     let mut mac = protocol::MacString::new();
     protocol::format_mac(&event.mac, &mut mac);
     let uas_id = frame.basic_id.as_ref().map(|id| {
@@ -557,21 +549,24 @@ fn emit_odid(
         let _ = s.push_str(&id.operator_id);
         s
     });
-    emit_message(&DeviceMessage::DroneSighting {
-        mac: &mac,
-        rssi: event.rssi,
-        source: event.source.as_str(),
-        uas_id: uas_id.as_ref(),
-        ua_type: frame.basic_id.as_ref().map(|id| id.ua_type as u8),
-        lat: frame.location.as_ref().map(|l| l.latitude),
-        lon: frame.location.as_ref().map(|l| l.longitude),
-        alt: frame.location.as_ref().map(|l| l.altitude_geo),
-        speed: frame.location.as_ref().map(|l| l.speed_horizontal),
-        operator_id: operator_id.as_ref(),
-        rule: Some("Open Drone ID"),
-        category: Some("drone"),
-        ts: start.elapsed().as_millis() as u32,
-    });
+    write_message(
+        output,
+        &DeviceMessage::DroneSighting {
+            mac: &mac,
+            rssi: event.rssi,
+            source: event.source.as_str(),
+            uas_id: uas_id.as_ref(),
+            ua_type: frame.basic_id.as_ref().map(|id| id.ua_type as u8),
+            lat: frame.location.as_ref().map(|l| l.latitude),
+            lon: frame.location.as_ref().map(|l| l.longitude),
+            alt: frame.location.as_ref().map(|l| l.altitude_geo),
+            speed: frame.location.as_ref().map(|l| l.speed_horizontal),
+            operator_id: operator_id.as_ref(),
+            rule: Some("Open Drone ID"),
+            category: Some("drone"),
+            ts: start.elapsed().as_millis() as u32,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -786,6 +781,7 @@ mod tests {
                 Arc::new(MacIndex::from_defaults()),
                 Instant::now(),
                 writer,
+                Vec::new(),
             ));
             tokio::time::timeout(
                 std::time::Duration::from_secs(2),
@@ -834,6 +830,7 @@ mod tests {
                 Arc::new(MacIndex::from_defaults()),
                 Instant::now(),
                 writer,
+                Vec::new(),
             ),
         )
         .await
@@ -853,6 +850,7 @@ mod tests {
             Arc::new(MacIndex::from_defaults()),
             Instant::now(),
             writer,
+            Vec::new(),
         ));
         // Let the initial interval tick finish before queuing an observation.
         tokio::task::yield_now().await;
@@ -876,5 +874,394 @@ mod tests {
         assert!(String::from_utf8(bytes)
             .unwrap()
             .contains("34:34:34:34:34:34"));
+    }
+    fn ble_match() -> ScanEvent {
+        let mut event = airhound::scanner::BleAdvParser::parse(&[0x12; 6], -45, &[]);
+        event.name.push_str("FS Ext Battery").unwrap();
+        event.service_uuids_16.push(0x180a).unwrap();
+        ScanEvent::Ble(event)
+    }
+
+    fn wifi_match() -> ScanEvent {
+        ScanEvent::WiFi(airhound::scanner::WiFiEvent {
+            mac: [0x34; 6],
+            ssid: "Flock-123456".try_into().unwrap(),
+            rssi: -50,
+            channel: 6,
+            frame_type: airhound::scanner::FrameType::Beacon,
+            raw_ies: Default::default(),
+            security: "[WPA2-PSK]".try_into().unwrap(),
+        })
+    }
+
+    fn recorded(writer: &RecordingWriter) -> String {
+        String::from_utf8(writer.bytes.lock().unwrap().clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn session_records_all_observations_but_only_emits_matches() {
+        let csv = RecordingWriter::default();
+        let output = RecordingWriter::default();
+        run_session(
+            FilterConfig::new(),
+            WigleWriter::new(csv.clone()).unwrap(),
+            output.clone(),
+            Scanners {
+                ble: |tx: mpsc::Sender<ScanEvent>| async move {
+                    tx.send(ble_match()).await.unwrap();
+                    tx.send(ScanEvent::Ble(airhound::scanner::BleAdvParser::parse(
+                        &[0x56; 6],
+                        -55,
+                        &[],
+                    )))
+                    .await
+                    .unwrap();
+                    let ScanEvent::Ble(mut weak) = ble_match() else {
+                        unreachable!()
+                    };
+                    weak.rssi = -110;
+                    tx.send(ScanEvent::Ble(weak)).await.unwrap();
+                    Ok(())
+                },
+                wifi: |tx: mpsc::Sender<ScanEvent>| async move {
+                    tx.send(wifi_match()).await.unwrap();
+                    let ScanEvent::WiFi(mut other) = wifi_match() else {
+                        unreachable!()
+                    };
+                    other.ssid = "Home".try_into().unwrap();
+                    tx.send(ScanEvent::WiFi(other)).await.unwrap();
+                    Ok(())
+                },
+            },
+            |_, _| std::future::pending(),
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+        let csv = recorded(&csv);
+        assert_eq!(csv.lines().count(), 7, "{csv}");
+        assert!(csv.contains("56:56:56:56:56:56"));
+        assert!(csv.contains("-110"));
+        let messages = recorded(&output);
+        assert_eq!(messages.lines().count(), 2, "{messages}");
+        assert!(messages.contains("Flock-123456"));
+        assert!(messages.contains("FS Ext Battery"));
+        assert!(messages.contains("0x180A"));
+        assert!(!messages.contains("Home"));
+    }
+
+    #[tokio::test]
+    async fn disabled_adapters_are_not_opened_and_backend_failure_is_isolated() {
+        for ble_enabled in [true, false] {
+            let output = RecordingWriter::default();
+            let config = FilterConfig {
+                ble_enabled,
+                wifi_enabled: !ble_enabled,
+                ..FilterConfig::new()
+            };
+            run_session(
+                config,
+                WigleWriter::new(Vec::new()).unwrap(),
+                output.clone(),
+                Scanners {
+                    ble: move |_: mpsc::Sender<ScanEvent>| async move {
+                        assert!(ble_enabled, "disabled BLE adapter opened");
+                        Err(io::Error::other("adapter unavailable"))
+                    },
+                    wifi: move |tx: mpsc::Sender<ScanEvent>| async move {
+                        assert!(!ble_enabled, "disabled WiFi adapter opened");
+                        tx.send(wifi_match()).await.unwrap();
+                        Err(io::Error::other("adapter disconnected"))
+                    },
+                },
+                |_, _| std::future::pending(),
+                std::future::pending(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(recorded(&output).lines().count(), usize::from(!ble_enabled));
+        }
+        let output = RecordingWriter::default();
+        run_session(
+            FilterConfig::new(),
+            WigleWriter::new(Vec::new()).unwrap(),
+            output.clone(),
+            Scanners {
+                ble: |_| async { Err(io::Error::other("permission denied")) },
+                wifi: |tx: mpsc::Sender<ScanEvent>| async move {
+                    tx.send(wifi_match()).await.unwrap();
+                    Ok(())
+                },
+            },
+            |_, _| std::future::pending(),
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recorded(&output).lines().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn session_shutdown_drains_queued_events_and_reports_signal_failure() {
+        for signal_fails in [false, true] {
+            let output = RecordingWriter::default();
+            let (ready, wait) = tokio::sync::oneshot::channel();
+            let result = run_session(
+                FilterConfig::new(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                output.clone(),
+                Scanners {
+                    ble: move |tx: mpsc::Sender<ScanEvent>| async move {
+                        tx.send(ble_match()).await.unwrap();
+                        ready.send(()).unwrap();
+                        let _hold_sender = tx;
+                        std::future::pending().await
+                    },
+                    wifi: |_| async { Ok(()) },
+                },
+                |_, _| std::future::pending(),
+                async move {
+                    wait.await.unwrap();
+                    if signal_fails {
+                        Err(io::ErrorKind::Interrupted.into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .await;
+            assert_eq!(result.is_err(), signal_fails);
+            if let Err(error) = result {
+                assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+            }
+            assert_eq!(recorded(&output).lines().count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn broken_event_output_stops_session_and_drops_scanners() {
+        let (tx, mut dropped) = tokio::sync::mpsc::unbounded_channel();
+        struct OnDrop(tokio::sync::mpsc::UnboundedSender<()>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let result = run_session(
+            FilterConfig::new(),
+            WigleWriter::new(Vec::new()).unwrap(),
+            FailingWriter,
+            Scanners {
+                ble: move |events: mpsc::Sender<ScanEvent>| async move {
+                    let _drop = OnDrop(tx);
+                    events.send(ble_match()).await.unwrap();
+                    let _hold_sender = events;
+                    std::future::pending().await
+                },
+                wifi: |_| async { Ok(()) },
+            },
+            |_, _| std::future::pending(),
+            std::future::pending(),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(dropped.recv().await, Some(()));
+    }
+
+    #[test]
+    fn output_preparation_writes_header_and_protects_existing_session() {
+        let default = default_output_path();
+        let name = default.to_str().unwrap();
+        assert!(name.starts_with("airhound-") && name.ends_with(".csv"));
+        assert!(chrono::NaiveDateTime::parse_from_str(&name[9..24], "%Y%m%d-%H%M%S").is_ok());
+        let path =
+            std::env::temp_dir().join(format!("airhound-prepared-{}.csv", std::process::id()));
+        let mut args = Args::try_parse_from([
+            "hostd",
+            "--output",
+            path.to_str().unwrap(),
+            "--rssi",
+            "-70",
+            "--no-wifi",
+        ])
+        .unwrap();
+        let config = args.filter_config();
+        assert_eq!(config.min_rssi, -70);
+        assert!(config.ble_enabled && !config.wifi_enabled);
+        prepare_output(&args).unwrap().flush().unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(b"WigleWifi-1.6"));
+        assert!(prepare_output(&args).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        args.overwrite = true;
+        prepare_output(&args).unwrap().flush().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        args.output = Some(path.join("missing/observations.csv"));
+        assert!(prepare_output(&args).is_err());
+    }
+    #[tokio::test]
+    async fn remote_id_pipeline_filters_invalid_weak_and_disabled_events() {
+        use airhound::scanner::{OdidEvent, OdidSource};
+        // ASTM operator-ID message, preceded by transport counter.
+        let mut raw = vec![0, 0x52, 0];
+        raw.extend_from_slice(b"GBR-OP-123ABCD");
+        raw.resize(26, 0);
+        let valid = OdidEvent {
+            source: OdidSource::WiFiNan,
+            mac: [0x78; 6],
+            rssi: -50,
+            raw_data: heapless::Vec::from_slice(&raw).unwrap(),
+        };
+        for enabled in [true, false] {
+            let output = RecordingWriter::default();
+            let (tx, rx) = mpsc::channel(4);
+            tx.send(ScanEvent::Odid(valid.clone())).await.unwrap();
+            let mut weak = valid.clone();
+            weak.rssi = -120;
+            tx.send(ScanEvent::Odid(weak)).await.unwrap();
+            let mut invalid = valid.clone();
+            invalid.raw_data.clear();
+            tx.send(ScanEvent::Odid(invalid)).await.unwrap();
+            drop(tx);
+            filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig {
+                    wifi_enabled: enabled,
+                    ..FilterConfig::new()
+                })),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                output.clone(),
+            )
+            .await
+            .unwrap();
+            let text = recorded(&output);
+            assert_eq!(text.lines().count(), usize::from(enabled), "{text}");
+            if enabled {
+                assert!(text.contains("GBR-OP-123ABCD"));
+                assert!(text.contains("wifi_nan"));
+            }
+        }
+        let mut frame = airhound::odid::parse_odid_service_info(&raw).unwrap();
+        frame.basic_id = Some(airhound::odid::BasicId {
+            ua_type: airhound::odid::UaType::HelicopterOrMultirotor,
+            id_type: airhound::odid::IdType::SerialNumber,
+            uas_id: "DRONE-123".try_into().unwrap(),
+        });
+        frame.location = Some(airhound::odid::Location {
+            status: airhound::odid::Status::Airborne,
+            direction: 90.,
+            speed_horizontal: 12.,
+            speed_vertical: 0.,
+            latitude: 40.,
+            longitude: -105.,
+            altitude_baro: 1600.,
+            altitude_geo: 1610.,
+            height_type: airhound::odid::HeightRef::OverTakeoff,
+            height: 10.,
+            horiz_accuracy: 1,
+            vert_accuracy: 1,
+            baro_accuracy: 1,
+            speed_accuracy: 1,
+            ts_accuracy: 1,
+            timestamp: Some(10.),
+        });
+        let mut output = Vec::new();
+        emit_odid(&frame, &valid, Instant::now(), &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        for field in [
+            "DRONE-123",
+            "GBR-OP-123ABCD",
+            "\"lat\":40",
+            "\"lon\":-105",
+            "\"alt\":1610",
+            "\"speed\":12",
+        ] {
+            assert!(text.contains(field), "missing {field}: {text}");
+        }
+        assert_eq!(
+            emit_odid(&frame, &valid, Instant::now(), &mut FailingWriter)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
+    #[tokio::test]
+    async fn input_worker_handles_eof_and_failed_streams() {
+        let config = Arc::new(Mutex::new(FilterConfig::new()));
+        let scanning = AtomicBool::new(true);
+        let output = RecordingWriter::default();
+        input_command_loop(
+            io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}"),
+            output.clone(),
+            config.clone(),
+            Instant::now(),
+            &scanning,
+        )
+        .await;
+        assert!(!scanning.load(Ordering::Relaxed));
+        assert_eq!(recorded(&output).lines().count(), 3);
+        struct BrokenInput;
+        impl io::Read for BrokenInput {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::ConnectionReset.into())
+            }
+        }
+        input_command_loop(
+            io::BufReader::new(BrokenInput),
+            Vec::new(),
+            config.clone(),
+            Instant::now(),
+            &scanning,
+        )
+        .await;
+        input_command_loop(
+            io::Cursor::new(b"{\"cmd\":\"status\"}\n"),
+            FailingWriter,
+            config,
+            Instant::now(),
+            &scanning,
+        )
+        .await;
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        tokio::task::spawn_blocking(move || {
+            read_commands(io::Cursor::new(b"{\"cmd\":\"start\"}\n"), tx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    #[test]
+    fn oversized_message_fails_without_writing_partial_json() {
+        static BOARD: [u8; protocol::MAX_MSG_LEN] = [b'x'; protocol::MAX_MSG_LEN];
+        let board = std::str::from_utf8(&BOARD).unwrap();
+        let message = DeviceMessage::Status {
+            scanning: true,
+            uptime: 0,
+            heap_free: 0,
+            ble_clients: 0,
+            board,
+            version: "test",
+        };
+        let mut output = Vec::new();
+        assert!(write_message(&mut output, &message).is_err());
+        assert!(output.is_empty());
+        let ScanEvent::Ble(mut event) = ble_match() else {
+            unreachable!()
+        };
+        event.service_uuids_16.clear();
+        handle_ble_event(
+            &event,
+            &FilterConfig::new(),
+            &MacIndex::from_defaults(),
+            Instant::now(),
+            &mut output,
+        )
+        .unwrap();
+        assert!(!output.is_empty());
+        assert!(!String::from_utf8(output).unwrap().contains("0x180A"));
     }
 }

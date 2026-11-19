@@ -344,14 +344,16 @@ excluded via `coverage(off)`. Run `bash .github/scripts/coverage.sh core` or
 line/function/region totals in its job summary. Coverage directories are separate
 from ordinary builds; do not mix compiler versions in them.
 
-The initial production-line baselines are 89.44% for the core, 48.22% for Linux
-hostd and 37.52% for macOS hostd. Enforced floors are 89%, 48% and 37%
-respectively, recorded in
-[`.github/coverage-thresholds.json`](.github/coverage-thresholds.json). Linux and
-macOS desktop coverage run separately against their own measured floors.
-These are regression guards, not quality targets. Startup, OS radio adapters,
-permissions and hardware-specific paths remain major gaps; branch coverage is
-not measured. New behavior should add tests rather than lower these floors.
+The core production-line floor is 89%; both desktop platforms enforce 81%,
+recorded in [`.github/coverage-thresholds.json`](.github/coverage-thresholds.json).
+Linux and macOS run independently. Desktop tests exercise session startup,
+scanner selection, event filtering and serialization, command framing, output
+failures, cancellation and draining, plus adapter conversion and offline capture.
+CLI subprocess tests verify argument handling and file protection before adapters
+are initialized. Test bodies are excluded; OS adapter code remains in the totals.
+Permission prompts, live radio scans and location delivery still require hardware
+validation. Branch coverage is not measured. New behavior should add tests rather
+than lower these floors.
 
 Parser fuzzing uses `cargo-fuzz 0.13.2` with the same nightly toolchain and address
 sanitizer. The `commands` target checks bounded line framing and recovery as well

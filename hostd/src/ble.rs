@@ -27,33 +27,46 @@ pub async fn scan_loop(
     adapter.start_scan(ScanFilter::default()).await?;
     log::info!("BLE scan started");
 
-    let mut events = adapter.events().await?;
-
-    while let Some(event) = events.next().await {
+    let events = adapter.events().await?;
+    forward_events(events, tx, |event| async {
         use btleplug::api::CentralEvent;
         match event {
             CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
-                let peripheral = match adapter.peripheral(&id).await {
-                    Ok(p) => p,
-                    Err(_) => continue,
-                };
-                let props = match peripheral.properties().await {
-                    Ok(Some(p)) => p,
-                    _ => continue,
-                };
-
-                let ble_event = convert_properties(&props);
-
-                if tx.send(ScanEvent::Ble(ble_event)).await.is_err() {
-                    log::debug!("BLE scan channel closed, stopping");
-                    break;
-                }
+                let peripheral = adapter.peripheral(&id).await.ok()?;
+                peripheral.properties().await.ok().flatten()
             }
-            _ => {}
+            _ => None,
+        }
+    })
+    .await;
+    Ok(())
+}
+
+async fn forward_events<S, E, F, Fut>(mut events: S, tx: mpsc::Sender<ScanEvent>, mut properties: F)
+where
+    S: futures_lite::Stream<Item = E> + Unpin,
+    F: FnMut(E) -> Fut,
+    Fut: std::future::Future<Output = Option<btleplug::api::PeripheralProperties>>,
+{
+    loop {
+        let event = tokio::select! {
+            _ = tx.closed() => break,
+            event = events.next() => match event { Some(event) => event, None => break },
+        };
+        let props = tokio::select! {
+            _ = tx.closed() => break,
+            props = properties(event) => props,
+        };
+        if let Some(props) = props {
+            if tx
+                .send(ScanEvent::Ble(convert_properties(&props)))
+                .await
+                .is_err()
+            {
+                break;
+            }
         }
     }
-
-    Ok(())
 }
 
 /// Convert btleplug `PeripheralProperties` into an AirHound `BleEvent`.
@@ -238,5 +251,51 @@ mod tests {
             address_to_bytes(&addr),
             [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE]
         );
+    }
+    #[tokio::test]
+    async fn event_stream_skips_missing_properties_and_forwards_discoveries() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let props = make_props();
+        let task = tokio::spawn(forward_events(
+            futures_lite::stream::iter([None, Some(props)]),
+            tx,
+            std::future::ready,
+        ));
+        let ScanEvent::Ble(event) = rx.recv().await.unwrap() else {
+            panic!("expected BLE")
+        };
+        assert_eq!(event.mac, [0xaa, 0xbb, 0xcc, 0x11, 0x22, 0x33]);
+        assert!(rx.recv().await.is_none());
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn consumer_close_cancels_idle_property_fetch_and_backpressure() {
+        for mode in 0..3 {
+            let (tx, rx) = mpsc::channel(1);
+            let task = tokio::spawn(async move {
+                if mode == 0 {
+                    forward_events(futures_lite::stream::pending::<()>(), tx, |_| {
+                        std::future::ready(None)
+                    })
+                    .await;
+                } else {
+                    forward_events(futures_lite::stream::repeat(()), tx, move |_| async move {
+                        if mode == 1 {
+                            std::future::pending().await
+                        } else {
+                            Some(make_props())
+                        }
+                    })
+                    .await;
+                }
+            });
+            tokio::task::yield_now().await;
+            drop(rx);
+            tokio::time::timeout(std::time::Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }
