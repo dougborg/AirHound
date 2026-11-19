@@ -4,27 +4,47 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use crate::ScanEvent;
 use airhound::comm;
-use airhound::scanner::{FrameType, ScanEvent, WiFiEvent};
+use airhound::scanner::{FrameType, WiFiEvent};
 use wifi_scan::WifiSecurity;
 
 /// Polling interval between WiFi scans.
-/// CoreWLAN active scans take ~3-5s, so effective cycle is ~4-6s.
+/// CoreWLAN controls scan duration and may return cached snapshots.
 const SCAN_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Run the WiFi scan loop, periodically scanning via CoreWLAN and sending WiFiEvents.
 ///
 /// Sends discovered events on `tx`. Runs until the channel is closed or an error occurs.
-pub async fn scan_loop(tx: mpsc::Sender<ScanEvent>) -> Result<(), ScanError> {
-    scan_loop_with(tx, || async {
-        tokio::task::spawn_blocking(wifi_scan::scan)
-            .await
-            .map_err(|_| ScanError::TaskPanicked)
-    })
-    .await
+pub async fn scan_loop(
+    tx: mpsc::Sender<ScanEvent>,
+    control: crate::control::ScanControl,
+) -> Result<(), ScanError> {
+    scan_loop_with(tx, control, || blocking_scan(wifi_scan::scan)).await
 }
 
-async fn scan_loop_with<F, Fut>(tx: mpsc::Sender<ScanEvent>, mut scan: F) -> Result<(), ScanError>
+async fn blocking_scan<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ScanError> {
+    // A synchronous CoreWLAN call cannot be canceled. A dedicated OS thread
+    // keeps its completion independent of Tokio runtime shutdown.
+    let (send, receive) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("airhound-wifi".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+                .map_err(|_| ScanError::TaskPanicked);
+            let _ = send.send(result);
+        })
+        .map_err(|_| ScanError::WorkerUnavailable)?;
+    receive.await.map_err(|_| ScanError::TaskPanicked)?
+}
+
+async fn scan_loop_with<F, Fut>(
+    tx: mpsc::Sender<ScanEvent>,
+    control: crate::control::ScanControl,
+    mut scan: F,
+) -> Result<(), ScanError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<
@@ -32,14 +52,28 @@ where
     >,
 {
     let mut warned = false;
+    let mut state = control.subscribe();
     loop {
-        if tx.is_closed() {
+        if !crate::control::wait_running(&mut state, &tx).await {
             return Ok(());
         }
-        let networks = tokio::select! {
-            _ = tx.closed() => return Ok(()),
-            result = scan() => result?,
+        let generation = state.borrow().generation;
+        log::debug!("WiFi scan requested");
+        let scan = scan();
+        tokio::pin!(scan);
+        let networks = loop {
+            tokio::select! {
+                _ = tx.closed() => return Ok(()),
+                changed = state.changed() => {
+                    if changed.is_err() || state.borrow().shutdown { return Ok(()); }
+                    // Finish this one OS scan, but discard it across pause/resume.
+                }
+                result = &mut scan => break result?,
+            }
         };
+        if state.borrow().generation != generation {
+            continue;
+        }
 
         match networks {
             Ok(wifis) => {
@@ -47,13 +81,16 @@ where
                 if !wifis.is_empty() && !warned && wifis.iter().all(|w| w.mac.is_empty()) {
                     log::warn!(
                         "WiFi scan: all BSSIDs empty — grant Location Services permission \
-                         to the terminal app in System Settings → Privacy & Security → Location Services"
+                         to AirHound or the launching terminal in System Settings → Privacy & Security → Location Services"
                     );
                     warned = true;
                 }
 
                 let mut count = 0u32;
                 for wifi in &wifis {
+                    if state.borrow().generation != generation {
+                        break;
+                    }
                     if let Some(event) = convert_network(wifi) {
                         count += 1;
                         if tx.send(ScanEvent::WiFi(event)).await.is_err() {
@@ -71,7 +108,8 @@ where
 
         tokio::select! {
             _ = tx.closed() => return Ok(()),
-            _ = tokio::time::sleep(SCAN_INTERVAL) => {}
+            _ = tokio::time::sleep(SCAN_INTERVAL) => {},
+            _ = state.changed() => {}
         }
     }
 }
@@ -148,12 +186,14 @@ fn format_security(secs: &[WifiSecurity]) -> heapless::String<64> {
 #[derive(Debug)]
 pub enum ScanError {
     TaskPanicked,
+    WorkerUnavailable,
 }
 
 impl std::fmt::Display for ScanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ScanError::TaskPanicked => write!(f, "scan task panicked"),
+            ScanError::WorkerUnavailable => write!(f, "could not start WiFi worker"),
         }
     }
 }
@@ -235,9 +275,11 @@ mod tests {
             Ok(vec![wifi_scan::Wifi::default()]),
             Ok(vec![network(), network()]),
         ]);
-        let task = tokio::spawn(scan_loop_with(tx, move || {
-            std::future::ready(Ok(scans.pop_front().unwrap_or(Ok(vec![]))))
-        }));
+        let task = tokio::spawn(scan_loop_with(
+            tx,
+            crate::control::ScanControl::new(true),
+            move || std::future::ready(Ok(scans.pop_front().unwrap_or(Ok(vec![])))),
+        ));
         let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
             panic!("expected WiFi");
         };
@@ -249,21 +291,100 @@ mod tests {
     async fn closed_output_and_scan_task_failure_are_observable() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        scan_loop_with(tx, || async {
+        scan_loop_with(tx, crate::control::ScanControl::new(true), || async {
             panic!("must not scan after receiver closes")
         })
         .await
         .unwrap();
         let (tx, _rx) = mpsc::channel(1);
-        let err = scan_loop_with(tx, || std::future::ready(Err(ScanError::TaskPanicked)))
-            .await
-            .unwrap_err();
+        let err = scan_loop_with(tx, crate::control::ScanControl::new(true), || {
+            std::future::ready(Err(ScanError::TaskPanicked))
+        })
+        .await
+        .unwrap_err();
         assert_eq!(err.to_string(), "scan task panicked");
     }
     #[tokio::test]
     async fn closed_public_scanner_does_not_start_a_hardware_scan() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        scan_loop(tx).await.unwrap();
+        scan_loop(tx, crate::control::ScanControl::new(true))
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn blocking_worker_returns_results_and_reports_panics() {
+        assert_eq!(blocking_scan(|| 42).await.unwrap(), 42);
+        assert!(matches!(
+            blocking_scan(|| panic!("test worker failure")).await,
+            Err(ScanError::TaskPanicked)
+        ));
+        assert_eq!(
+            ScanError::WorkerUnavailable.to_string(),
+            "could not start WiFi worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_does_not_wait_for_a_blocked_native_scan() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (finished, done) = tokio::sync::oneshot::channel();
+        let control = crate::control::ScanControl::new(true);
+        let (tx, _rx) = mpsc::channel(1);
+        let mut request = Some((started, blocked, finished));
+        let task = tokio::spawn(scan_loop_with(tx, control.clone(), move || {
+            let (started, blocked, finished) = request.take().unwrap();
+            blocking_scan(move || {
+                let _ = started.send(());
+                let _ = blocked.recv();
+                let _ = finished.send(());
+                Ok(vec![network()])
+            })
+        }));
+        ready.await.unwrap();
+        control.shutdown();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        release.send(()).unwrap();
+        done.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pause_blocks_new_scans_and_discards_pre_pause_results() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let control = crate::control::ScanControl::new(false);
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = tokio::spawn(scan_loop_with(tx, control.clone(), move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(Ok(vec![network()]))
+            }
+        }));
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        control.store(true, Ordering::Relaxed);
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        control.store(false, Ordering::Relaxed);
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::task::yield_now().await;
+        assert!(rx.try_recv().is_err());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        control.store(true, Ordering::Relaxed);
+        assert!(matches!(rx.recv().await, Some(ScanEvent::WiFi(_))));
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        control.shutdown();
+        task.await.unwrap().unwrap();
     }
 }

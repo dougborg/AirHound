@@ -1,0 +1,54 @@
+name: Desktop performance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'hostd/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/benchmark-hostd.py'
+      - 'scripts/bundle-macos.py'
+      - 'justfile'
+      - '.github/workflows/desktop-performance.yml'
+  schedule:
+    - cron: '41 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+      - name: Install Linux scanner dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libpcap-dev
+      - name: Measure production pipeline
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: python3 scripts/benchmark-hostd.py
+      - name: Verify macOS app packaging
+        if: runner.os == 'macOS'
+        run: python3 scripts/bundle-macos.py
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: desktop-performance-${{ matrix.os }}
+          path: hostd/target/performance/benchmark.json
+          if-no-files-found: error
+          retention-days: 30

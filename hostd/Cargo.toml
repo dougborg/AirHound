@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 description = "AirHound host daemon — BLE surveillance detection for Mac/Linux"
 
+[features]
+default = ["macos-private-addresses"]
+macos-private-addresses = ["dep:corebluetooth-address"]
+
 [dependencies]
 airhound = { path = "..", default-features = false, features = ["board-host"] }
 btleplug = "0.11"
@@ -16,15 +20,18 @@ heapless = { version = "0.9", features = ["serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
 csv = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 wifi_scan = "0.7"
+corebluetooth-address = { version = "=0.1.0", optional = true }
 objc2-core-location = { version = "0.3", features = ["CLLocationManager", "CLLocation"] }
 objc2-foundation = { version = "0.3", features = ["NSObject"] }
 objc2 = "0.6"
 
 [dev-dependencies]
-uuid = "1"
 tokio = { version = "1", features = ["test-util"] }
 
 [lints.rust]
