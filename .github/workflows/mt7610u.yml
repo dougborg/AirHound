@@ -1,0 +1,45 @@
+name: MT7610U driver experiment
+
+on:
+  pull_request:
+    paths: ['drivers/mt7610u/**', '.github/workflows/mt7610u.yml']
+  push:
+    branches: [main]
+    paths: ['drivers/mt7610u/**', '.github/workflows/mt7610u.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: driver (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: drivers/mt7610u
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Install libusb (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev pkg-config
+      - name: Install libusb (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libusb pkg-config
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Audit dependencies
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

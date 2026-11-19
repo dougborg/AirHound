@@ -1,0 +1,67 @@
+MT7610U userspace experiment
+
+Source reference: https://github.com/openwrt/mt76
+Pinned revision: 22f7ff9be59890cb10cde16cc25a30f78b504f23
+
+This standalone crate is GPL-2.0-only; it is not part of AirHound's MIT-licensed
+core build. Derived files retain source attribution in their headers.
+
+USB transport/firmware helper sources: usb.c, mt76x02_usb_core.c,
+mt76x02_usb_mcu.c, mt76x0/usb_mcu.c.
+Copyright (C) 2018 Lorenzo Bianconi <lorenzo.bianconi83@gmail.com>
+License: BSD-3-Clause-Clear (terms reproduced below).
+
+Shared register, EEPROM, MCU and receive descriptor definitions also derive from
+mt76x02_regs.h, mt76x02_eeprom.c/.h, mt76x02_mcu.c and mt76x02_mac.c/.h.
+Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
+Copyright (C) 2018 Lorenzo Bianconi
+Copyright (C) 2018 Stanislaw Gruszka <stf_xl@wp.pl>
+License: BSD-3-Clause-Clear.
+
+Chip/radio initialization also derives from GPL-2.0-only mt76x0 sources:
+(c) Copyright 2002-2010, Ralink Technology, Inc.
+Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
+Copyright (C) 2018 Stanislaw Gruszka <stf_xl@wp.pl>
+Copyright (C) 2018 Lorenzo Bianconi
+See LICENSE for GPL version 2.
+
+Firmware is NOT included or relicensed. Supply a separate unmodified image.
+The upstream firmware license is retained separately as FIRMWARE_LICENSE for
+review; source-code licensing does not replace firmware licensing. In particular,
+the firmware license has a separate, limited patent grant tied to OSI-licensed
+operating systems. This project makes no determination of rights for distribution
+on macOS. Review those terms before distributing a firmware-containing product.
+
+The Clear BSD License
+
+Copyright (c) [xxxx]-[xxxx] [Owner Organization]
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted (subject to the limitations in the disclaimer
+below) provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+ * Neither the name of [Owner Organization] nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
