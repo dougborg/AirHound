@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble.v1.schema.json",
+  "title": "AirHound desktop BLE observation v1",
+  "description": "Desktop observation with an opaque host-scoped peripheral ID and optional observed Bluetooth address. Address type is unknown; this is not a permanent device identity. Separate from the size-bounded firmware protocol.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "peripheral_id",
+    "identity_scope",
+    "address_type",
+    "name",
+    "rssi",
+    "service_uuids",
+    "manufacturer_id",
+    "match",
+    "ts"
+  ],
+  "dependentRequired": {
+    "address": [
+      "address_source"
+    ],
+    "address_source": [
+      "address"
+    ]
+  },
+  "properties": {
+    "type": {
+      "const": "ble_observation"
+    },
+    "peripheral_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "identity_scope": {
+      "enum": [
+        "corebluetooth",
+        "btleplug"
+      ]
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+      "not": {
+        "enum": [
+          "00:00:00:00:00:00",
+          "FF:FF:FF:FF:FF:FF"
+        ]
+      }
+    },
+    "address_source": {
+      "const": "corebluetooth_private"
+    },
+    "address_type": {
+      "const": "unknown"
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 33
+    },
+    "rssi": {
+      "type": "integer",
+      "minimum": -128,
+      "maximum": 127
+    },
+    "service_uuids": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535
+      }
+    },
+    "manufacturer_id": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "match": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "detail"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 32
+          }
+        }
+      }
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    }
+  }
+}

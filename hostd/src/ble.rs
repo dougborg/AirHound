@@ -5,7 +5,8 @@ use btleplug::platform::{Adapter, Manager};
 use futures_lite::StreamExt;
 use tokio::sync::mpsc;
 
-use airhound::scanner::{BleEvent, ScanEvent};
+use crate::ScanEvent;
+use airhound::scanner::BleEvent;
 
 /// Discover the first available BLE adapter.
 pub async fn get_adapter() -> Result<Adapter, btleplug::Error> {
@@ -23,22 +24,43 @@ pub async fn get_adapter() -> Result<Adapter, btleplug::Error> {
 pub async fn scan_loop(
     adapter: Adapter,
     tx: mpsc::Sender<ScanEvent>,
+    control: crate::control::ScanControl,
 ) -> Result<(), btleplug::Error> {
-    adapter.start_scan(ScanFilter::default()).await?;
-    log::info!("BLE scan started");
-
-    let events = adapter.events().await?;
-    forward_events(events, tx, |event| async {
-        use btleplug::api::CentralEvent;
-        match event {
-            CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
-                let peripheral = adapter.peripheral(&id).await.ok()?;
-                peripheral.properties().await.ok().flatten()
-            }
-            _ => None,
+    #[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
+    let resolver = crate::address_macos::AddressResolver::new();
+    let mut state = control.subscribe();
+    while crate::control::wait_running(&mut state, &tx).await {
+        let mut events = adapter.events().await?;
+        adapter.start_scan(ScanFilter::default()).await?;
+        log::info!("BLE scan started");
+        let finished = tokio::select! {
+                _ = state.changed() => false,
+                _ = tx.closed() => true,
+                _ = forward_events(&mut events, tx.clone(), |event| async {
+                    use btleplug::api::CentralEvent;
+                    match event {
+                        CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
+                            let peripheral = adapter.peripheral(&id).await.ok()?;
+                            let props = peripheral.properties().await.ok().flatten()?;
+                            let id = id.to_string();
+                            #[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
+                            let address = resolver.lookup(&id).await;
+                            #[cfg(not(all(target_os = "macos", feature = "macos-private-addresses")))]
+                            let address = None;
+                            Some((id, props, address))
+                        }
+                        _ => None,
+                    }
+                }) => true,
+        };
+        // Explicitly stop CoreBluetooth/BlueZ before dropping the event receiver.
+        let stopped = adapter.stop_scan().await;
+        log::info!("BLE scan stopped");
+        stopped?;
+        if finished {
+            break;
         }
-    })
-    .await;
+    }
     Ok(())
 }
 
@@ -46,7 +68,9 @@ async fn forward_events<S, E, F, Fut>(mut events: S, tx: mpsc::Sender<ScanEvent>
 where
     S: futures_lite::Stream<Item = E> + Unpin,
     F: FnMut(E) -> Fut,
-    Fut: std::future::Future<Output = Option<btleplug::api::PeripheralProperties>>,
+    Fut: std::future::Future<
+        Output = Option<(String, btleplug::api::PeripheralProperties, Option<[u8; 6]>)>,
+    >,
 {
     loop {
         let event = tokio::select! {
@@ -57,15 +81,28 @@ where
             _ = tx.closed() => break,
             props = properties(event) => props,
         };
-        if let Some(props) = props {
-            if tx
-                .send(ScanEvent::Ble(convert_properties(&props)))
-                .await
-                .is_err()
-            {
+        if let Some((id, props, address)) = props {
+            if tx.send(observation(&id, &props, address)).await.is_err() {
                 break;
             }
         }
+    }
+}
+
+fn observation(
+    id: &str,
+    props: &btleplug::api::PeripheralProperties,
+    address: Option<[u8; 6]>,
+) -> ScanEvent {
+    let event = convert_properties(props);
+    if cfg!(target_os = "macos") || event.mac == [0; 6] {
+        ScanEvent::BlePeripheral {
+            event,
+            id: id.to_owned(),
+            address,
+        }
+    } else {
+        ScanEvent::Ble(event)
     }
 }
 
@@ -257,12 +294,14 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let props = make_props();
         let task = tokio::spawn(forward_events(
-            futures_lite::stream::iter([None, Some(props)]),
+            futures_lite::stream::iter([None, Some(("test-id".into(), props, None))]),
             tx,
             std::future::ready,
         ));
-        let ScanEvent::Ble(event) = rx.recv().await.unwrap() else {
-            panic!("expected BLE")
+        let event = rx.recv().await.unwrap();
+        let event = match event {
+            ScanEvent::Ble(event) | ScanEvent::BlePeripheral { event, .. } => event,
+            _ => panic!("expected BLE"),
         };
         assert_eq!(event.mac, [0xaa, 0xbb, 0xcc, 0x11, 0x22, 0x33]);
         assert!(rx.recv().await.is_none());
@@ -284,7 +323,7 @@ mod tests {
                         if mode == 1 {
                             std::future::pending().await
                         } else {
-                            Some(make_props())
+                            Some(("test-id".into(), make_props(), None))
                         }
                     })
                     .await;

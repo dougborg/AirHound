@@ -1,10 +1,11 @@
 //! Receive-only capture on an externally configured monitor-mode interface.
-use airhound::scanner::ScanEvent;
+use crate::ScanEvent;
 use tokio::sync::mpsc;
 
 pub async fn scan_loop(
     interface: &str,
     tx: mpsc::Sender<ScanEvent>,
+    control: crate::control::ScanControl,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let capture = pcap::Capture::from_device(interface)?
         .snaplen(65535)
@@ -12,18 +13,20 @@ pub async fn scan_loop(
         .open()?
         .setnonblock()?;
     log::info!("WiFi capture on {interface}; channel is controlled externally");
-    capture_loop(capture, tx).await
+    capture_loop(capture, tx, control).await
 }
 
 async fn capture_loop<T: pcap::Activated>(
     mut capture: pcap::Capture<T>,
     tx: mpsc::Sender<ScanEvent>,
+    control: crate::control::ScanControl,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if capture.get_datalink() != pcap::Linktype::IEEE802_11_RADIOTAP {
         return Err("WiFi capture requires a monitor-mode interface with radiotap headers".into());
     }
+    let mut state = control.subscribe();
     loop {
-        if tx.is_closed() {
+        if !crate::control::wait_running(&mut state, &tx).await {
             return Ok(());
         }
         // Even a stream of truncated packets must allow cancellation to run.
@@ -116,7 +119,9 @@ mod tests {
             ],
         );
         let (tx, mut rx) = mpsc::channel(8);
-        capture_loop(capture, tx).await.unwrap();
+        capture_loop(capture, tx, crate::control::ScanControl::new(true))
+            .await
+            .unwrap();
         let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
             panic!("expected WiFi")
         };
@@ -129,14 +134,22 @@ mod tests {
     #[tokio::test]
     async fn capture_rejects_wrong_linktype_and_handles_closed_or_saturated_output() {
         let (tx, _rx) = mpsc::channel(1);
-        assert!(capture_loop(capture(1, &[]), tx)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("radiotap"));
+        assert!(
+            capture_loop(capture(1, &[]), tx, crate::control::ScanControl::new(true))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("radiotap")
+        );
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        capture_loop(capture(127, &[]), tx).await.unwrap();
+        capture_loop(
+            capture(127, &[]),
+            tx,
+            crate::control::ScanControl::new(true),
+        )
+        .await
+        .unwrap();
         let packet = beacon();
         let (tx, mut rx) = mpsc::channel(1);
         capture_loop(
@@ -148,6 +161,7 @@ mod tests {
                 ],
             ),
             tx,
+            crate::control::ScanControl::new(true),
         )
         .await
         .unwrap();

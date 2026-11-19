@@ -2,8 +2,9 @@
 //! Layout/alignment: https://www.radiotap.org/ and its defined fields.
 //! Later fields are skipped using the declared header length.
 
-pub fn events(packet: &[u8]) -> impl Iterator<Item = airhound::scanner::ScanEvent> {
-    use airhound::scanner::{self, ScanEvent};
+pub fn events(packet: &[u8]) -> impl Iterator<Item = crate::ScanEvent> {
+    use crate::ScanEvent;
+    use airhound::scanner;
     let events = decode(packet)
         .map(|(frame, rssi, channel)| {
             [
@@ -106,7 +107,7 @@ mod tests {
         );
         p.extend([0; 4]);
         let mut output = events(&p);
-        let airhound::scanner::ScanEvent::Odid(event) = output.next().unwrap() else {
+        let crate::ScanEvent::Odid(event) = output.next().unwrap() else {
             panic!("missing Remote ID event")
         };
         assert_eq!(event.rssi, -47);
@@ -116,10 +117,7 @@ mod tests {
             frame.operator_id.unwrap().operator_id.as_str(),
             "GBR-OP-123ABCD"
         );
-        assert!(matches!(
-            output.next(),
-            Some(airhound::scanner::ScanEvent::WiFi(_))
-        ));
+        assert!(matches!(output.next(), Some(crate::ScanEvent::WiFi(_))));
         assert!(output.next().is_none());
     }
 

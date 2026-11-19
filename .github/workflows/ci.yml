@@ -77,6 +77,8 @@ jobs:
         with:
           node-version: "24"
       - run: node --test .github/scripts/preview-comment.test.js
+      - name: Check desktop utility syntax
+        run: python3 -m py_compile scripts/*.py
 
   schemas:
     runs-on: ubuntu-latest
@@ -94,7 +96,9 @@ jobs:
       - name: Validate examples against schemas
         run: just check-examples
       - name: Validate serialized command response fixtures
-        run: check-jsonschema --schemafile schemas/device-message.v1.schema.json schemas/examples/*.device.json
+        run: |
+          check-jsonschema --schemafile schemas/device-message.v1.schema.json schemas/examples/*.device.json
+          check-jsonschema --schemafile schemas/desktop-ble.v1.schema.json schemas/examples/*.desktop.json
 
   test:
     runs-on: ubuntu-latest
@@ -164,6 +168,11 @@ jobs:
         run: cd hostd && cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cd hostd && cargo test --locked
+      - name: Public API build and tests
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --manifest-path hostd/Cargo.toml --locked --no-default-features
+          cargo clippy --manifest-path hostd/Cargo.toml --locked --no-default-features --all-targets -- -D warnings
 
   build:
     runs-on: ubuntu-latest

@@ -97,13 +97,12 @@ build-hostd:
 [group('hostd')]
 [macos]
 bundle-hostd: build-hostd
-    #!/usr/bin/env bash
-    set -euo pipefail
-    APP="hostd/AirHound.app"
-    rm -rf "$APP"
-    mkdir -p "$APP/Contents/MacOS"
-    cp hostd/macos/Info.plist "$APP/Contents/"
-    ln -s "$(pwd)/hostd/target/release/airhound-hostd" "$APP/Contents/MacOS/airhound-hostd"
+    python3 scripts/bundle-macos.py
+
+[group('hostd')]
+[macos]
+bundle-hostd-public-api: build-hostd-public-api
+    python3 scripts/bundle-macos.py
 
 # Run the host daemon (macOS: via app bundle for Location Services)
 [group('hostd')]
@@ -352,3 +351,19 @@ docker-build-std-xiao:
 [group('docker-std')]
 docker-build-std-m5stickc:
     {{ _docker_rt }} {{ esp_image }} {{ _esp_env }} cd firmware-std && MCU=esp32 cargo build --no-default-features --features m5stickc --release --target {{ m5_target_std }} {{ _build_std_std }}'
+
+# Hardware-free release benchmark; writes JSON under hostd/target/performance
+[group('hostd')]
+bench-hostd:
+    python3 scripts/benchmark-hostd.py
+
+# Build without the private macOS address API (e.g. an App Store distribution)
+[group('hostd')]
+build-hostd-public-api:
+    cd hostd && cargo build --locked --release --no-default-features
+
+# Bounded live profiling via Launch Services; raw observations stay local
+[group('hostd')]
+[macos]
+profile-hostd: bundle-hostd
+    python3 scripts/profile-macos.py

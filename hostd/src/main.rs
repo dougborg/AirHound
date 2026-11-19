@@ -6,7 +6,12 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+#[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
+mod address_macos;
 mod ble;
+mod control;
+mod observation;
+use control::ScanControl;
 #[cfg(target_os = "macos")]
 mod location_macos;
 #[cfg(any(target_os = "linux", test))]
@@ -17,9 +22,15 @@ mod wifi_linux;
 mod wifi_macos;
 mod wigle;
 
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod performance;
+
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -35,11 +46,9 @@ use airhound::filter::{
 };
 use airhound::mac_index::MacIndex;
 use airhound::protocol::{self, DeviceMessage, HostCommand};
-use airhound::scanner::ScanEvent;
+use observation::ScanEvent;
 
 use wigle::{Location, WigleWriter};
-
-static SCANNING: AtomicBool = AtomicBool::new(true);
 
 #[derive(Parser)]
 #[command(
@@ -145,19 +154,23 @@ async fn main() -> io::Result<()> {
         writer,
         io::stdout(),
         Scanners {
-            ble: |tx| async move {
+            ble: |tx, control| async move {
                 let adapter = ble::get_adapter().await.map_err(io::Error::other)?;
-                ble::scan_loop(adapter, tx).await.map_err(io::Error::other)
+                ble::scan_loop(adapter, tx, control)
+                    .await
+                    .map_err(io::Error::other)
             },
-            wifi: |tx| async move {
+            wifi: |tx, control| async move {
                 #[cfg(target_os = "macos")]
                 {
-                    wifi_macos::scan_loop(tx).await.map_err(io::Error::other)
+                    wifi_macos::scan_loop(tx, control)
+                        .await
+                        .map_err(io::Error::other)
                 }
                 #[cfg(target_os = "linux")]
                 {
                     match args.wifi_interface {
-                        Some(interface) => wifi_linux::scan_loop(&interface, tx)
+                        Some(interface) => wifi_linux::scan_loop(&interface, tx, control)
                             .await
                             .map_err(io::Error::other),
                         None => {
@@ -199,11 +212,11 @@ async fn run_session<W, O, B, BF, F, FF, C, CF, S>(
 where
     W: Write + Send + 'static,
     O: Write + Send + 'static,
-    B: FnOnce(mpsc::Sender<ScanEvent>) -> BF + Send + 'static,
+    B: FnOnce(mpsc::Sender<ScanEvent>, ScanControl) -> BF + Send + 'static,
     BF: std::future::Future<Output = io::Result<()>> + Send,
-    F: FnOnce(mpsc::Sender<ScanEvent>) -> FF + Send + 'static,
+    F: FnOnce(mpsc::Sender<ScanEvent>, ScanControl) -> FF + Send + 'static,
     FF: std::future::Future<Output = io::Result<()>> + Send,
-    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant) -> CF,
+    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant, ScanControl) -> CF,
     CF: std::future::Future<Output = ()> + Send + 'static,
     S: std::future::Future<Output = io::Result<()>>,
 {
@@ -212,21 +225,24 @@ where
         protocol::VERSION,
         BOARD_NAME
     );
+    let control = ScanControl::new(true);
     let config = Arc::new(Mutex::new(config));
     let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
     let start = Instant::now();
     let (tx, rx) = mpsc::channel(32);
     let ble_tx = tx.clone();
+    let ble_control = control.clone();
     let ble = tokio::spawn(async move {
         if cfg.ble_enabled {
-            if let Err(e) = (scanners.ble)(ble_tx).await {
+            if let Err(e) = (scanners.ble)(ble_tx, ble_control).await {
                 log::error!("BLE scan error: {e}");
             }
         }
     });
+    let wifi_control = control.clone();
     let wifi = tokio::spawn(async move {
         if cfg.wifi_enabled {
-            if let Err(e) = (scanners.wifi)(tx).await {
+            if let Err(e) = (scanners.wifi)(tx, wifi_control).await {
                 log::error!("WiFi scan error: {e}");
             }
         }
@@ -238,36 +254,42 @@ where
         start,
         writer,
         output,
+        control.clone(),
     ));
-    let command_task = tokio::spawn(commands(config, start));
+    let command_task = tokio::spawn(commands(config, start, control.clone()));
     let result = tokio::select! {
         signal = shutdown => {
-            let drain = shutdown_scanners(&[ble.abort_handle(), wifi.abort_handle()], filter).await;
-            signal.and(drain)
+            control.shutdown();
+            command_task.abort();
+            stop_scanners(ble, wifi).await;
+            signal.and(filter.await.map_err(io::Error::other).and_then(|result| result))
         }
         result = &mut filter => {
-            ble.abort(); wifi.abort();
+            control.shutdown();
+            command_task.abort();
+            stop_scanners(ble, wifi).await;
             result.map_err(io::Error::other).and_then(|result| result)
         }
     };
-    command_task.abort();
-    // Observe cancellation/panic completion before returning to the caller.
-    let _ = tokio::join!(ble, wifi, command_task);
+    let _ = command_task.await;
     result
 }
 
-async fn shutdown_scanners(
-    scanners: &[tokio::task::AbortHandle],
-    output: tokio::task::JoinHandle<io::Result<()>>,
-) -> io::Result<()> {
-    for scanner in scanners {
-        scanner.abort();
+async fn stop_scanners(ble: tokio::task::JoinHandle<()>, wifi: tokio::task::JoinHandle<()>) {
+    async fn stop(mut task: tokio::task::JoinHandle<()>) {
+        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut task)
+            .await
+            .is_err()
+        {
+            log::warn!("Scanner did not stop within one second; canceling its task");
+            task.abort();
+            let _ = task.await;
+        }
     }
-    // Aborted scanners drop their senders; drain observations before flushing.
-    output.await.map_err(io::Error::other)?
+    tokio::join!(stop(ble), stop(wifi));
 }
 
-/// Filter task: receives ScanEvents, writes ALL to WiGLE CSV, emits NDJSON for matches.
+/// Export address-bearing observations to CSV, matches and peripheral identities to NDJSON.
 async fn filter_task<W: Write, O: Write>(
     mut rx: mpsc::Receiver<ScanEvent>,
     config: Arc<Mutex<FilterConfig>>,
@@ -275,8 +297,10 @@ async fn filter_task<W: Write, O: Write>(
     start_time: Instant,
     mut wigle: WigleWriter<W>,
     mut output: O,
+    control: ScanControl,
 ) -> io::Result<()> {
     let mut mac_buf = protocol::MacString::new();
+    let anonymous_mac_index = MacIndex::new();
     let mut flush_tick = tokio::time::interval(std::time::Duration::from_secs(5));
     flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -291,7 +315,7 @@ async fn filter_task<W: Write, O: Write>(
                 continue;
             }
         };
-        if !SCANNING.load(Ordering::Relaxed) {
+        if !control.load(Ordering::Relaxed) {
             continue;
         }
 
@@ -316,6 +340,63 @@ async fn filter_task<W: Write, O: Write>(
                 // Run filter and emit NDJSON if matched
                 handle_ble_event(ble_event, &cfg, &mac_index, start_time, &mut output)?;
             }
+            ScanEvent::BlePeripheral {
+                ref event,
+                ref id,
+                address,
+            } => {
+                let input = BleScanInput {
+                    mac: &[0; 6],
+                    name: event.name.as_str(),
+                    rssi: event.rssi,
+                    service_uuids_16: &event.service_uuids_16,
+                    manufacturer_id: event.manufacturer_id,
+                    raw_ad: &event.raw_ad,
+                };
+                // Address type is unknown; do not treat rotating addresses as hardware identity.
+                let result = filter_ble_with_rules(
+                    &input,
+                    &cfg,
+                    &defaults::DEFAULT_RULE_DB,
+                    &anonymous_mac_index,
+                );
+                let observed_mac = address.map(|mac| {
+                    let mut text = protocol::MacString::new();
+                    protocol::format_mac(&mac, &mut text);
+                    text
+                });
+                if let Some(mac) = &observed_mac {
+                    wigle.write_ble(
+                        mac,
+                        event.name.as_str(),
+                        &now,
+                        event.rssi,
+                        event.manufacturer_id,
+                        location.as_ref(),
+                    )?;
+                }
+                observation::write(
+                    &mut output,
+                    &observation::BleObservation {
+                        kind: "ble_observation",
+                        peripheral_id: id,
+                        address: observed_mac.as_ref().map(|s| s.as_str()),
+                        address_source: observed_mac.as_ref().map(|_| "corebluetooth_private"),
+                        address_type: "unknown",
+                        identity_scope: if cfg!(target_os = "macos") {
+                            "corebluetooth"
+                        } else {
+                            "btleplug"
+                        },
+                        name: event.name.as_str(),
+                        rssi: event.rssi,
+                        service_uuids: &event.service_uuids_16,
+                        manufacturer_id: event.manufacturer_id,
+                        matches: &result.matches,
+                        ts: start_time.elapsed().as_millis() as u32,
+                    },
+                )?;
+            }
             ScanEvent::WiFi(ref wifi_event) => {
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
@@ -335,6 +416,7 @@ async fn filter_task<W: Write, O: Write>(
                 // Run filter and emit NDJSON if matched
                 handle_wifi_event(wifi_event, &cfg, &mac_index, start_time, &mut output)?;
             }
+            #[cfg(any(target_os = "linux", test))]
             ScanEvent::Odid(ref event) => {
                 if cfg.wifi_enabled && event.rssi >= cfg.min_rssi {
                     if let Some(frame) = airhound::odid::parse_odid_service_info(&event.raw_data) {
@@ -469,7 +551,7 @@ fn read_commands(
 async fn command_loop(
     mut commands: mpsc::Receiver<Option<HostCommand>>,
     config: Arc<Mutex<FilterConfig>>,
-    scanning_state: &AtomicBool,
+    scanning_state: &ScanControl,
     start_time: Instant,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -502,13 +584,17 @@ async fn command_loop(
 }
 
 /// Read NDJSON commands from stdin and dispatch them.
-async fn stdin_command_loop(config: Arc<Mutex<FilterConfig>>, start_time: Instant) {
+async fn stdin_command_loop(
+    config: Arc<Mutex<FilterConfig>>,
+    start_time: Instant,
+    control: ScanControl,
+) {
     input_command_loop(
         io::BufReader::new(io::stdin()),
         io::stdout(),
         config,
         start_time,
-        &SCANNING,
+        &control,
     )
     .await;
 }
@@ -518,7 +604,7 @@ async fn input_command_loop(
     output: impl Write,
     config: Arc<Mutex<FilterConfig>>,
     start_time: Instant,
-    scanning: &AtomicBool,
+    scanning: &ScanControl,
 ) {
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     std::thread::spawn(move || {
@@ -531,6 +617,7 @@ async fn input_command_loop(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn emit_odid(
     frame: &airhound::odid::OdidFrame,
     event: &airhound::scanner::OdidEvent,
@@ -657,7 +744,7 @@ mod tests {
             read_commands(io::BufReader::with_capacity(1, Bytewise(input)), tx)
         });
         let config = Arc::new(Mutex::new(FilterConfig::new()));
-        let scanning = AtomicBool::new(true);
+        let scanning = ScanControl::new(true);
         let output = RecordingWriter::default();
         command_loop(
             rx,
@@ -712,7 +799,7 @@ mod tests {
             read_commands(io::Cursor::new(b"oops\n{\"cmd\":\"set_rssi\",\"min_rssi\":1}\n{\"cmd\":\"set_mode\",\"mode\":\"ap\"}\n"), tx)
         });
         let config = Arc::new(Mutex::new(FilterConfig::new()));
-        let scanning = AtomicBool::new(true);
+        let scanning = ScanControl::new(true);
         let mut output = Vec::new();
         command_loop(rx, config.clone(), &scanning, Instant::now(), &mut output)
             .await
@@ -745,7 +832,7 @@ mod tests {
         let err = command_loop(
             rx,
             Arc::new(Mutex::new(FilterConfig::new())),
-            &AtomicBool::new(true),
+            &ScanControl::new(true),
             Instant::now(),
             FailingWriter,
         )
@@ -782,15 +869,15 @@ mod tests {
                 Instant::now(),
                 writer,
                 Vec::new(),
+                ScanControl::new(true),
             ));
-            tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                shutdown_scanners(&[scanner.abort_handle()], output),
-            )
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                stop_scanners(scanner, tokio::spawn(async {})).await;
+                output.await.unwrap()
+            })
             .await
             .unwrap()
             .unwrap();
-            assert!(scanner.await.unwrap_err().is_cancelled());
             assert!(String::from_utf8(recording.bytes.lock().unwrap().clone())
                 .unwrap()
                 .contains("56:56:56:56:56:56"));
@@ -831,6 +918,7 @@ mod tests {
                 Instant::now(),
                 writer,
                 Vec::new(),
+                ScanControl::new(true),
             ),
         )
         .await
@@ -851,6 +939,7 @@ mod tests {
             Instant::now(),
             writer,
             Vec::new(),
+            ScanControl::new(true),
         ));
         // Let the initial interval tick finish before queuing an observation.
         tokio::task::yield_now().await;
@@ -907,7 +996,7 @@ mod tests {
             WigleWriter::new(csv.clone()).unwrap(),
             output.clone(),
             Scanners {
-                ble: |tx: mpsc::Sender<ScanEvent>| async move {
+                ble: |tx: mpsc::Sender<ScanEvent>, _control| async move {
                     tx.send(ble_match()).await.unwrap();
                     tx.send(ScanEvent::Ble(airhound::scanner::BleAdvParser::parse(
                         &[0x56; 6],
@@ -923,7 +1012,7 @@ mod tests {
                     tx.send(ScanEvent::Ble(weak)).await.unwrap();
                     Ok(())
                 },
-                wifi: |tx: mpsc::Sender<ScanEvent>| async move {
+                wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
                     tx.send(wifi_match()).await.unwrap();
                     let ScanEvent::WiFi(mut other) = wifi_match() else {
                         unreachable!()
@@ -933,7 +1022,7 @@ mod tests {
                     Ok(())
                 },
             },
-            |_, _| std::future::pending(),
+            |_, _, _| std::future::pending(),
             std::future::pending(),
         )
         .await
@@ -964,17 +1053,17 @@ mod tests {
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
                 Scanners {
-                    ble: move |_: mpsc::Sender<ScanEvent>| async move {
+                    ble: move |_: mpsc::Sender<ScanEvent>, _control| async move {
                         assert!(ble_enabled, "disabled BLE adapter opened");
                         Err(io::Error::other("adapter unavailable"))
                     },
-                    wifi: move |tx: mpsc::Sender<ScanEvent>| async move {
+                    wifi: move |tx: mpsc::Sender<ScanEvent>, _control| async move {
                         assert!(!ble_enabled, "disabled WiFi adapter opened");
                         tx.send(wifi_match()).await.unwrap();
                         Err(io::Error::other("adapter disconnected"))
                     },
                 },
-                |_, _| std::future::pending(),
+                |_, _, _| std::future::pending(),
                 std::future::pending(),
             )
             .await
@@ -987,13 +1076,13 @@ mod tests {
             WigleWriter::new(Vec::new()).unwrap(),
             output.clone(),
             Scanners {
-                ble: |_| async { Err(io::Error::other("permission denied")) },
-                wifi: |tx: mpsc::Sender<ScanEvent>| async move {
+                ble: |_, _| async { Err(io::Error::other("permission denied")) },
+                wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
                     tx.send(wifi_match()).await.unwrap();
                     Ok(())
                 },
             },
-            |_, _| std::future::pending(),
+            |_, _, _| std::future::pending(),
             std::future::pending(),
         )
         .await
@@ -1011,15 +1100,15 @@ mod tests {
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
                 Scanners {
-                    ble: move |tx: mpsc::Sender<ScanEvent>| async move {
+                    ble: move |tx: mpsc::Sender<ScanEvent>, _control| async move {
                         tx.send(ble_match()).await.unwrap();
                         ready.send(()).unwrap();
                         let _hold_sender = tx;
                         std::future::pending().await
                     },
-                    wifi: |_| async { Ok(()) },
+                    wifi: |_, _| async { Ok(()) },
                 },
-                |_, _| std::future::pending(),
+                |_, _, _| std::future::pending(),
                 async move {
                     wait.await.unwrap();
                     if signal_fails {
@@ -1052,15 +1141,15 @@ mod tests {
             WigleWriter::new(Vec::new()).unwrap(),
             FailingWriter,
             Scanners {
-                ble: move |events: mpsc::Sender<ScanEvent>| async move {
+                ble: move |events: mpsc::Sender<ScanEvent>, _control| async move {
                     let _drop = OnDrop(tx);
                     events.send(ble_match()).await.unwrap();
                     let _hold_sender = events;
                     std::future::pending().await
                 },
-                wifi: |_| async { Ok(()) },
+                wifi: |_, _| async { Ok(()) },
             },
-            |_, _| std::future::pending(),
+            |_, _, _| std::future::pending(),
             std::future::pending(),
         )
         .await;
@@ -1133,6 +1222,7 @@ mod tests {
                 Instant::now(),
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
+                ScanControl::new(true),
             )
             .await
             .unwrap();
@@ -1190,7 +1280,7 @@ mod tests {
     #[tokio::test]
     async fn input_worker_handles_eof_and_failed_streams() {
         let config = Arc::new(Mutex::new(FilterConfig::new()));
-        let scanning = AtomicBool::new(true);
+        let scanning = ScanControl::new(true);
         let output = RecordingWriter::default();
         input_command_loop(
             io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}"),
@@ -1263,5 +1353,98 @@ mod tests {
         .unwrap();
         assert!(!output.is_empty());
         assert!(!String::from_utf8(output).unwrap().contains("0x180A"));
+    }
+    #[tokio::test]
+    async fn peripheral_ids_are_preserved_without_fake_mac_exports() {
+        let (tx, rx) = mpsc::channel(3);
+        let ScanEvent::Ble(mut event) = ble_match() else {
+            unreachable!()
+        };
+        event.mac = [0; 6];
+        for id in [
+            "11111111-1111-1111-1111-111111111111",
+            "22222222-2222-2222-2222-222222222222",
+        ] {
+            tx.send(ScanEvent::BlePeripheral {
+                event: event.clone(),
+                id: id.into(),
+                address: None,
+            })
+            .await
+            .unwrap();
+            event.name.clear();
+            event.service_uuids_16.clear();
+        }
+        tx.send(ScanEvent::BlePeripheral {
+            event,
+            id: "33333333-3333-3333-3333-333333333333".into(),
+            address: Some([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        let csv = RecordingWriter::default();
+        let output = RecordingWriter::default();
+        filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            WigleWriter::new(csv.clone()).unwrap(),
+            output.clone(),
+            ScanControl::new(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recorded(&csv).lines().count(),
+            3,
+            "UUID-only observations must not become WiGLE MAC rows"
+        );
+        let messages: Vec<serde_json::Value> = recorded(&output)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[2]["address"], "12:34:56:78:9A:BC");
+        assert_eq!(messages[2]["address_type"], "unknown");
+        assert!(!recorded(&csv).contains("00:00:00:00:00:00"));
+        assert!(recorded(&csv).contains("12:34:56:78:9A:BC"));
+        assert_ne!(messages[0]["peripheral_id"], messages[1]["peripheral_id"]);
+        assert!(messages
+            .iter()
+            .all(|m| m["type"] == "ble_observation" && m.get("mac").is_none()));
+        assert!(!messages[0]["match"].as_array().unwrap().is_empty());
+        assert!(messages[1]["match"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_allows_cooperative_scanner_cleanup() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (cleaned, cleanup) = tokio::sync::oneshot::channel();
+        run_session(
+            FilterConfig::new(),
+            WigleWriter::new(Vec::new()).unwrap(),
+            Vec::new(),
+            Scanners {
+                ble: move |_tx, control: ScanControl| async move {
+                    let mut state = control.subscribe();
+                    started.send(()).unwrap();
+                    state.changed().await.unwrap();
+                    assert!(state.borrow().shutdown);
+                    cleaned.send(()).unwrap();
+                    Ok(())
+                },
+                wifi: |_, _| async { Ok(()) },
+            },
+            |_, _, _| std::future::pending(),
+            async {
+                ready.await.unwrap();
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        cleanup.await.unwrap();
     }
 }

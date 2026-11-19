@@ -329,6 +329,12 @@ MIT
 
 ## Testing and analysis
 
+Desktop pipeline benchmarks run on Linux and macOS in the Desktop performance
+workflow. Use `just bench-hostd` locally, or `just profile-hostd` for a macOS live
+radio profile with pause/resume and shutdown measurements. See the
+[desktop guide](hostd/README.md#tests-and-performance) for methodology,
+permissions, and the default macOS BLE address lookup and public-API-only build.
+
 CI runs the portable core tests, desktop tests on Linux and macOS, strict Clippy
 (including core test code), formatting, schema checks, dependency audits for all
 four lockfiles, workflow/shell linting, and all four firmware builds. Dependabot

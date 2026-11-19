@@ -1,0 +1,16 @@
+{
+  "type": "ble_observation",
+  "peripheral_id": "00112233-4455-6677-8899-aabbccddeeff",
+  "identity_scope": "corebluetooth",
+  "address_type": "unknown",
+  "name": "FS Ext Battery",
+  "rssi": -55,
+  "service_uuids": [
+    6144
+  ],
+  "manufacturer_id": 0,
+  "match": [],
+  "ts": 123,
+  "address": "12:34:56:78:9A:BC",
+  "address_source": "corebluetooth_private"
+}
