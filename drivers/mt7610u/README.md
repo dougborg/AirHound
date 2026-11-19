@@ -42,6 +42,21 @@ cycle takes roughly 1.63 seconds; eleven channels take roughly 5.97 seconds.
 A SIGTERM test while hopping stopped after about two seconds and three hops,
 with all shutdown gate readbacks verified.
 
+Lower 5 GHz support was subsequently exercised on the same adapter:
+
+| Channel plan | Capture time | Beacons | Distinct BSSIDs | Hops | Retune time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 36, 40, 44, 48 | 15 s | 300 | 14 | 27 | 1,127 ms |
+| 1, 36, 6, 40, 11, 44, 48 | 15 s | 598 | 60 | 27 | 1,167 ms |
+
+The mixed-band run received beacons advertising channels 40/44/48 while tuned
+to those channels, as well as 2.4 GHz beacons after repeated band transitions.
+Channel 36 produced no valid beacons in either run; correct register programming
+and simulated tests do not independently establish its receive sensitivity.
+A SIGTERM run alternating 48 and 1 received 158 beacons before verified shutdown.
+The independent MIT AirHound capture checker accepted all three versioned files
+(300, 598 and 158 records), including their unvalidated signal provenance.
+
 Some APs were heard while configured far from their advertised channel. Their
 EEPROM-derived signal estimates were substantially weaker off-channel, and
 sightings occurred throughout dwells, including before the first hop. This
@@ -74,10 +89,12 @@ GPS/time/location correlation and AirHound ingestion remain separate work.
 
 ## Current limits
 
-- Passive 20 MHz channels 1–11 only; no 5 GHz support yet.
+- Passive 20 MHz channels 1–11 and lower 5 GHz channels 36/40/44/48 only.
+  Other 5 GHz channels, wider receive bandwidths and 6 GHz are unsupported.
 - Full, LC, TSSI and TX-related calibration are omitted. Receive sensitivity
   remains experimental. `rssi_dbm` is `null`. `estimated_rssi_dbm` applies mt76's
-  signed chain-zero formula (raw + EEPROM offset − LNA gain) with checked
+  signed chain-zero formula (raw + EEPROM offset − LNA gain), selecting separate
+  EEPROM corrections for 2.4 GHz and low 5 GHz, with checked
   arithmetic. This estimate is explicitly unvalidated; raw bytes are retained.
   Zero samples and A-MPDU samples without the RSSI-valid flag have no estimate.
 - No native macOS Wi-Fi interface, association, IP networking or packet injection.
@@ -86,8 +103,9 @@ GPS/time/location correlation and AirHound ingestion remain separate work.
   verified with RF test equipment.
 - No EEPROM/efuse programming or persistent firmware installation. Firmware
   lives in RAM; USB unplug/replug resets the device.
-- No AirHound integration yet. The intended boundary is a separate process
-  exporting observations through a documented protocol.
+- The [versioned file format](../../docs/external-wifi-v1.md) and independent
+  AirHound-side checker establish the data boundary. Live process supervision,
+  observation ingestion, detection matching and WiGLE export remain unimplemented.
 - Automated tests use simulated registers and packet fixtures. Linux CI checks
   portability; Linux hardware operation has not been validated.
 
@@ -131,6 +149,11 @@ cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
 cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
   --output captures/all-channels.ndjson --channels 1,2,3,4,5,6,7,8,9,10,11 \
   --dwell-ms 500 --seconds 30
+
+# Alternate 2.4GHz and supported low 5GHz channels.
+cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
+  --output captures/dual-band.ndjson --channels 1,36,6,40,11,44,48 \
+  --dwell-ms 500 --seconds 30
 ```
 
 `inspect-firmware` does not open USB. `bootstrap` loads volatile firmware and
@@ -138,8 +161,11 @@ leaves MAC TX/RX disabled. If the MCU is already running, upload is skipped;
 the supplied file's hash does **not** verify the image already in device RAM.
 Unplug/replug before a run when firmware provenance needs to be established.
 
-Capture writes beacon observations as NDJSON, including BSSID, SSID bytes,
-advertised channel, receive channel and raw RSSI. Terminal output contains
+Capture writes [version 1 beacon observations](../../docs/external-wifi-v1.md)
+as NDJSON, including a session ID, consecutive sequence numbers, host observation
+timestamps, BSSID, SSID bytes, advertised channel, receive channel and raw RSSI.
+Observation files are bounded to 64 MiB with 16 KiB lines, matching the independent
+checker. Terminal output contains
 aggregate counts. Output files are created with mode `0600`, never overwritten,
 and ignored under `captures/`. Optional `--raw-usb captures/transfers.bin` records
 each raw USB transfer prefixed by its little-endian `u32` byte length. These
@@ -191,8 +217,8 @@ beacon elements, EEPROM read-only commands, and simulated initialization traces
 that keep transmit/ACK/beacon gates disabled.
 
 Next milestones are longer capture/shutdown testing, receive calibration and
-RSSI validation, 5 GHz receive support, and a
-versioned companion-process interface for AirHound. Hardware measurements must
+RSSI validation, broader 5 GHz support, and supervised live companion-process
+integration with an explicit policy for unvalidated signal estimates. Hardware measurements must
 remain separate from simulated-test claims.
 
 ## Licensing and provenance

@@ -3,7 +3,7 @@
 // 22f7ff9be59890cb10cde16cc25a30f78b504f23 (https://github.com/openwrt/mt76).
 // Copyright 2002-2010 Ralink Technology, Inc.; 2015 Jakub Kicinski;
 // 2018 Stanislaw Gruszka; 2018 Lorenzo Bianconi.
-// Register names expanded to numeric addresses; only 2.4GHz/20MHz switch entries retained.
+// Register names expanded to numeric addresses; 2.4GHz and low 5GHz/20MHz switch entries retained.
 // RF offsets are (bank << 16) | register. MAC transmit gates are masked by radio.rs.
 
 pub(super) const COMMON_MAC: &[(u32, u32)] = &[
@@ -411,4 +411,58 @@ pub const CHANNEL_PLL: [[u8; 6]; 11] = [
     [0x3c, 0xf2, 7, 13, 0x28, 3],
     [0x28, 0xd4, 2, 9, 0x51, 0],
     [0x3c, 0xd4, 7, 2, 0xa4, 1],
+];
+
+pub(super) const RF_BW_5G_20: &[(u32, u32)] = &[
+    (0x00000011, 0x00000000),
+    (0x00070006, 0x00000040),
+    (0x00070007, 0x00000040),
+    (0x00070008, 0x00000003),
+    (0x0007003a, 0x00000040),
+    (0x0007003b, 0x00000040),
+    (0x0007003c, 0x000000aa),
+    (0x0007004c, 0x00000040),
+    (0x0007004d, 0x00000040),
+];
+
+pub(super) const RF_BAND_5G_LOW: &[(u32, u32)] = &[
+    (0x00000010, 0x00000020),
+    (0x00000012, 0x00000000),
+    (0x00000027, 0x00000034),
+    (0x0006000c, 0x00000044),
+    (0x00060011, 0x00000002),
+    (0x00060018, 0x000000a1),
+    (0x00060027, 0x00000036),
+    (0x0006002a, 0x000000fb),
+    (0x0006007f, 0x00000004),
+    (0x00070005, 0x00000000),
+    (0x00070009, 0x00000000),
+    (0x00070046, 0x0000006d),
+    (0x00070047, 0x000000b0),
+    (0x0007004e, 0x00000055),
+    (0x0007004f, 0x00000055),
+];
+
+pub(super) const BBP_5G_20: &[(u32, u32)] = &[
+    (0x00002310, 0x1feca054),
+    (0x00002318, 0x0000000a),
+    (0x00002320, 0x122c54f2),
+    (0x00002330, 0x050528f9),
+    (0x00002334, 0x2c3a0406),
+    (0x00002338, 0x310f2a3f),
+    (0x00002368, 0x007c2005),
+    (0x0000236c, 0x000000ec),
+    (0x00002370, 0x00060806),
+    (0x00002970, 0x0000008a),
+    (0x0000237c, 0x00000e13),
+    (0x00002380, 0x0000181c),
+    (0x00002384, 0x00003218),
+    (0x0000238c, 0x11111111),
+    (0x0000239c, 0x2a2a2a2a),
+    (0x000023ac, 0x27271a1a),
+    (0x000023cc, 0xffffffff),
+    (0x000023d4, 0xffffffff),
+    (0x000023dc, 0xffffffff),
+    (0x000023e8, 0x00000000),
+    (0x00002800, 0x895000e0),
 ];

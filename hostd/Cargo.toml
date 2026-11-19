@@ -3,6 +3,7 @@ name = "airhound-hostd"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+default-run = "airhound-hostd"
 description = "AirHound host daemon — BLE surveillance detection for Mac/Linux"
 
 [features]

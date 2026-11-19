@@ -154,3 +154,22 @@ polling latency. Raw CSV, NDJSON and diagnostic logs stay in a private local run
 directory under `hostd/target/performance`; the script prints aggregate results.
 Permission prompts may affect startup. CPU is sampled process CPU, not system
 power consumption. Do not profile concurrently with compilation for comparisons.
+
+## External receiver capture validation
+
+The independent [MT7610U receiver experiment](../drivers/mt7610u/README.md)
+exports [version 1 Wi-Fi observation files](../docs/external-wifi-v1.md).
+Validate a completed file without opening a radio or requesting location:
+
+```sh
+cd hostd
+cargo run --locked --bin airhound-capture-check -- /path/to/beacons.ndjson
+```
+
+This MIT utility validates bounded records, session/sequence consistency and
+signal provenance, then prints aggregate counts without network identifiers.
+It does not link the GPL driver, launch a scanner, ingest observations into the
+normal hostd pipeline, run detection matching or export WiGLE CSV. The receiver's
+signal estimates remain unvalidated; live integration needs a host observation
+model that preserves this distinction. Ordinary `cargo run` still selects
+`airhound-hostd`.
