@@ -18,16 +18,32 @@ use crate::radio::RxCalibration;
 const RXINFO_RSSI: u32 = 1 << 13;
 const RXINFO_AMPDU: u32 = 1 << 15;
 
-/// Estimate chain-zero signal using the current band's parsed EEPROM offsets.
+/// Compatibility estimator using the 2.4 GHz EEPROM offsets.
 ///
-/// The caller must supply calibration for the actual receive band. Arithmetic
-/// is widened before conversion: implausible overflow returns `None`, never a
+/// Use `estimate_rssi_for_channel` for capture that can tune either band.
+/// Arithmetic is widened before conversion: overflow returns `None`, never a
 /// wrapped or clamped signal. Full radio calibration remains a separate status.
 pub fn estimate_rssi(raw: [u8; 4], rx_info: u32, cal: &RxCalibration) -> Option<i8> {
+    estimate_with_gains(raw, rx_info, cal.lna_gain, cal.rssi_offset)
+}
+
+/// Apply the configured receive band's EEPROM correction; reject unsupported
+/// channels/bands. This remains an unvalidated estimate, not calibrated dBm.
+pub fn estimate_rssi_for_channel(
+    raw: [u8; 4],
+    rx_info: u32,
+    cal: &RxCalibration,
+    channel: u8,
+) -> Option<i8> {
+    let (gain, offset) = cal.gains_for_channel(channel).ok()?;
+    estimate_with_gains(raw, rx_info, gain, offset)
+}
+
+fn estimate_with_gains(raw: [u8; 4], rx_info: u32, lna_gain: i8, rssi_offset: i8) -> Option<i8> {
     if raw[0] == 0 || (rx_info & RXINFO_AMPDU != 0 && rx_info & RXINFO_RSSI == 0) {
         return None;
     }
-    let estimate = i16::from(raw[0] as i8) + i16::from(cal.rssi_offset) - i16::from(cal.lna_gain);
+    let estimate = i16::from(raw[0] as i8) + i16::from(rssi_offset) - i16::from(lna_gain);
     i8::try_from(estimate).ok()
 }
 
@@ -44,7 +60,26 @@ mod tests {
             config1: 0,
             nic_config2: 0,
             has_5ghz: false,
+            has_2ghz: true,
+            lna_gain_5ghz: 0,
+            rssi_offset_5ghz: 0,
         }
+    }
+
+    #[test]
+    fn channel_estimate_selects_band_and_rejects_unsupported_channels() {
+        let mut cal = calibration(-2, 12);
+        cal.has_5ghz = true;
+        cal.lna_gain_5ghz = 7;
+        cal.rssi_offset_5ghz = 3;
+        let raw = [0xba, 0, 0, 0];
+        assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 1), Some(-84));
+        for channel in [36, 40, 44, 48] {
+            assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, channel), Some(-74));
+        }
+        assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 52), None);
+        cal.has_5ghz = false;
+        assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 36), None);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 // mt76x02_{regs,eeprom,mcu}.{h,c}: BSD-3-Clause-Clear, Copyright 2016 Felix Fietkau
 // and 2018 Lorenzo Bianconi. See this crate's third-party license notices.
 
-//! Experimental channel-one, 20MHz receive-only setup, after firmware bootstrap.
+//! Experimental 2.4/low-5GHz, 20MHz receive-only setup, after firmware bootstrap.
 //!
 //! This is deliberately not the complete Linux radio initialization sequence:
 //! FULL, LC, TSSI and all TX calibration commands are omitted. Successful register
@@ -40,12 +40,32 @@ const RF_MEMMAP: u32 = 0x8000_0000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RxCalibration {
     pub frequency_offset: u8,
+    /// 2.4 GHz chain-zero correction.
     pub lna_gain: i8,
     pub rssi_offset: i8,
+    /// Low 5 GHz (channels <=64) chain-zero corrections.
+    pub lna_gain_5ghz: i8,
+    pub rssi_offset_5ghz: i8,
+    pub has_2ghz: bool,
     pub antenna_config: u16,
     pub config1: u16,
     pub nic_config2: u16,
     pub has_5ghz: bool,
+}
+
+impl RxCalibration {
+    /// Select immutable EEPROM corrections for a supported receive channel.
+    /// Returns (LNA gain, RSSI offset); unsupported board bands fail before tuning.
+    pub fn gains_for_channel(&self, channel: u8) -> Result<(i8, i8)> {
+        validate_channel(channel)?;
+        if channel <= 11 {
+            ensure!(self.has_2ghz, "EEPROM board does not support 2.4 GHz");
+            Ok((self.lna_gain, self.rssi_offset))
+        } else {
+            ensure!(self.has_5ghz, "EEPROM board does not support 5 GHz");
+            Ok((self.lna_gain_5ghz, self.rssi_offset_5ghz))
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,10 +137,6 @@ pub fn parse_calibration(bytes: &[u8; 512]) -> Result<RxCalibration> {
     );
     let nic0 = word(0x34);
     ensure!(
-        (nic0 >> 12) & 3 != 2,
-        "EEPROM describes a 5GHz-only board; channel one is unsupported"
-    );
-    ensure!(
         nic0 & 0xf <= 1,
         "multiple RX chains are not supported by this experimental driver"
     );
@@ -135,15 +151,21 @@ pub fn parse_calibration(bytes: &[u8; 512]) -> Result<RxCalibration> {
     } else {
         -magnitude
     };
-    let rssi_offset = bytes[0x46] as i8;
+    let rssi_offset = |offset: usize| {
+        let value = bytes[offset] as i8;
+        if (-10..=10).contains(&value) {
+            value
+        } else {
+            0
+        }
+    };
     Ok(RxCalibration {
         frequency_offset: base.wrapping_sub(adjustment as u8).min(0xbf),
         lna_gain: valid(bytes[0x44]) as i8,
-        rssi_offset: if (-10..=10).contains(&rssi_offset) {
-            rssi_offset
-        } else {
-            0
-        },
+        rssi_offset: rssi_offset(0x46),
+        lna_gain_5ghz: valid(bytes[0x45]) as i8,
+        rssi_offset_5ghz: rssi_offset(0x4a),
+        has_2ghz: (nic0 >> 12) & 3 != 2,
         antenna_config: word(0x22),
         config1: word(0x24),
         nic_config2: word(0x42),
@@ -264,7 +286,9 @@ fn configure_antenna(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()
             coexist |= 1 << 4;
         }
         coexist |= 1 << 3;
-        wlan |= 1 << 6;
+        if cal.has_2ghz {
+            wlan |= 1 << 6;
+        }
     } else if cal.has_5ghz {
         coexist |= (1 << 3) | (1 << 4);
     } else {
@@ -281,25 +305,56 @@ fn configure_antenna(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()
 
 fn validate_channel(channel: u8) -> Result<()> {
     ensure!(
-        (1..=11).contains(&channel),
-        "supported receive channels are 1..11, got {channel}"
+        (1..=11).contains(&channel) || [36, 40, 44, 48].contains(&channel),
+        "supported receive channels are 1..11 and 36/40/44/48, got {channel}"
     );
     Ok(())
 }
 
+/// Center frequency for the explicit passive HT20 channel allowlist.
+pub fn channel_frequency_mhz(channel: u8) -> Result<u16> {
+    validate_channel(channel)?;
+    Ok(if channel <= 11 {
+        2412 + 5 * u16::from(channel - 1)
+    } else {
+        5000 + 5 * u16::from(channel)
+    })
+}
+
 fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8) -> Result<()> {
-    let [r35, r33, r32, r31, pll_n, xo_div] = tables::CHANNEL_PLL[usize::from(channel - 1)];
+    let (lna_gain, _) = cal.gains_for_channel(channel)?;
+    let is_5ghz = channel > 11;
+    // Pinned mt76 frequency-plan entries: 36/40/44/48 differ only in R31.
+    // None of these supported channels uses the SDM plan.
+    let [r35, r33, r32, r31, pll_n, xo_div] = if is_5ghz {
+        [0x30, 0xd2, 4, (channel - 32) / 2, 0x2b, 3]
+    } else {
+        tables::CHANNEL_PLL[usize::from(channel - 1)]
+    };
     mcu_pair(io, 1, 2, 0, true).context("MCU BW_SETTING 20MHz")?;
     rmw(io, 0x2004, 0x18 | 0x20, 0)?; // CORE1 bandwidth/Japan channel14 filter
     rmw(io, 0x2300, 0x7000 | 0x300, 0x1000)?; // AGC0 BW20, primary channel0
     rmw(io, 0x2700, 3, 0)?;
-    rmw(io, 0x132c, 7, 4)?; // 2.4GHz, lower primary
+    rmw(io, 0x132c, 7, if is_5ghz { 2 } else { 4 })?; // band, lower primary
     rmw(io, 0x141c, 0xfff, 0x1e4)?; // primary20 CCA mapping [0,1,2,3], mask1
-    write_rf_table(io, tables::RF_2G)?;
-    write_rf(io, 5, 0, 0x45)?;
-    write_rf(io, 6, 0, 0x44)?;
-    // Channels 1..11 use the non-SDM frequency plan.
-    for (reg, value) in [(37, 0x02), (36, 0x3f), (35, r35), (34, 0xdd), (33, r33)] {
+    write_rf_table(
+        io,
+        if is_5ghz {
+            tables::RF_5G
+        } else {
+            tables::RF_2G
+        },
+    )?;
+    write_rf(io, 5, 0, if is_5ghz { 0x44 } else { 0x45 })?;
+    write_rf(io, 6, 0, if is_5ghz { 0x45 } else { 0x44 })?;
+    // Supported channels use the non-SDM frequency plan.
+    for (reg, value) in [
+        (37, 0x02),
+        (36, 0x3f),
+        (35, r35),
+        (34, if is_5ghz { 0x97 } else { 0xdd }),
+        (33, r33),
+    ] {
         write_rf(io, 0, reg, value)?;
     }
     for (reg, mask, value) in [
@@ -322,14 +377,31 @@ fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8)
     write_rf(io, 0, 27, 0)?;
     rf_rmw(io, 28, 3, 0)?;
     rf_rmw(io, 24, 3, xo_div)?;
-    write_rf_table(io, tables::RF_BW_20)?;
-    write_rf_table(io, tables::RF_BAND_2G)?;
+    write_rf_table(
+        io,
+        if is_5ghz {
+            tables::RF_BW_5G_20
+        } else {
+            tables::RF_BW_20
+        },
+    )?;
+    write_rf_table(
+        io,
+        if is_5ghz {
+            tables::RF_BAND_5G_LOW
+        } else {
+            tables::RF_BAND_2G
+        },
+    )?;
     // External PA enable is intentionally left off for receive-only operation.
     rmw(io, 0x0518, 0x0c, 0)?;
-    for &(reg, value) in tables::BBP_2G_20 {
+    for &(reg, value) in if is_5ghz {
+        tables::BBP_5G_20
+    } else {
+        tables::BBP_2G_20
+    } {
         let value = if reg == 0x2320 {
-            let gain =
-                ((value >> 8) as u8 & 0x7f).wrapping_sub((cal.lna_gain as u8).wrapping_mul(2));
+            let gain = ((value >> 8) as u8 & 0x7f).wrapping_sub((lna_gain as u8).wrapping_mul(2));
             (value & !0x7f00) | (((gain as u32) & 0x7f) << 8)
         } else {
             value
@@ -348,7 +420,7 @@ pub fn initialize_channel_one(io: &mut impl RegisterIo) -> Result<RadioSetup> {
     initialize_channel(io, 1)
 }
 
-/// Initialize passive 20 MHz reception on a supported 2.4 GHz channel.
+/// Initialize passive 20 MHz reception on a supported 2.4 GHz or low 5 GHz channel.
 /// Invalid channels are rejected before touching hardware.
 pub fn initialize_channel(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup> {
     validate_channel(channel)?;
@@ -366,6 +438,7 @@ pub fn initialize_channel(io: &mut impl RegisterIo, channel: u8) -> Result<Radio
 
 fn initialize_inner(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup> {
     let calibration = parse_calibration(&read_eeprom(io)?)?;
+    calibration.gains_for_channel(channel)?;
     poll_clear(
         io,
         WPDMA_GLO_CFG,
@@ -419,7 +492,7 @@ fn initialize_inner(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup>
     mcu_pair(io, 31, 2, 1, true).context("MCU RX DC-offset calibration")?;
     enable_passive_rx(io)?;
     Ok(RadioSetup {
-        channel, frequency_mhz: 2412 + 5 * u16::from(channel - 1), bandwidth_mhz: 20,
+        channel, frequency_mhz: channel_frequency_mhz(channel)?, bandwidth_mhz: 20,
         full_calibration_performed: false,
         omitted_calibrations: "FULL, LC, TSSI, TXIQ, TXDCOC, TX group-delay and DPD; RX sensitivity remains experimental",
         calibration,
@@ -465,7 +538,7 @@ pub fn retune_with_drain<I: RegisterIo>(
     channel: u8,
     drain: impl FnOnce(&mut I) -> Result<()>,
 ) -> Result<()> {
-    validate_channel(channel)?;
+    calibration.gains_for_channel(channel)?;
     let result = (|| {
         rmw(io, MAC_SYS_CTRL, MAC_TX | MAC_RX, 0)?;
         io.write32(AUTO_RSP_CFG, 0)?;
@@ -620,6 +693,106 @@ mod tests {
     }
 
     #[test]
+    fn low_5ghz_initialization_and_every_supported_band_transition() {
+        let mut io = SimulatedDevice::new();
+        io.eeprom[0x45] = 7;
+        io.eeprom[0x4a] = 3;
+        let setup = initialize_channel(&mut io, 36).unwrap();
+        assert_eq!(setup.frequency_mhz, 5180);
+        assert_eq!(setup.calibration.gains_for_channel(1).unwrap(), (12, -2));
+        assert_eq!(setup.calibration.gains_for_channel(36).unwrap(), (7, 3));
+        // Cover both directions and every exposed 5 GHz PLL entry.
+        for channel in [1, 36, 6, 40, 11, 44, 1, 48, 11] {
+            retune_with_drain(&mut io, &setup.calibration, channel, |io| {
+                assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), 0);
+                assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 4);
+                Ok(())
+            })
+            .unwrap();
+            let five = channel > 11;
+            assert_eq!(io.registers[&0x132c] & 7, if five { 2 } else { 4 });
+            assert_eq!(
+                io.rf[&(RF_MEMMAP | 0x50000)],
+                if five { 0x44 } else { 0x45 }
+            );
+            assert_eq!(
+                io.rf[&(RF_MEMMAP | 0x60000)],
+                if five { 0x45 } else { 0x44 }
+            );
+            assert_eq!(io.rf[&(RF_MEMMAP | 39)], if five { 0x34 } else { 0x36 });
+            assert_eq!(io.rf[&(RF_MEMMAP | 0x70046)], if five { 0x6d } else { 0 });
+            assert_eq!(
+                io.registers[&0x2320] & 0x7f00,
+                if five { 0x4600 } else { 0x3600 }
+            );
+            if five {
+                assert_eq!(io.rf[&(RF_MEMMAP | 34)], 0x97);
+                assert_eq!(io.rf[&(RF_MEMMAP | 35)], 0x30);
+                assert_eq!(io.rf[&(RF_MEMMAP | 29)], 0x2b);
+                assert_eq!(
+                    io.rf[&(RF_MEMMAP | 31)],
+                    0x40 | u32::from((channel - 32) / 2)
+                );
+                assert_eq!(io.rf[&(RF_MEMMAP | 0x60018)], 0xa1);
+                assert_eq!(
+                    channel_frequency_mhz(channel).unwrap(),
+                    5000 + 5 * u16::from(channel)
+                );
+            }
+            assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), MAC_RX);
+            assert_eq!(io.registers[&0x518] & 0xc, 0, "external PA disabled");
+        }
+        io.fail_calibration = true;
+        assert!(retune_with_drain(&mut io, &setup.calibration, 48, |_| Ok(())).is_err());
+        assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), 0);
+        assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 0);
+    }
+
+    #[test]
+    fn eeprom_band_capabilities_and_corrections_are_independent() {
+        let mut io = SimulatedDevice::new();
+        io.eeprom[0x45] = 0xff;
+        io.eeprom[0x4a] = 11;
+        let cal = parse_calibration(&io.eeprom).unwrap();
+        assert_eq!(cal.gains_for_channel(36).unwrap(), (0, 0));
+        assert_eq!(cal.gains_for_channel(1).unwrap(), (12, -2));
+        io.eeprom[0x45] = 9;
+        io.eeprom[0x4a] = (-10i8) as u8;
+        io.eeprom[0x35] = 0x20; // 5 GHz only
+        let cal = parse_calibration(&io.eeprom).unwrap();
+        assert_eq!(cal.gains_for_channel(48).unwrap(), (9, -10));
+        assert!(cal.gains_for_channel(1).is_err());
+        assert!(initialize_channel_one(&mut io).is_err());
+        assert!(
+            io.rf.is_empty(),
+            "unsupported board band must not program RF"
+        );
+        io.eeprom[0x35] = 0x10; // 2.4 GHz only
+        let cal = parse_calibration(&io.eeprom).unwrap();
+        let before = io.registers.clone();
+        assert!(retune_with_drain(&mut io, &cal, 36, |_| panic!(
+            "no drain for unsupported band"
+        ))
+        .is_err());
+        assert_eq!(io.registers, before);
+        assert!(initialize_channel(&mut io, 36).is_err());
+        assert!(io.rf.is_empty());
+    }
+
+    #[test]
+    fn antenna_routing_uses_board_capability_not_selected_band() {
+        let mut io = SimulatedDevice::new();
+        let mut cal = parse_calibration(&io.eeprom).unwrap();
+        cal.antenna_config = 1 << 15;
+        configure_antenna(&mut io, &cal).unwrap();
+        assert_ne!(io.registers[&0x80] & (1 << 6), 0);
+        cal.has_2ghz = false;
+        configure_antenna(&mut io, &cal).unwrap();
+        assert_eq!(io.registers[&0x80] & (1 << 6), 0);
+        assert_eq!(io.registers[&0x4c] & 0x18, 0x18);
+    }
+
+    #[test]
     fn hopping_programs_pll_and_drains_before_tuning() {
         let mut io = SimulatedDevice::new();
         let setup = initialize_channel(&mut io, 6).unwrap();
@@ -670,7 +843,7 @@ mod tests {
             }
         }
         let cal = parse_calibration(&SimulatedDevice::new().eeprom).unwrap();
-        for channel in [0, 12, 13, 14, 36, 255] {
+        for channel in [0, 12, 13, 14, 35, 37, 52, 100, 165, 255] {
             assert!(initialize_channel(&mut NoIo, channel).is_err());
             assert!(
                 retune_with_drain(&mut NoIo, &cal, channel, |_| panic!("unexpected drain"))
@@ -730,7 +903,10 @@ mod tests {
         );
         io.eeprom[0x35] = 0x20;
         assert!(
-            parse_calibration(&io.eeprom).is_err(),
+            parse_calibration(&io.eeprom)
+                .unwrap()
+                .gains_for_channel(1)
+                .is_err(),
             "5GHz-only hardware must not tune channel1"
         );
     }

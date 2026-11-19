@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Parser)]
@@ -33,7 +33,7 @@ enum Command {
     Bootstrap { firmware: PathBuf },
     /// Replay a length-prefixed USB recording without accessing hardware.
     Replay { input: PathBuf },
-    /// Capture passive 2.4GHz beacons; optionally hop channels.
+    /// Capture passive 2.4/5GHz beacons; optionally hop supported channels.
     Capture {
         #[arg(long)]
         firmware: PathBuf,
@@ -43,7 +43,7 @@ enum Command {
         raw_usb: Option<PathBuf>,
         #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=300))]
         seconds: u16,
-        #[arg(long, value_delimiter = ',', default_value = "1", value_parser = clap::value_parser!(u8).range(1..=11))]
+        #[arg(long, value_delimiter = ',', default_value = "1", value_parser = parse_channel)]
         channels: Vec<u8>,
         #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u16).range(100..=10000))]
         dwell_ms: u16,
@@ -136,6 +136,11 @@ fn capture(
     dwell_ms: u16,
 ) -> Result<()> {
     validate_capture_plan(&channels, raw_usb.is_some())?;
+    let session_id = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    );
     let bytes = std::fs::read(firmware_path)?;
     let fw = Firmware::parse(&bytes)?;
     fw.require_reference()?;
@@ -167,6 +172,7 @@ fn capture(
         let (mut transfers, mut frames, mut beacons, mut malformed, mut total_bytes) =
             (0u64, 0u64, 0u64, 0u64, 0u64);
         let mut bssids = HashSet::new();
+        let mut observation_bytes = 0u64;
         let mut channel_index = 0usize;
         let mut tuned_at = Instant::now();
         let dwell = Duration::from_millis(dwell_ms as u64);
@@ -238,9 +244,8 @@ fn capture(
                         .map(|b| format!("{b:02X}"))
                         .collect::<Vec<_>>()
                         .join(":");
-                    let value = serde_json::json!({"type":"beacon","elapsed_ms":started.elapsed().as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":channels[channel_index],"channel_epoch":hops,"dwell_elapsed_ms":tuned_at.elapsed().as_millis(),"rssi_dbm":frame.rssi_dbm,"estimated_rssi_dbm":mt7610u_lab::signal::estimate_rssi(frame.raw_rssi,frame.rx_info,&setup.calibration),"rssi_estimate_basis":"mt76_eeprom_formula","rssi_validated":false,"raw_rssi":frame.raw_rssi,"full_calibration":false});
-                    serde_json::to_writer(&mut output, &value)?;
-                    output.write_all(b"\n")?;
+                    let value = serde_json::json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","session_id":session_id,"sequence":beacons-1,"observed_at_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),"elapsed_ms":started.elapsed().as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":channels[channel_index],"channel_epoch":hops,"dwell_elapsed_ms":tuned_at.elapsed().as_millis(),"rssi_dbm":frame.rssi_dbm,"estimated_rssi_dbm":mt7610u_lab::signal::estimate_rssi_for_channel(frame.raw_rssi,frame.rx_info,&setup.calibration,channels[channel_index]),"rssi_estimate_basis":"mt76_eeprom_formula","rssi_validated":false,"raw_rssi":frame.raw_rssi,"full_calibration":false});
+                    write_observation(&mut output, &value, &mut observation_bytes)?;
                 }
             }
         }
@@ -279,14 +284,52 @@ fn capture(
     write_json(&mut std::io::stdout().lock(), &summary)
 }
 
+fn supported_channel(channel: u8) -> bool {
+    matches!(channel, 1..=11 | 36 | 40 | 44 | 48)
+}
+
+fn parse_channel(text: &str) -> std::result::Result<u8, String> {
+    let channel = text
+        .parse::<u8>()
+        .map_err(|_| "Channel must be a number".to_string())?;
+    if supported_channel(channel) {
+        Ok(channel)
+    } else {
+        Err("Supported channels: 1..11, 36, 40, 44, 48".into())
+    }
+}
+
+fn write_observation(
+    out: &mut impl Write,
+    record: &serde_json::Value,
+    bytes: &mut u64,
+) -> Result<()> {
+    let mut line = serde_json::to_vec(record)?;
+    line.push(b'\n');
+    ensure!(
+        line.len() <= 16 * 1024,
+        "Observation exceeds companion protocol line limit"
+    );
+    let total = bytes
+        .checked_add(line.len() as u64)
+        .context("Observation file length overflow")?;
+    ensure!(
+        total <= 64 * 1024 * 1024,
+        "Observation file reached companion protocol 64MiB limit"
+    );
+    out.write_all(&line)?;
+    *bytes = total;
+    Ok(())
+}
+
 fn validate_capture_plan(channels: &[u8], raw_usb: bool) -> Result<()> {
     ensure!(
-        !channels.is_empty() && channels.len() <= 11,
-        "Choose one to eleven channels"
+        !channels.is_empty() && channels.len() <= 15,
+        "Choose one to fifteen supported channels"
     );
     ensure!(
-        channels.iter().all(|c| (1..=11).contains(c)),
-        "Only channels 1..11 are supported"
+        channels.iter().all(|&c| supported_channel(c)),
+        "Supported channels: 1..11, 36, 40, 44, 48"
     );
     ensure!(
         channels.iter().copied().collect::<HashSet<_>>().len() == channels.len(),
@@ -369,6 +412,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observation_records_are_complete_bounded_lines() {
+        let mut out = Vec::new();
+        let mut count = 0;
+        write_observation(&mut out, &serde_json::json!({"sequence":0}), &mut count).unwrap();
+        assert!(out.ends_with(b"\n"));
+        assert_eq!(count, out.len() as u64);
+        let previous = out.clone();
+        let mut count = 64 * 1024 * 1024;
+        assert!(write_observation(&mut out, &serde_json::json!({}), &mut count).is_err());
+        assert_eq!(out, previous);
+        assert!(
+            write_observation(&mut out, &serde_json::json!("x".repeat(16 * 1024)), &mut 0).is_err()
+        );
+        assert_eq!(out, previous);
+    }
+
+    #[test]
     fn capture_budget_keeps_raw_output_within_replay_limit() {
         let cap = mt7610u_lab::replay::MAX_RECORDING_BYTES;
         assert!(check_capture_budget(cap - 4, 1, true).is_ok());
@@ -381,6 +441,10 @@ mod tests {
     fn channel_plans_reject_ambiguous_or_unsupported_capture_before_usb() {
         assert!(validate_capture_plan(&[1, 6, 11], false).is_ok());
         assert!(validate_capture_plan(&[6], true).is_ok());
+        assert!(validate_capture_plan(&[1, 36, 40, 44, 48], false).is_ok());
+        assert_eq!(parse_channel("36").unwrap(), 36);
+        assert!(parse_channel("52").is_err());
+        assert!(parse_channel("not-a-channel").is_err());
         for channels in [vec![], vec![0], vec![12], vec![1, 1]] {
             assert!(validate_capture_plan(&channels, false).is_err());
         }
