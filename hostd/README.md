@@ -38,10 +38,14 @@ location is not implemented. The default Linux configuration scans BLE only.
 CoreBluetooth supplies a host-scoped peripheral UUID, not a public MAC API.
 The standard macOS build additionally attempts address lookup through
 `corebluetooth-address` and Apple's private `retrieveAddressForPeripheral:`
-selector. The lookup uses one worker, a bounded queue, and a 25 ms response budget.
-Missing addresses, unsupported selectors, errors and timeouts retain UUID-only
-records without blocking the scanner or shutdown. Addresses are looked up again
-on subsequent observations rather than cached indefinitely.
+selector. Discovery ingestion runs independently of address enrichment. If the
+bounded enrichment queue fills, observations are emitted immediately with their
+UUIDs instead of waiting for an address. A single native worker uses a per-call
+autorelease pool and a 25 ms response budget. Missing addresses, unsupported
+selectors, errors and timeouts also retain UUID-only records. Addresses are
+looked up again on subsequent observations rather than cached indefinitely.
+Enrichment can change delivery order; resolving an address does not emit a
+second copy of an observation.
 
 Every such desktop BLE observation is emitted as `type: "ble_observation"`, with
 `peripheral_id`, `identity_scope`, name, RSSI, service UUIDs, manufacturer ID,
@@ -103,6 +107,8 @@ Both desktop platforms enforce 81% production-line coverage. Tests cover session
 lifecycle, command handling, output failures, adapter conversion and Linux offline
 PCAP capture. The default macOS build and public-API-only build are tested in CI.
 Live permissions, radio capture and location delivery require hardware checks.
+Profiler regressions use a simulated process and clock; run them with
+`python3 -B -m unittest discover -s scripts/tests -v`. CI runs the same suite.
 
 ```sh
 just bench-hostd
@@ -138,8 +144,12 @@ just profile-hostd
 
 The profiler launches the bundle through Launch Services, samples process CPU/RSS,
 sends status/stop/start commands at 0/15/25 seconds, then requests SIGINT shutdown.
-It stops only the process it launched. It reports address-lookup success counts,
-location availability and shutdown time. Reply timing includes up to 5 ms of file
+It verifies the process identity before signaling it. Early process exit, missing
+or failed scheduled command acknowledgments, and forced termination fail the
+profile. Short runs validate only commands scheduled within their duration; a
+quiet radio alone does not cause failure. If the process exits before SIGINT,
+shutdown time is reported as unavailable rather than zero. The report includes
+address-lookup success counts, location availability and shutdown time. Reply timing includes up to 5 ms of file
 polling latency. Raw CSV, NDJSON and diagnostic logs stay in a private local run
 directory under `hostd/target/performance`; the script prints aggregate results.
 Permission prompts may affect startup. CPU is sampled process CPU, not system

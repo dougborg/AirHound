@@ -25,6 +25,40 @@ def running(pid):
         return False
 
 
+def is_launched_process(pid, executable, observations):
+    """Recheck identity before signaling a PID that Launch Services owns."""
+    result = subprocess.run(
+        ['ps', '-p', str(pid), '-o', 'args='], capture_output=True, text=True,
+    )
+    args = result.stdout.strip()
+    output_argument = f'--output {observations}'
+    return (result.returncode == 0
+            and args.startswith(str(executable) + ' ')
+            and (args.endswith(output_argument) or output_argument + ' ' in args))
+
+
+class ObservationLog:
+    """Read complete NDJSON records, including replies flushed during shutdown."""
+    def __init__(self, path):
+        self.path = path
+        self.position = 0
+        self.partial = b''
+        self.messages = []
+
+    def read(self, elapsed):
+        if not self.path.exists():
+            return
+        with self.path.open('rb') as stream:
+            stream.seek(self.position)
+            self.partial += stream.read()
+            self.position = stream.tell()
+        lines = self.partial.split(b'\n')
+        self.partial = lines.pop()
+        for line in lines:
+            if line:
+                self.messages.append((elapsed, json.loads(line)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--seconds', type=int, default=45)
@@ -52,9 +86,14 @@ def main():
     command = ['open', '-n', str(app), '--stdin', str(fifo), '--stdout', str(output), '--stderr', str(diagnostics), '--env', 'RUST_LOG=airhound_hostd=debug,btleplug=warn', '--args', '--output', str(observations)]
     command += {'ble': ['--no-wifi'], 'wifi': ['--no-ble']}.get(args.mode, [])
     pid = None
-    samples, commands, messages = [], [], []
-    forced = False
-    started = time.monotonic()
+    samples, commands, errors = [], [], []
+    log = ObservationLog(output)
+    schedule = [(0, 'status'), (args.pause_at, 'stop'), (args.resume_at, 'start')]
+    expected = [(deadline, cmd) for deadline, cmd in schedule if deadline < args.seconds]
+    forced, complete = False, False
+    shutdown_ms = None
+    started = None
+    observed_duration = 0
     try:
         subprocess.run(command, check=True)
         for _ in range(100):
@@ -66,15 +105,22 @@ def main():
             time.sleep(.05)
         if pid is None:
             raise RuntimeError(f'Could not identify launched process; inspect {diagnostics}')
+        started = time.monotonic()
         next_sample = 0
-        pending = {0: 'status', args.pause_at: 'stop', args.resume_at: 'start'}
+        pending = list(expected)
         phase = 'running'
-        position, partial = 0, ''
-        while time.monotonic() - started < args.seconds and running(pid):
+        while True:
             elapsed = time.monotonic() - started
-            for deadline in sorted(list(pending)):
+            observed_duration = elapsed
+            if not running(pid):
+                errors.append('Scanner exited before the requested profiling interval completed')
+                break
+            if elapsed >= args.seconds:
+                complete = True
+                break
+            for deadline, value in list(pending):
                 if elapsed >= deadline:
-                    value = pending.pop(deadline)
+                    pending.remove((deadline, value))
                     os.write(descriptor, (json.dumps({'cmd': value}) + '\n').encode())
                     commands.append({'cmd': value, 'sent_s': time.monotonic() - started})
                     if value == 'stop': phase = 'paused'
@@ -84,47 +130,77 @@ def main():
                 if len(stat) == 2:
                     samples.append({'elapsed_s': elapsed, 'cpu_percent': float(stat[0]), 'rss_kib': int(stat[1]), 'phase': phase})
                 next_sample = elapsed + 1
-            if output.exists():
-                with output.open() as stream:
-                    stream.seek(position)
-                    chunk = stream.read()
-                    position = stream.tell()
-                partial += chunk
-                lines = partial.split('\n')
-                partial = lines.pop()
-                for line in lines:
-                    if not line: continue
-                    message = json.loads(line)
-                    messages.append((time.monotonic() - started, message))
+            log.read(time.monotonic() - started)
             time.sleep(.005)
     finally:
-        stopped = time.monotonic()
         if pid is not None and running(pid):
-            os.kill(pid, signal.SIGINT)
-            while running(pid) and time.monotonic() - stopped < 10:
-                time.sleep(.01)
-            if running(pid):
-                forced = True
-                os.kill(pid, signal.SIGKILL)
-        shutdown_ms = (time.monotonic() - stopped) * 1000
+            if is_launched_process(pid, executable, observations):
+                stopped = time.monotonic()
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except ProcessLookupError:
+                    errors.append('Scanner exited before SIGINT; shutdown was not measured')
+                else:
+                    while running(pid) and time.monotonic() - stopped < 10:
+                        time.sleep(.01)
+                    if running(pid):
+                        errors.append('Scanner did not exit within ten seconds of SIGINT')
+                        if is_launched_process(pid, executable, observations):
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                                forced = True
+                            except ProcessLookupError:
+                                pass
+                        else:
+                            errors.append('Process identity changed; refused to force termination')
+                    shutdown_ms = (time.monotonic() - stopped) * 1000
+            else:
+                errors.append('Process identity changed; refused to signal it')
+        elif pid is not None and complete:
+            errors.append('Scanner exited before SIGINT; shutdown was not measured')
         os.close(descriptor)
         fifo.unlink(missing_ok=True)
-    with observations.open() as stream:
-        next(stream, None)
-        rows = [row for row in csv.DictReader(stream) if row.get('Type') in ('WIFI', 'BLE')]
-    records = [json.loads(line) for line in output.read_text().splitlines() if line]
+    log.read(time.monotonic() - started)
+    if log.partial.strip():
+        errors.append('Scanner output ended with an incomplete NDJSON record')
+    rows = []
+    if observations.exists():
+        with observations.open() as stream:
+            next(stream, None)
+            rows = [row for row in csv.DictReader(stream) if row.get('Type') in ('WIFI', 'BLE')]
+    else:
+        errors.append('Scanner did not create its CSV output')
+    records = [record for _, record in log.messages]
     ble = [record for record in records if record.get('type') == 'ble_observation']
-    for command in commands:
-        replies = [arrival for arrival, record in messages if arrival >= command['sent_s'] and record.get('type') == 'command_result' and record.get('cmd') == command['cmd']]
-        if replies: command['reply_ms'] = (replies[0] - command['sent_s']) * 1000
+    for _, expected_command in expected:
+        command = next((cmd for cmd in commands if cmd['cmd'] == expected_command), None)
+        if command is None:
+            errors.append(f'Scheduled command {expected_command!r} was not sent')
+            continue
+        replies = [(arrival, record) for arrival, record in log.messages
+                   if arrival >= command['sent_s']
+                   and record.get('type') == 'command_result'
+                   and record.get('cmd') == command['cmd']]
+        command['acknowledged'] = False
+        if replies:
+            arrival, reply = replies[0]
+            command['reply_ms'] = (arrival - command['sent_s']) * 1000
+            command['acknowledged'] = reply.get('ok') is True
+            if not command['acknowledged']:
+                errors.append(f'Command {expected_command!r} did not succeed')
+        else:
+            errors.append(f'Command {expected_command!r} was not acknowledged')
     metrics = {
         'schema_version': 1, 'mode': args.mode, 'directory': str(directory),
+        'success': not errors, 'errors': errors,
+        'measurement_complete': complete, 'requested_duration_s': args.seconds,
+        'observed_duration_s': observed_duration,
         'git_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
         'git_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
         'binary_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
         'samples': samples, 'commands': commands, 'reply_poll_interval_ms': 5,
         'cpu_percent_median': statistics.median(sample['cpu_percent'] for sample in samples) if samples else None,
-        'rss_peak_mib': max((sample['rss_kib'] for sample in samples), default=0) / 1024,
+        'rss_peak_mib': max(sample['rss_kib'] for sample in samples) / 1024 if samples else None,
         'shutdown_ms': shutdown_ms, 'forced_kill': forced,
         'csv_types': dict(collections.Counter(row['Type'] for row in rows)),
         'located_rows': sum(bool(row.get('CurrentLatitude')) for row in rows),
@@ -135,7 +211,7 @@ def main():
     }
     (directory / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
     print(json.dumps({key: value for key, value in metrics.items() if key != 'samples'}, indent=2))
-    return int(forced)
+    return int(bool(errors))
 
 
 if __name__ == '__main__':

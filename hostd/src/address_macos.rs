@@ -43,7 +43,11 @@ impl AddressResolver {
                     if reply.is_closed() {
                         continue;
                     }
-                    let _ = reply.send(lookup(id));
+                    // Rust worker threads do not install an Objective-C pool.
+                    // Drain temporaries from every native lookup, even when its
+                    // async caller has timed out or paused in the meantime.
+                    let result = objc2::rc::autoreleasepool(|_| lookup(id));
+                    let _ = reply.send(result);
                 }
             });
         if let Err(error) = worker {
@@ -110,5 +114,32 @@ mod tests {
         let resolver = AddressResolver::with_lookup(|_| panic!("test native failure"));
         assert_eq!(resolver.lookup(ID).await, None);
         assert_eq!(resolver.lookup(ID).await, None);
+    }
+    #[tokio::test]
+    async fn native_temporaries_are_released_between_worker_requests() {
+        use objc2::rc::{Retained, Weak};
+        use objc2_foundation::NSObject;
+        use std::cell::RefCell;
+        thread_local! {
+            static PREVIOUS: RefCell<Option<Weak<NSObject>>> = const { RefCell::new(None) };
+        }
+        let resolver = AddressResolver::with_lookup(|_| {
+            PREVIOUS.with(|previous| {
+                if let Some(weak) = previous.borrow().as_ref() {
+                    assert!(
+                        weak.load().is_none(),
+                        "previous lookup's autoreleased object leaked"
+                    );
+                }
+                let object = NSObject::new();
+                *previous.borrow_mut() = Some(Weak::from_retained(&object));
+                // Models a native API returning an autoreleased temporary.
+                let _ = Retained::autorelease_ptr(object);
+            });
+            Some([1; 6])
+        });
+        for _ in 0..3 {
+            assert_eq!(resolver.lookup(ID).await, Some([1; 6]));
+        }
     }
 }
