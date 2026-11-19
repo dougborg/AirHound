@@ -1,0 +1,17 @@
+[package]
+name = "mt7610u-lab"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Experimental userspace MT7610U receive-only USB driver"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ctrlc = { version = "3.4", features = ["termination"] }
+rusb = "0.9"
+serde_json = "1"
+sha2 = "0.10"
+
+[workspace]
