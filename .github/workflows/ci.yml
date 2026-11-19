@@ -170,9 +170,10 @@ jobs:
         run: cd hostd && cargo test --locked
       - name: Public API build and tests
         if: runner.os == 'macOS'
+        working-directory: hostd
         run: |
-          cargo test --manifest-path hostd/Cargo.toml --locked --no-default-features
-          cargo clippy --manifest-path hostd/Cargo.toml --locked --no-default-features --all-targets -- -D warnings
+          cargo test --locked --no-default-features
+          cargo clippy --locked --no-default-features --all-targets -- -D warnings
 
   build:
     runs-on: ubuntu-latest
