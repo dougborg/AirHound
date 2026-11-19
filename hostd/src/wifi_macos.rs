@@ -1,6 +1,5 @@
 //! WiFi scanner for macOS using `wifi_scan` crate (CoreWLAN wrapper).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -13,32 +12,44 @@ use wifi_scan::WifiSecurity;
 /// CoreWLAN active scans take ~3-5s, so effective cycle is ~4-6s.
 const SCAN_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Whether we've already warned about missing Location Services.
-static LOCATION_WARNING_LOGGED: AtomicBool = AtomicBool::new(false);
-
 /// Run the WiFi scan loop, periodically scanning via CoreWLAN and sending WiFiEvents.
 ///
 /// Sends discovered events on `tx`. Runs until the channel is closed or an error occurs.
 pub async fn scan_loop(tx: mpsc::Sender<ScanEvent>) -> Result<(), ScanError> {
-    log::info!("WiFi scan started (CoreWLAN via wifi_scan, interval {SCAN_INTERVAL:?})");
-
-    loop {
-        let networks = tokio::task::spawn_blocking(wifi_scan::scan)
+    scan_loop_with(tx, || async {
+        tokio::task::spawn_blocking(wifi_scan::scan)
             .await
-            .map_err(|_| ScanError::TaskPanicked)?;
+            .map_err(|_| ScanError::TaskPanicked)
+    })
+    .await
+}
+
+async fn scan_loop_with<F, Fut>(tx: mpsc::Sender<ScanEvent>, mut scan: F) -> Result<(), ScanError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<
+        Output = Result<Result<Vec<wifi_scan::Wifi>, wifi_scan::Error>, ScanError>,
+    >,
+{
+    let mut warned = false;
+    loop {
+        if tx.is_closed() {
+            return Ok(());
+        }
+        let networks = tokio::select! {
+            _ = tx.closed() => return Ok(()),
+            result = scan() => result?,
+        };
 
         match networks {
             Ok(wifis) => {
                 // Check for Location Services on first scan
-                if !wifis.is_empty()
-                    && !LOCATION_WARNING_LOGGED.load(Ordering::Relaxed)
-                    && wifis.iter().all(|w| w.mac.is_empty())
-                {
+                if !wifis.is_empty() && !warned && wifis.iter().all(|w| w.mac.is_empty()) {
                     log::warn!(
                         "WiFi scan: all BSSIDs empty — grant Location Services permission \
                          to the terminal app in System Settings → Privacy & Security → Location Services"
                     );
-                    LOCATION_WARNING_LOGGED.store(true, Ordering::Relaxed);
+                    warned = true;
                 }
 
                 let mut count = 0u32;
@@ -58,7 +69,10 @@ pub async fn scan_loop(tx: mpsc::Sender<ScanEvent>) -> Result<(), ScanError> {
             }
         }
 
-        tokio::time::sleep(SCAN_INTERVAL).await;
+        tokio::select! {
+            _ = tx.closed() => return Ok(()),
+            _ = tokio::time::sleep(SCAN_INTERVAL) => {}
+        }
     }
 }
 
@@ -145,3 +159,111 @@ impl std::fmt::Display for ScanError {
 }
 
 // MAC parsing tests live in the library (airhound::comm::parse_mac_string).
+
+impl std::error::Error for ScanError {}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    fn network() -> wifi_scan::Wifi {
+        wifi_scan::Wifi {
+            mac: "12:34:56:78:9A:BC".into(),
+            ssid: "Flock-test".into(),
+            channel: 6,
+            signal_level: -55,
+            security: vec![WifiSecurity::Wpa2PersonalPsk],
+        }
+    }
+    #[test]
+    fn network_metadata_and_bounds() {
+        let event = convert_network(&network()).unwrap();
+        assert_eq!(event.mac, [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]);
+        assert_eq!(event.ssid.as_str(), "Flock-test");
+        assert_eq!(event.security.as_str(), "[WPA2-PSK]");
+        assert_eq!((event.channel, event.rssi), (6, -55));
+        assert!(convert_network(&wifi_scan::Wifi::default()).is_none());
+        let mut n = network();
+        n.ssid = "é".repeat(20);
+        n.signal_level = -300;
+        let event = convert_network(&n).unwrap();
+        assert_eq!(event.ssid.len(), 32);
+        assert_eq!(event.rssi, -128);
+        n.ssid.clear();
+        n.signal_level = 300;
+        let event = convert_network(&n).unwrap();
+        assert!(event.ssid.is_empty());
+        assert_eq!(event.rssi, 127);
+    }
+    #[test]
+    fn security_modes_are_preserved_in_csv_tags() {
+        use WifiSecurity::*;
+        for (sec, expected) in [
+            (Open, "[OPEN]"),
+            (Wep, "[WEP]"),
+            (WpaPersonal, "[WPA-PSK]"),
+            (Wpa2PersonalPsk, "[WPA2-PSK]"),
+            (Wpa3PersonalSae, "[WPA3-SAE]"),
+            (Wpa2EnterpriseEap, "[WPA2-EAP]"),
+            (Wpa3EnterpriseEap256, "[WPA3-EAP256]"),
+            (Wpa3EnterpriseSuiteBEap256, "[WPA3-SUITEB]"),
+            (Wpa2EnterpriseEapFt, "[WPA2-EAP-FT]"),
+            (Wpa3PersonalPsk256, "[WPA3-PSK256]"),
+            (Wpa2PersonalPskFt, "[WPA2-PSK-FT]"),
+            (Wpa3PersonalSaeFt, "[WPA3-SAE-FT]"),
+            (WpaEnterprise, "[WPA-EAP]"),
+            (Personal, "[PSK]"),
+            (Enterprise, "[EAP]"),
+            (Tdls, "[TDLS]"),
+            (Unknown, "[?]"),
+            (Other("vendor".into()), "[?]"),
+        ] {
+            assert_eq!(format_security(&[sec]).as_str(), expected);
+        }
+        assert_eq!(format_security(&[]).as_str(), "[?]");
+        assert_eq!(
+            format_security(&[Unknown, Wpa2PersonalPsk, Wpa3PersonalSae]).as_str(),
+            "[WPA2-PSK][WPA3-SAE]"
+        );
+        assert!(format_security(&vec![Wpa3EnterpriseSuiteBEap256; 100]).len() <= 64);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn scan_recovers_from_failure_skips_redacted_results_and_stops_on_close() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut scans = std::collections::VecDeque::from([
+            Err(wifi_scan::Error::ScanFailed("temporary".into())),
+            Ok(vec![wifi_scan::Wifi::default()]),
+            Ok(vec![network(), network()]),
+        ]);
+        let task = tokio::spawn(scan_loop_with(tx, move || {
+            std::future::ready(Ok(scans.pop_front().unwrap_or(Ok(vec![]))))
+        }));
+        let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
+            panic!("expected WiFi");
+        };
+        assert_eq!(event.ssid.as_str(), "Flock-test");
+        drop(rx);
+        task.await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn closed_output_and_scan_task_failure_are_observable() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        scan_loop_with(tx, || async {
+            panic!("must not scan after receiver closes")
+        })
+        .await
+        .unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        let err = scan_loop_with(tx, || std::future::ready(Err(ScanError::TaskPanicked)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "scan task panicked");
+    }
+    #[tokio::test]
+    async fn closed_public_scanner_does_not_start_a_hardware_scan() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        scan_loop(tx).await.unwrap();
+    }
+}

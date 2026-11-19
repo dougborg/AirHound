@@ -65,7 +65,7 @@ fn location_loop() {
     loop {
         autoreleasepool(|_| {
             run_loop.runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(1.0));
-            let snapshot = read_location(&mgr);
+            let snapshot = unsafe { mgr.location() }.as_deref().and_then(read_location);
             *LOCATION.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
         });
         // A run loop with no sources can return immediately (e.g. permission
@@ -79,8 +79,7 @@ pub fn get_current_location() -> Option<Location> {
     *LOCATION.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn read_location(manager: &CLLocationManager) -> Option<Location> {
-    let loc = unsafe { manager.location() }?;
+fn read_location(loc: &objc2_core_location::CLLocation) -> Option<Location> {
     // CoreLocation may initially return a cached fix from an earlier session.
     if unsafe { loc.timestamp() }.timeIntervalSinceNow().abs() > 30.0 {
         return None;
@@ -96,4 +95,36 @@ fn read_location(manager: &CLLocationManager) -> Option<Location> {
         accuracy,
         altitude: unsafe { loc.altitude() },
     })
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use objc2::AllocAnyThread;
+    use objc2_core_location::{CLLocation, CLLocationCoordinate2D};
+
+    #[test]
+    fn fresh_fixes_preserve_coordinates_and_stale_or_invalid_fixes_are_rejected() {
+        for (age, accuracy, valid) in [
+            (0., 5., true),
+            (-60., 5., false),
+            (60., 5., false),
+            (0., -1., false),
+        ] {
+            let fix = unsafe {
+                CLLocation::initWithCoordinate_altitude_horizontalAccuracy_verticalAccuracy_timestamp(
+                    CLLocation::alloc(), CLLocationCoordinate2D { latitude: 40., longitude: -105. },
+                    1600., accuracy, 10., &NSDate::dateWithTimeIntervalSinceNow(age))
+            };
+            let result = read_location(&fix);
+            assert_eq!(result.is_some(), valid);
+            if let Some(location) = result {
+                assert_eq!(location.latitude, 40.);
+                assert_eq!(location.longitude, -105.);
+                assert_eq!(location.altitude, 1600.);
+                assert_eq!(location.accuracy, 5.);
+            }
+        }
+    }
 }
