@@ -279,7 +279,16 @@ fn configure_antenna(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()
     io.write32(0x004c, coexist)
 }
 
-fn channel_one(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()> {
+fn validate_channel(channel: u8) -> Result<()> {
+    ensure!(
+        (1..=11).contains(&channel),
+        "supported receive channels are 1..11, got {channel}"
+    );
+    Ok(())
+}
+
+fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8) -> Result<()> {
+    let [r35, r33, r32, r31, pll_n, xo_div] = tables::CHANNEL_PLL[usize::from(channel - 1)];
     mcu_pair(io, 1, 2, 0, true).context("MCU BW_SETTING 20MHz")?;
     rmw(io, 0x2004, 0x18 | 0x20, 0)?; // CORE1 bandwidth/Japan channel14 filter
     rmw(io, 0x2300, 0x7000 | 0x300, 0x1000)?; // AGC0 BW20, primary channel0
@@ -289,22 +298,22 @@ fn channel_one(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()> {
     write_rf_table(io, tables::RF_2G)?;
     write_rf(io, 5, 0, 0x45)?;
     write_rf(io, 6, 0, 0x44)?;
-    // Channel1's non-SDM frequency-plan entry (2412MHz).
-    for (reg, value) in [(37, 0x02), (36, 0x3f), (35, 0x28), (34, 0xdd), (33, 0xe2)] {
+    // Channels 1..11 use the non-SDM frequency plan.
+    for (reg, value) in [(37, 0x02), (36, 0x3f), (35, r35), (34, 0xdd), (33, r33)] {
         write_rf(io, 0, reg, value)?;
     }
     for (reg, mask, value) in [
         (32, 0xe0, 0x40),
-        (32, 0x1f, 2),
+        (32, 0x1f, r32),
         (31, 0xe0, 0x40),
-        (31, 0x1f, 2),
+        (31, 0x1f, r31),
         (30, 0x80, 0),
         (30, 0x7c, 0),
         (30, 2, 2),
     ] {
         rf_rmw(io, reg, mask, value)?;
     }
-    write_rf(io, 0, 29, 0x28)?;
+    write_rf(io, 0, 29, pll_n)?;
     rf_rmw(io, 30, 1, 0)?;
     for (mask, value) in [(0xc0, 0), (0x30, 0x30), (0x0c, 0)] {
         rf_rmw(io, 28, mask, value)?;
@@ -312,7 +321,7 @@ fn channel_one(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()> {
     write_rf(io, 0, 26, 0)?;
     write_rf(io, 0, 27, 0)?;
     rf_rmw(io, 28, 3, 0)?;
-    rf_rmw(io, 24, 3, 3)?;
+    rf_rmw(io, 24, 3, xo_div)?;
     write_rf_table(io, tables::RF_BW_20)?;
     write_rf_table(io, tables::RF_BAND_2G)?;
     // External PA enable is intentionally left off for receive-only operation.
@@ -336,8 +345,15 @@ fn channel_one(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()> {
 /// This deliberately reports incomplete full calibration rather than claiming
 /// the omitted TX-inclusive firmware calibration is safe for a passive tool.
 pub fn initialize_channel_one(io: &mut impl RegisterIo) -> Result<RadioSetup> {
+    initialize_channel(io, 1)
+}
+
+/// Initialize passive 20 MHz reception on a supported 2.4 GHz channel.
+/// Invalid channels are rejected before touching hardware.
+pub fn initialize_channel(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup> {
+    validate_channel(channel)?;
     disable(io)?;
-    match initialize_inner(io) {
+    match initialize_inner(io, channel) {
         Ok(setup) => Ok(setup),
         Err(error) => match disable(io) {
             Ok(()) => Err(error),
@@ -348,7 +364,7 @@ pub fn initialize_channel_one(io: &mut impl RegisterIo) -> Result<RadioSetup> {
     }
 }
 
-fn initialize_inner(io: &mut impl RegisterIo) -> Result<RadioSetup> {
+fn initialize_inner(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup> {
     let calibration = parse_calibration(&read_eeprom(io)?)?;
     poll_clear(
         io,
@@ -395,12 +411,22 @@ fn initialize_inner(io: &mut impl RegisterIo) -> Result<RadioSetup> {
     rf_rmw(io, 73, 0x80, 0)?;
     rf_rmw(io, 73, 0, 0x80)?;
     rmw(io, 0x2300, (1 << 4) | (1 << 3), 0)?; // one RX chain
-    channel_one(io, &calibration)?;
+    configure_channel(io, &calibration, channel)?;
     // Only resistance, VCO and receive DC-offset calibration. FULL (0xff),
     // TXIQ, TXDCOC, DPD, TSSI and LC sequences are deliberately absent.
     mcu_pair(io, 31, 1, 0, true).context("MCU resistance calibration")?;
-    mcu_pair(io, 31, 12, 1, true).context("MCU VCO calibration")?;
+    mcu_pair(io, 31, 12, u32::from(channel), true).context("MCU VCO calibration")?;
     mcu_pair(io, 31, 2, 1, true).context("MCU RX DC-offset calibration")?;
+    enable_passive_rx(io)?;
+    Ok(RadioSetup {
+        channel, frequency_mhz: 2412 + 5 * u16::from(channel - 1), bandwidth_mhz: 20,
+        full_calibration_performed: false,
+        omitted_calibrations: "FULL, LC, TSSI, TXIQ, TXDCOC, TX group-delay and DPD; RX sensitivity remains experimental",
+        calibration,
+    })
+}
+
+fn enable_passive_rx(io: &mut impl RegisterIo) -> Result<()> {
     // No frame filters except invalid PHY/version frames; accept other BSS,
     // multicast, broadcast and control frames. Bit0 remains clear to retain FCS errors.
     io.write32(0x1400, (1 << 1) | (1 << 4))?;
@@ -410,8 +436,8 @@ fn initialize_inner(io: &mut impl RegisterIo) -> Result<RadioSetup> {
     rmw(io, WPDMA_GLO_CFG, 1, 1 << 2)?;
     rmw(io, MAC_SYS_CTRL, MAC_TX | 3, MAC_RX)?;
     ensure!(
-        io.read32(MAC_SYS_CTRL)? & MAC_TX == 0,
-        "MAC TX unexpectedly enabled"
+        io.read32(MAC_SYS_CTRL)? & (MAC_TX | MAC_RX) == MAC_RX,
+        "MAC RX/TX gates do not match passive reception"
     );
     ensure!(
         io.read32(AUTO_RSP_CFG)? & 1 == 0,
@@ -421,12 +447,53 @@ fn initialize_inner(io: &mut impl RegisterIo) -> Result<RadioSetup> {
         io.read32(BEACON_TIME_CFG)? & BEACON_TX == 0,
         "beacon TX unexpectedly enabled"
     );
-    Ok(RadioSetup {
-        channel: 1, frequency_mhz: 2412, bandwidth_mhz: 20,
-        full_calibration_performed: false,
-        omitted_calibrations: "FULL, LC, TSSI, TXIQ, TXDCOC, TX group-delay and DPD; RX sensitivity remains experimental",
-        calibration,
-    })
+    ensure!(
+        io.read32(WPDMA_GLO_CFG)? & 5 == 4,
+        "packet DMA gates do not match passive reception"
+    );
+    Ok(())
+}
+
+/// Stop reception, discard pending old-channel USB packets, then retune.
+/// The callback must drain the packet endpoint until quiet with a bounded deadline.
+/// It runs with MAC RX/TX off and RX DMA on, so queued frames can reach USB.
+/// On failure all receive/transmit gates are closed best-effort; resume requires
+/// another successful retune. FULL/TX calibrations remain intentionally omitted.
+pub fn retune_with_drain<I: RegisterIo>(
+    io: &mut I,
+    calibration: &RxCalibration,
+    channel: u8,
+    drain: impl FnOnce(&mut I) -> Result<()>,
+) -> Result<()> {
+    validate_channel(channel)?;
+    let result = (|| {
+        rmw(io, MAC_SYS_CTRL, MAC_TX | MAC_RX, 0)?;
+        io.write32(AUTO_RSP_CFG, 0)?;
+        rmw(io, BEACON_TIME_CFG, BEACON_TX | (1 << 19), 0)?;
+        rmw(io, WPDMA_GLO_CFG, 1, 1 << 2)?;
+        poll_clear(io, 0x1200, 3, Duration::from_secs(1))?;
+        drain(io).context("draining old-channel packets")?;
+        rmw(io, WPDMA_GLO_CFG, 1 | (1 << 2), 0)?;
+        poll_clear(
+            io,
+            WPDMA_GLO_CFG,
+            (1 << 1) | (1 << 3),
+            Duration::from_secs(1),
+        )?;
+        configure_channel(io, calibration, channel)?;
+        mcu_pair(io, 31, 12, u32::from(channel), true).context("MCU VCO calibration")?;
+        mcu_pair(io, 31, 2, 1, true).context("MCU RX DC-offset calibration")?;
+        enable_passive_rx(io)
+    })();
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => match disable(io) {
+            Ok(()) => Err(error),
+            Err(cleanup) => {
+                Err(error.context(format!("retune failed; cleanup also failed: {cleanup:#}")))
+            }
+        },
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +508,8 @@ mod tests {
         efuse_offset: usize,
         efuse_triggers: Vec<u32>,
         calibrations: Vec<u32>,
+        calibration_parameters: Vec<u32>,
+        fail_calibration: bool,
         bbp_ready: bool,
         bad_rf_response: bool,
     }
@@ -461,6 +530,8 @@ mod tests {
                 efuse_offset: 0,
                 efuse_triggers: Vec::new(),
                 calibrations: Vec::new(),
+                calibration_parameters: Vec::new(),
+                fail_calibration: false,
                 bbp_ready: true,
                 bad_rf_response: false,
             }
@@ -525,6 +596,9 @@ mod tests {
                         "TX-inclusive calibration is forbidden"
                     );
                     self.calibrations.push(calibration);
+                    self.calibration_parameters
+                        .push(u32::from_le_bytes(payload[4..8].try_into().unwrap()));
+                    ensure!(!self.fail_calibration, "injected calibration failure");
                 }
                 1 => {}
                 _ => panic!("unexpected MCU command {command}"),
@@ -543,6 +617,87 @@ mod tests {
                 .copy_from_slice(&self.rf.get(&address).copied().unwrap_or(0).to_le_bytes());
             Ok(response)
         }
+    }
+
+    #[test]
+    fn hopping_programs_pll_and_drains_before_tuning() {
+        let mut io = SimulatedDevice::new();
+        let setup = initialize_channel(&mut io, 6).unwrap();
+        assert_eq!((setup.channel, setup.frequency_mhz), (6, 2437));
+        for (channel, r35, r33, r32, r31, n, divider) in [
+            (1, 0x28, 0xe2, 0x42, 0x42, 0x28, 3),
+            (6, 0x3c, 0xd4, 0x47, 0x47, 0xa2, 1),
+            (11, 0x3c, 0xd4, 0x47, 0x42, 0xa4, 1),
+        ] {
+            let old_pll = io.rf[&(RF_MEMMAP | 29)];
+            let mut drained = false;
+            retune_with_drain(&mut io, &setup.calibration, channel, |io| {
+                assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), 0);
+                assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 4);
+                assert_eq!(io.rf[&(RF_MEMMAP | 29)], old_pll);
+                drained = true;
+                Ok(())
+            })
+            .unwrap();
+            assert!(drained);
+            for (reg, value) in [(35, r35), (33, r33), (32, r32), (31, r31), (29, n)] {
+                assert_eq!(
+                    io.rf[&(RF_MEMMAP | reg)],
+                    value,
+                    "channel {channel}, RF {reg}"
+                );
+            }
+            assert_eq!(io.rf[&(RF_MEMMAP | 24)] & 3, divider);
+            assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), MAC_RX);
+            assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 4);
+            assert_eq!(&io.calibrations[io.calibrations.len() - 2..], &[12, 2]);
+            assert_eq!(
+                &io.calibration_parameters[io.calibration_parameters.len() - 2..],
+                &[u32::from(channel), 1]
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_channels_never_touch_hardware() {
+        struct NoIo;
+        impl RegisterIo for NoIo {
+            fn read32(&mut self, _: u32) -> Result<u32> {
+                panic!("unexpected read")
+            }
+            fn write32(&mut self, _: u32, _: u32) -> Result<()> {
+                panic!("unexpected write")
+            }
+        }
+        let cal = parse_calibration(&SimulatedDevice::new().eeprom).unwrap();
+        for channel in [0, 12, 13, 14, 36, 255] {
+            assert!(initialize_channel(&mut NoIo, channel).is_err());
+            assert!(
+                retune_with_drain(&mut NoIo, &cal, channel, |_| panic!("unexpected drain"))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn drain_and_calibration_failures_close_all_gates() {
+        let mut io = SimulatedDevice::new();
+        let setup = initialize_channel_one(&mut io).unwrap();
+        let error = retune_with_drain(&mut io, &setup.calibration, 6, |_| {
+            anyhow::bail!("endpoint never became quiet")
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("endpoint never became quiet"));
+        assert_eq!(io.rf[&(RF_MEMMAP | 29)], 0x28);
+        assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), 0);
+        assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 0);
+        io.fail_calibration = true;
+        let error = retune_with_drain(&mut io, &setup.calibration, 11, |_| Ok(())).unwrap_err();
+        assert!(format!("{error:#}").contains("injected calibration failure"));
+        assert_eq!(io.registers[&MAC_SYS_CTRL] & (MAC_TX | MAC_RX), 0);
+        assert_eq!(io.registers[&WPDMA_GLO_CFG] & 5, 0);
+        assert_eq!(io.registers[&AUTO_RSP_CFG], 0);
+        assert_eq!(io.registers[&BEACON_TIME_CFG] & BEACON_TX, 0);
     }
 
     #[test]

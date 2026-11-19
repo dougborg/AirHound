@@ -7,7 +7,7 @@ use mt7610u_lab::{
 use mt7610u_lab::{radio, rx};
 use std::path::PathBuf;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     sync::{
@@ -31,7 +31,9 @@ enum Command {
     InspectFirmware { firmware: PathBuf },
     /// Upload the pinned firmware into volatile MCU RAM; no EEPROM programming.
     Bootstrap { firmware: PathBuf },
-    /// Attempt passive channel-one reception; writes beacon NDJSON locally.
+    /// Replay a length-prefixed USB recording without accessing hardware.
+    Replay { input: PathBuf },
+    /// Capture passive 2.4GHz beacons; optionally hop channels.
     Capture {
         #[arg(long)]
         firmware: PathBuf,
@@ -41,6 +43,10 @@ enum Command {
         raw_usb: Option<PathBuf>,
         #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=300))]
         seconds: u16,
+        #[arg(long, value_delimiter = ',', default_value = "1", value_parser = clap::value_parser!(u8).range(1..=11))]
+        channels: Vec<u8>,
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u16).range(100..=10000))]
+        dwell_ms: u16,
     },
 }
 
@@ -52,6 +58,13 @@ fn main() -> Result<()> {
             write_json(
                 &mut std::io::stdout().lock(),
                 &serde_json::json!({"ilm_bytes":fw.ilm.len(),"ivb_bytes":fw.ivb.len(),"dlm_bytes":fw.dlm.len(),"version":fw.version,"build_version":fw.build_version,"build_time":fw.build_time,"sha256":fw.sha256,"is_reference":fw.sha256==firmware::REFERENCE_SHA256}),
+            )?;
+        }
+        Command::Replay { input } => {
+            let summary = mt7610u_lab::replay::replay(File::open(input)?)?;
+            write_json(
+                &mut std::io::stdout().lock(),
+                &serde_json::to_value(summary)?,
             )?;
         }
         Command::Probe => {
@@ -94,7 +107,9 @@ fn main() -> Result<()> {
             output,
             raw_usb,
             seconds,
-        } => capture(firmware, output, raw_usb, seconds)?,
+            channels,
+            dwell_ms,
+        } => capture(firmware, output, raw_usb, seconds, channels, dwell_ms)?,
     }
     Ok(())
 }
@@ -117,7 +132,10 @@ fn capture(
     output: PathBuf,
     raw_usb: Option<PathBuf>,
     seconds: u16,
+    channels: Vec<u8>,
+    dwell_ms: u16,
 ) -> Result<()> {
+    validate_capture_plan(&channels, raw_usb.is_some())?;
     let bytes = std::fs::read(firmware_path)?;
     let fw = Firmware::parse(&bytes)?;
     fw.require_reference()?;
@@ -135,7 +153,8 @@ fn capture(
         let uploaded = firmware::load(&mut device, &fw).context("firmware bootstrap")?;
         check_cancelled(&stop)?;
         let setup =
-            radio::initialize_channel_one(&mut device).context("channel-one initialization")?;
+            radio::initialize_channel(&mut device, channels[0]).context("initial channel setup")?;
+        radio::retune_with_drain(&mut device, &setup.calibration, channels[0], drain_packets)?;
         check_cancelled(&stop)?;
         writeln!(
             std::io::stderr().lock(),
@@ -148,19 +167,51 @@ fn capture(
         let (mut transfers, mut frames, mut beacons, mut malformed, mut total_bytes) =
             (0u64, 0u64, 0u64, 0u64, 0u64);
         let mut bssids = HashSet::new();
+        let mut channel_index = 0usize;
+        let mut tuned_at = Instant::now();
+        let dwell = Duration::from_millis(dwell_ms as u64);
+        let mut channel_beacons: BTreeMap<u8, u64> = channels.iter().map(|&c| (c, 0)).collect();
+        let mut channel_listen_ms: BTreeMap<u8, u128> = channels.iter().map(|&c| (c, 0)).collect();
+        let mut hops = 0u64;
+        let mut retune_ms = 0u128;
         while started.elapsed() < Duration::from_secs(seconds as u64)
             && !stop.load(Ordering::Relaxed)
         {
-            let n = device.read_packets(&mut buffer, Duration::from_millis(200))?;
+            if channels.len() > 1 && tuned_at.elapsed() >= dwell {
+                *channel_listen_ms.get_mut(&channels[channel_index]).unwrap() +=
+                    tuned_at.elapsed().as_millis();
+                channel_index = (channel_index + 1) % channels.len();
+                let retune_started = Instant::now();
+                radio::retune_with_drain(
+                    &mut device,
+                    &setup.calibration,
+                    channels[channel_index],
+                    drain_packets,
+                )?;
+                retune_ms += retune_started.elapsed().as_millis();
+                hops += 1;
+                tuned_at = Instant::now();
+                continue;
+            }
+            let remaining = Duration::from_secs(seconds as u64).saturating_sub(started.elapsed());
+            let channel_remaining = if channels.len() > 1 {
+                dwell.saturating_sub(tuned_at.elapsed())
+            } else {
+                remaining
+            };
+            let timeout = remaining
+                .min(channel_remaining)
+                .min(Duration::from_millis(200));
+            if timeout < Duration::from_millis(1) {
+                continue;
+            }
+            let n = device.read_packets(&mut buffer, timeout)?;
             if n == 0 {
                 continue;
             }
             transfers += 1;
             total_bytes += n as u64;
-            ensure!(
-                total_bytes <= 64 * 1024 * 1024,
-                "Capture reached the 64MiB transfer budget"
-            );
+            check_capture_budget(total_bytes, transfers, raw_output.is_some())?;
             if let Some(out) = &mut raw_output {
                 out.write_all(&(n as u32).to_le_bytes())?;
                 out.write_all(&buffer[..n])?;
@@ -179,6 +230,7 @@ fn capture(
             for frame in decoded {
                 if let Some(beacon) = frame.beacon {
                     beacons += 1;
+                    *channel_beacons.get_mut(&channels[channel_index]).unwrap() += 1;
                     bssids.insert(beacon.bssid);
                     let bssid = beacon
                         .bssid
@@ -186,12 +238,14 @@ fn capture(
                         .map(|b| format!("{b:02X}"))
                         .collect::<Vec<_>>()
                         .join(":");
-                    let value = serde_json::json!({"type":"beacon","elapsed_ms":started.elapsed().as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":setup.channel,"rssi_dbm":frame.rssi_dbm,"raw_rssi":frame.raw_rssi,"full_calibration":false});
+                    let value = serde_json::json!({"type":"beacon","elapsed_ms":started.elapsed().as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":channels[channel_index],"channel_epoch":hops,"dwell_elapsed_ms":tuned_at.elapsed().as_millis(),"rssi_dbm":frame.rssi_dbm,"estimated_rssi_dbm":mt7610u_lab::signal::estimate_rssi(frame.raw_rssi,frame.rx_info,&setup.calibration),"rssi_estimate_basis":"mt76_eeprom_formula","rssi_validated":false,"raw_rssi":frame.raw_rssi,"full_calibration":false});
                     serde_json::to_writer(&mut output, &value)?;
                     output.write_all(b"\n")?;
                 }
             }
         }
+        *channel_listen_ms.get_mut(&channels[channel_index]).unwrap() +=
+            tuned_at.elapsed().as_millis();
         output.flush()?;
         if let Some(out) = &mut raw_output {
             out.flush()?;
@@ -201,7 +255,7 @@ fn capture(
             "No valid beacons received; radio capture has NOT been validated"
         );
         Ok(
-            serde_json::json!({"duration_s":started.elapsed().as_secs_f64(),"transfers":transfers,"bytes":total_bytes,"frames":frames,"beacons":beacons,"distinct_bssids":bssids.len(),"malformed_transfers":malformed,"receive_channel":1,"interrupted":stop.load(Ordering::Relaxed),"full_calibration":false,"supplied_firmware_sha256":fw.sha256,"firmware_uploaded":uploaded}),
+            serde_json::json!({"duration_s":started.elapsed().as_secs_f64(),"transfers":transfers,"bytes":total_bytes,"frames":frames,"beacons":beacons,"distinct_bssids":bssids.len(),"malformed_transfers":malformed,"channels":channels,"dwell_ms":dwell_ms,"hops":hops,"retune_ms":retune_ms,"channel_beacons":channel_beacons,"channel_listen_ms":channel_listen_ms,"interrupted":stop.load(Ordering::Relaxed),"full_calibration":false,"supplied_firmware_sha256":fw.sha256,"firmware_uploaded":uploaded}),
         )
     })();
     let cleanup = radio::disable(&mut device).and_then(|()| {
@@ -223,6 +277,58 @@ fn capture(
         finish_with_cleanup(result, cleanup.context("disabling receiver after capture"))?;
     summary["cleanup_verified"] = serde_json::json!(true);
     write_json(&mut std::io::stdout().lock(), &summary)
+}
+
+fn validate_capture_plan(channels: &[u8], raw_usb: bool) -> Result<()> {
+    ensure!(
+        !channels.is_empty() && channels.len() <= 11,
+        "Choose one to eleven channels"
+    );
+    ensure!(
+        channels.iter().all(|c| (1..=11).contains(c)),
+        "Only channels 1..11 are supported"
+    );
+    ensure!(
+        channels.iter().copied().collect::<HashSet<_>>().len() == channels.len(),
+        "Duplicate channels would bias dwell scheduling"
+    );
+    ensure!(!raw_usb || channels.len() == 1, "Raw USB recording currently requires a single channel (the format has no channel metadata)");
+    Ok(())
+}
+
+fn check_capture_budget(payload_bytes: u64, transfers: u64, recording: bool) -> Result<()> {
+    let prefix_bytes = if recording {
+        transfers
+            .checked_mul(4)
+            .context("recording size overflow")?
+    } else {
+        0
+    };
+    let total = payload_bytes
+        .checked_add(prefix_bytes)
+        .context("capture size overflow")?;
+    ensure!(
+        total <= mt7610u_lab::replay::MAX_RECORDING_BYTES,
+        "Capture reached the 64MiB budget (including raw recording prefixes)"
+    );
+    Ok(())
+}
+
+// Drop queued old-channel frames only while the radio has disabled RX. Refuse
+// to continue if the endpoint cannot become quiet within a bounded drain.
+fn drain_packets(device: &mut UsbDevice) -> Result<()> {
+    let started = Instant::now();
+    let mut buffer = [0u8; 65536];
+    for _ in 0..128 {
+        ensure!(
+            started.elapsed() < Duration::from_millis(500),
+            "RX endpoint did not become quiet before retune"
+        );
+        if device.read_packets(&mut buffer, Duration::from_millis(20))? == 0 {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("RX endpoint exceeded the pre-retune drain budget")
 }
 
 fn write_json(writer: &mut impl Write, value: &serde_json::Value) -> Result<()> {
@@ -261,6 +367,47 @@ fn check_cancelled(stop: &AtomicBool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_budget_keeps_raw_output_within_replay_limit() {
+        let cap = mt7610u_lab::replay::MAX_RECORDING_BYTES;
+        assert!(check_capture_budget(cap - 4, 1, true).is_ok());
+        assert!(check_capture_budget(cap - 3, 1, true).is_err());
+        assert!(check_capture_budget(cap, 1, false).is_ok());
+        assert!(check_capture_budget(0, u64::MAX, true).is_err());
+    }
+
+    #[test]
+    fn channel_plans_reject_ambiguous_or_unsupported_capture_before_usb() {
+        assert!(validate_capture_plan(&[1, 6, 11], false).is_ok());
+        assert!(validate_capture_plan(&[6], true).is_ok());
+        for channels in [vec![], vec![0], vec![12], vec![1, 1]] {
+            assert!(validate_capture_plan(&channels, false).is_err());
+        }
+        assert!(validate_capture_plan(&[1, 6, 11], true).is_err());
+        assert!(Args::try_parse_from([
+            "lab",
+            "capture",
+            "--firmware",
+            "a",
+            "--output",
+            "b",
+            "--channels",
+            "12"
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "lab",
+            "capture",
+            "--firmware",
+            "a",
+            "--output",
+            "b",
+            "--dwell-ms",
+            "0"
+        ])
+        .is_err());
+    }
 
     struct BrokenPipe;
     impl Write for BrokenPipe {

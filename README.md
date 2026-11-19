@@ -327,7 +327,7 @@ Contributions are welcome — especially new device signatures. See [CONTRIBUTIN
 
 MIT for AirHound. The independent [MT7610U userspace driver experiment](drivers/mt7610u/README.md)
 is GPL-2.0-only and is not linked into AirHound. It has demonstrated passive
-channel-one beacon reception from an ALFA USB adapter on Apple Silicon macOS;
+beacon reception and channel hopping (1–11) from an ALFA AWUS036ACHM on Apple Silicon macOS;
 see its README for hardware evidence, limitations and separate firmware terms.
 
 ## Testing and analysis

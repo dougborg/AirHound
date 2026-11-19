@@ -25,14 +25,61 @@ After cleanup hardening, a repeat five-second run received 557 beacons from
 seconds. Both returned success and read back MAC TX/RX, automatic ACK and beacon
 transmit gates as disabled (`cleanup_verified: true`).
 This is evidence of working reception on one adapter, not a complete driver or
-a sensitivity benchmark. Exact ALFA retail model is unconfirmed.
+a sensitivity benchmark. The adapter's physical label confirms AWUS036ACHM.
+
+Subsequent hopping checks used a 500 ms requested dwell:
+
+| Channel plan | Capture time | Beacons | Distinct BSSIDs | Hops | Retune time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1, 6, 11 | 15 s | 1,051 | 48 | 27 | 1,140 ms |
+| 1–11 | 15 s | 544 | 61 | 27 | 1,181 ms |
+
+The all-channel run received at least one beacon while tuned to every supported
+channel. Both runs verified disabled shutdown gates. These are opportunistic
+captures of a changing RF environment, not controlled comparisons of antenna
+range or sensitivity. At about 42–44 ms per retune, a three-channel 500 ms dwell
+cycle takes roughly 1.63 seconds; eleven channels take roughly 5.97 seconds.
+A SIGTERM test while hopping stopped after about two seconds and three hops,
+with all shutdown gate readbacks verified.
+
+Some APs were heard while configured far from their advertised channel. Their
+EEPROM-derived signal estimates were substantially weaker off-channel, and
+sightings occurred throughout dwells, including before the first hop. This
+favors out-of-band reception over a short stale-packet burst, but does not prove
+the hardware cause. `receive_channel` records the configured channel;
+`advertised_channel` records the beacon's own primary-channel information.
+Neither is substituted for the other. `channel_epoch` and `dwell_elapsed_ms`
+allow transition timing to be investigated without guessing from arrival order.
+
+## Why support this adapter?
+
+The dedicated USB radio can receive beacon BSSIDs directly without relying on
+macOS Wi-Fi scan results, and can scan independently of the Mac's network
+connection. Channel control and per-beacon observations make it useful for
+passive Wi-Fi surveying; neither throughput ratings nor transmitter power alone
+establish receive range.
+
+[ALFA documents mainline Linux support](https://docs.alfa.com.tw/Support/Linux/MT7610U/)
+for this chipset, starting with kernel 4.19. The confirmed AWUS036ACHM's
+[specifications](https://www.alfa.com.tw/products/awus036achm) include dual-band
+2.4/5 GHz operation and a detachable 5 dBi RP-SMA antenna. USB identification
+alone does not distinguish that retail model from Tube-UAC2; the physical label
+was used to verify the model. Antenna placement and
+external antenna options can help surveying, but this prototype has not measured
+a sensitivity or range advantage over the Mac's built-in radio.
+
+This is a Wi-Fi 5-era 2.4/5 GHz chipset, not a 6 GHz receiver. One radio listens
+on one channel at a time; hopping necessarily misses frames on other channels.
+GPS/time/location correlation and AirHound ingestion remain separate work.
 
 ## Current limits
 
-- Channel 1 only; no channel hopping or 5 GHz support yet.
+- Passive 20 MHz channels 1–11 only; no 5 GHz support yet.
 - Full, LC, TSSI and TX-related calibration are omitted. Receive sensitivity
-  remains experimental. `rssi_dbm` is `null`; raw RSSI bytes are retained without
-  pretending they are calibrated dBm.
+  remains experimental. `rssi_dbm` is `null`. `estimated_rssi_dbm` applies mt76's
+  signed chain-zero formula (raw + EEPROM offset − LNA gain) with checked
+  arithmetic. This estimate is explicitly unvalidated; raw bytes are retained.
+  Zero samples and A-MPDU samples without the RSSI-valid flag have no estimate.
 - No native macOS Wi-Fi interface, association, IP networking or packet injection.
 - The host never enables MAC TX, automatic ACKs or beacon transmission, and
   exposes only the MCU bulk-output endpoint. This has not been independently
@@ -75,6 +122,15 @@ cargo run --locked -- bootstrap /path/to/mt7610e.bin
 mkdir -p captures
 cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
   --output captures/beacons.ndjson --seconds 10
+
+# Visit the common non-overlapping 2.4GHz channels in order.
+cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
+  --output captures/hopping.ndjson --channels 1,6,11 --dwell-ms 500 --seconds 30
+
+# Cover all supported channels, at the cost of less time on each one.
+cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
+  --output captures/all-channels.ndjson --channels 1,2,3,4,5,6,7,8,9,10,11 \
+  --dwell-ms 500 --seconds 30
 ```
 
 `inspect-firmware` does not open USB. `bootstrap` loads volatile firmware and
@@ -90,7 +146,29 @@ each raw USB transfer prefixed by its little-endian `u32` byte length. These
 files contain nearby network identifiers and possibly raw data frames; keep
 them local rather than committing them.
 
-Capture duration is 1–300 seconds, with a 64 MiB USB transfer budget. Ctrl-C,
+Raw USB recording currently requires a single channel because its file format
+does not include channel metadata. Replay needs neither hardware nor firmware:
+
+```sh
+cargo run --locked -- replay captures/transfers.bin
+```
+
+Replay emits aggregate counts only, rejects truncated/oversized records and
+bounds input to 64 MiB including length prefixes. Its CRC-error counter covers
+structurally decoded frames; malformed transfers are counted separately.
+
+Channel plans reject duplicates and unsupported channels before opening USB.
+The receiver stops MAC reception, drains queued old-channel USB packets with a
+bounded wait, then retunes before accepting new observations. Failure to drain
+aborts capture. The requested dwell is listening time between retunes, not a
+guaranteed whole-sweep period. `--seconds` bounds the capture loop, excluding
+initialization; a retune already in progress can finish after that deadline.
+Summaries include per-channel observation counts,
+listening time and retune overhead. Advertised beacon channel remains distinct
+from receive channel: neighboring channels can overlap.
+
+Capture duration is 1–300 seconds, with a 64 MiB budget including length prefixes
+when recording raw USB. Ctrl-C,
 SIGTERM and SIGHUP request orderly shutdown. Cancellation is checked between
 initialization stages and between receive operations; a stage already running
 finishes its bounded USB operations first. Normal completion and returned errors attempt to
@@ -106,14 +184,14 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-The 27 local tests pass. The dedicated GitHub workflow runs these checks on Linux and macOS and audits
+The dedicated GitHub workflow runs these checks on Linux and macOS and audits
 the standalone lockfile. Dependabot tracks this crate separately. Tests cover
 firmware/header boundaries, USB framing, malformed receive descriptors and
 beacon elements, EEPROM read-only commands, and simulated initialization traces
 that keep transmit/ACK/beacon gates disabled.
 
-Next milestones are longer capture/shutdown testing, offline replay of raw
-captures, receive calibration and RSSI validation, channel hopping, and a
+Next milestones are longer capture/shutdown testing, receive calibration and
+RSSI validation, 5 GHz receive support, and a
 versioned companion-process interface for AirHound. Hardware measurements must
 remain separate from simulated-test claims.
 

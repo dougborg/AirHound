@@ -395,3 +395,20 @@ pub(super) const BBP_2G_20: &[(u32, u32)] = &[
     (0x000023e8, 0x00001010),
     (0x00002800, 0x3d5000e0),
 ];
+
+// Variable fields from mt76x0_frequency_plan, channels 1..11 (20 MHz).
+// Common PLL fields are programmed explicitly by configure_channel.
+// Columns: R35, R33, R32 low, R31 low, PLL N, R24 XO divider.
+pub const CHANNEL_PLL: [[u8; 6]; 11] = [
+    [0x28, 0xe2, 2, 2, 0x28, 3],
+    [0x3c, 0xe4, 7, 2, 0xa1, 1],
+    [0x3c, 0xe2, 7, 11, 0x50, 0],
+    [0x28, 0xd4, 2, 9, 0x50, 0],
+    [0x3c, 0xd4, 7, 2, 0xa2, 1],
+    [0x3c, 0xd4, 7, 7, 0xa2, 1],
+    [0x28, 0xe2, 2, 7, 0x28, 3],
+    [0x3c, 0xd4, 7, 2, 0xa3, 1],
+    [0x3c, 0xf2, 7, 13, 0x28, 3],
+    [0x28, 0xd4, 2, 9, 0x51, 0],
+    [0x3c, 0xd4, 7, 2, 0xa4, 1],
+];
