@@ -405,7 +405,10 @@ fn handle_wifi_event(
 }
 
 /// Read bounded command lines, preserving framing across arbitrary read chunks.
-fn read_commands(mut reader: impl BufRead, tx: mpsc::Sender<Option<HostCommand>>) -> io::Result<()> {
+fn read_commands(
+    mut reader: impl BufRead,
+    tx: mpsc::Sender<Option<HostCommand>>,
+) -> io::Result<()> {
     let mut framing = comm::LineReader::new();
     let mut bytes = [0u8; 256];
     loop {
@@ -439,7 +442,9 @@ async fn command_loop(
         let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
         let mut scanning = scanning_state.load(Ordering::Relaxed);
         let result = match cmd.as_ref() {
-            Some(cmd) => comm::execute_command(cmd, &mut cfg, &mut scanning, false, None).map(|_| ()),
+            Some(cmd) => {
+                comm::execute_command(cmd, &mut cfg, &mut scanning, false, None).map(|_| ())
+            }
             None => Err(protocol::CommandError::InvalidCommand),
         };
         scanning_state.store(scanning, Ordering::Relaxed);
@@ -535,8 +540,16 @@ mod tests {
         assert_eq!(config.lock().unwrap().min_rssi, -65);
         let bytes = output.bytes.lock().unwrap().clone();
         let text = String::from_utf8(bytes).unwrap();
-        let lines: Vec<_> = text.lines().filter(|line| line.contains("\"type\":\"status\"")).collect();
-        assert_eq!(text.lines().filter(|line| line.contains("\"type\":\"command_result\"")).count(), 5);
+        let lines: Vec<_> = text
+            .lines()
+            .filter(|line| line.contains("\"type\":\"status\""))
+            .collect();
+        assert_eq!(
+            text.lines()
+                .filter(|line| line.contains("\"type\":\"command_result\""))
+                .count(),
+            5
+        );
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"scanning\":false"));
         assert!(lines[1].contains("\"scanning\":true"));
@@ -551,7 +564,10 @@ mod tests {
             input.extend_from_slice(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n");
             read_commands(io::Cursor::new(input), tx)
         });
-        assert!(matches!(rx.recv().await, Some(HostCommand::GetStatus)));
+        assert!(matches!(
+            rx.recv().await,
+            Some(Some(HostCommand::GetStatus))
+        ));
         assert!(rx.recv().await.is_none());
         producer.join().unwrap().unwrap();
     }
@@ -559,14 +575,20 @@ mod tests {
     #[tokio::test]
     async fn command_errors_are_observable_without_state_changes() {
         let (tx, rx) = mpsc::channel(1);
-        let producer = std::thread::spawn(move || read_commands(io::Cursor::new(b"oops\n{\"cmd\":\"set_rssi\",\"min_rssi\":1}\n{\"cmd\":\"set_mode\",\"mode\":\"ap\"}\n"), tx));
+        let producer = std::thread::spawn(move || {
+            read_commands(io::Cursor::new(b"oops\n{\"cmd\":\"set_rssi\",\"min_rssi\":1}\n{\"cmd\":\"set_mode\",\"mode\":\"ap\"}\n"), tx)
+        });
         let config = Arc::new(Mutex::new(FilterConfig::new()));
         let scanning = AtomicBool::new(true);
         let mut output = Vec::new();
-        command_loop(rx, config.clone(), &scanning, Instant::now(), &mut output).await.unwrap();
+        command_loop(rx, config.clone(), &scanning, Instant::now(), &mut output)
+            .await
+            .unwrap();
         producer.join().unwrap().unwrap();
         let output = String::from_utf8(output).unwrap();
-        for error in ["invalid_command", "invalid_argument", "unsupported"] { assert!(output.contains(error)); }
+        for error in ["invalid_command", "invalid_argument", "unsupported"] {
+            assert!(output.contains(error));
+        }
         assert_eq!(output.lines().count(), 3);
         assert_eq!(config.lock().unwrap().min_rssi, -90);
         assert!(scanning.load(Ordering::Relaxed));
