@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-remote-id.v1.schema.json",
+  "title": "AirHound desktop BLE Remote ID v1",
+  "description": "Decoded service data from an OS property snapshot. No claim of fresh RF reception, identity authentication, extended advertising or PHY support. Hardware address is optional.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schema_version",
+    "peripheral_id",
+    "identity_scope",
+    "address_type",
+    "source",
+    "provenance",
+    "freshness",
+    "packet_completeness",
+    "message_counter",
+    "rssi",
+    "ts"
+  ],
+  "properties": {
+    "type": {
+      "const": "ble_remote_id"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "source": {
+      "const": "ble_service_data"
+    },
+    "provenance": {
+      "const": "os_property_snapshot"
+    },
+    "freshness": {
+      "const": "possibly_cached"
+    },
+    "packet_completeness": {
+      "const": "unknown"
+    },
+    "peripheral_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "identity_scope": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "receiver_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$",
+      "not": {
+        "enum": [
+          "00:00:00:00:00:00",
+          "FF:FF:FF:FF:FF:FF"
+        ]
+      }
+    },
+    "address_type": {
+      "enum": [
+        "public",
+        "random",
+        "unknown"
+      ]
+    },
+    "message_counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "rssi": {
+      "type": "integer",
+      "minimum": -128,
+      "maximum": 127
+    },
+    "ua_type": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "uas_id": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "operator_id": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "lat": {
+      "type": "number"
+    },
+    "lon": {
+      "type": "number"
+    },
+    "alt": {
+      "type": "number"
+    },
+    "speed": {
+      "type": "number"
+    }
+  }
+}

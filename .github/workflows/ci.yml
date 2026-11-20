@@ -101,6 +101,7 @@ jobs:
         run: |
           check-jsonschema --schemafile schemas/device-message.v1.schema.json schemas/examples/*.device.json
           check-jsonschema --schemafile schemas/desktop-ble.v1.schema.json schemas/examples/*.desktop.json
+          check-jsonschema --schemafile schemas/desktop-remote-id.v1.schema.json schemas/examples/*.desktop-rid.json
 
   test:
     runs-on: ubuntu-latest
