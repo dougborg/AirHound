@@ -96,7 +96,7 @@ async fn performance_event_pipeline() {
                 }
             );
             let records_per_ble = if cfg!(target_os = "linux") && scenario == "hardware_mac" {
-                2
+                3
             } else {
                 1
             };
