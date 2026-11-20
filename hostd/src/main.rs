@@ -12,6 +12,7 @@ mod ble;
 mod ble_payload;
 mod ble_remote_id;
 mod control;
+mod gpsd;
 mod health;
 mod receiver;
 use health::{Phase, Scanner};
@@ -99,6 +100,12 @@ struct Args {
     external_channels: Vec<u8>,
     #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u16).range(100..=10000))]
     external_dwell_ms: u16,
+    /// Read GNSS fixes from an already-running gpsd server (e.g. 127.0.0.1:2947).
+    #[arg(long)]
+    gpsd: Option<String>,
+    /// gpsd device path; otherwise bind to the first reporting device for this session.
+    #[arg(long, requires = "gpsd")]
+    gpsd_device: Option<String>,
     /// Disable WiFi scanning
     #[arg(long)]
     no_wifi: bool,
@@ -132,7 +139,10 @@ fn default_output_path() -> PathBuf {
 }
 
 /// Get the current GPS location (macOS: CoreLocation, other: always None).
-fn get_location() -> Option<Location> {
+fn get_location(control: &ScanControl) -> Option<Location> {
+    if let Some(location) = control.external_location() {
+        return location;
+    }
     #[cfg(target_os = "macos")]
     {
         location_macos::get_current_location()
@@ -248,7 +258,11 @@ async fn main() -> io::Result<()> {
             SessionPolicy::external()
         } else {
             SessionPolicy::native()
-        },
+        }
+        .with_gpsd(args.gpsd.clone().map(|endpoint| gpsd::Options {
+            endpoint,
+            device: args.gpsd_device.clone(),
+        })),
         args.filter_config(),
         writer,
         io::stdout(),
@@ -326,22 +340,29 @@ async fn shutdown_signal() -> io::Result<()> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct SessionPolicy {
     shutdown_budget: std::time::Duration,
     fatal_wifi_errors: bool,
+    gpsd: Option<gpsd::Options>,
 }
 impl SessionPolicy {
+    fn with_gpsd(mut self, options: Option<gpsd::Options>) -> Self {
+        self.gpsd = options;
+        self
+    }
     fn native() -> Self {
         Self {
             shutdown_budget: std::time::Duration::from_secs(1),
             fatal_wifi_errors: false,
+            gpsd: None,
         }
     }
     fn external() -> Self {
         Self {
             shutdown_budget: std::time::Duration::from_secs(40),
             fatal_wifi_errors: true,
+            gpsd: None,
         }
     }
 }
@@ -379,6 +400,11 @@ where
         BOARD_NAME
     );
     let control = ScanControl::new(true);
+    let location_task = policy.gpsd.map(|options| {
+        let source = gpsd::Source::new(options.device.clone());
+        control.set_location_source(source.clone());
+        tokio::spawn(gpsd::run(options, source, control.subscribe()))
+    });
     let config = Arc::new(Mutex::new(config));
     let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
     let start = Instant::now();
@@ -451,6 +477,9 @@ where
         }
     };
     let _ = command_task.await;
+    if let Some(task) = location_task {
+        let _ = task.await;
+    }
     result
 }
 
@@ -536,7 +565,7 @@ async fn filter_task<W: Write, O: Write>(
 
         let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
         let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let location = get_location();
+        let location = get_location(&control);
 
         match event {
             ScanEvent::Ble(ref ble_event) => {

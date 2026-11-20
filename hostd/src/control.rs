@@ -15,6 +15,7 @@ pub struct ScanControl(
     watch::Sender<State>,
     Arc<Mutex<Snapshot>>,
     Arc<Mutex<Option<crate::receiver::Receiver>>>,
+    Arc<Mutex<Option<crate::gpsd::Source>>>,
 );
 
 impl ScanControl {
@@ -28,7 +29,19 @@ impl ScanControl {
             .0,
             Arc::new(Mutex::new(Snapshot::default())),
             Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
+    }
+    pub fn set_location_source(&self, source: crate::gpsd::Source) {
+        *self.3.lock().unwrap_or_else(|e| e.into_inner()) = Some(source);
+    }
+    /// Outer Some means an explicit external provider; no silent fallback.
+    pub fn external_location(&self) -> Option<Option<crate::wigle::Location>> {
+        self.3
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|source| source.location())
     }
     pub fn health(&self) -> Snapshot {
         *self.1.lock().unwrap_or_else(|e| e.into_inner())
@@ -62,6 +75,9 @@ impl ScanControl {
         if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             value["receiver"] =
                 serde_json::to_value(receiver).expect("receiver metadata is serializable");
+        }
+        if let Some(source) = self.3.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            value["location"] = source.health();
         }
         value
     }

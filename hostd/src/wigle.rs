@@ -8,13 +8,14 @@
 use std::io::{self, Write};
 
 /// A GPS fix for WiGLE CSV rows. Platform-agnostic — populated by
-/// `location_macos` on macOS, `None` elsewhere.
+/// CoreLocation on macOS or the explicitly selected gpsd source.
+/// Altitude is mean sea level in meters; accuracy is horizontal meters when known.
 #[derive(Debug, Clone, Copy)]
 pub struct Location {
     pub latitude: f64,
     pub longitude: f64,
-    pub accuracy: f64,
-    pub altitude: f64,
+    pub accuracy: Option<f64>,
+    pub altitude: Option<f64>,
 }
 
 /// WiGLE CSV v1.6 writer.
@@ -124,8 +125,8 @@ fn format_location(location: Option<&Location>) -> (String, String, String, Stri
         Some(loc) => (
             loc.latitude.to_string(),
             loc.longitude.to_string(),
-            loc.altitude.to_string(),
-            loc.accuracy.to_string(),
+            loc.altitude.map(|v| v.to_string()).unwrap_or_default(),
+            loc.accuracy.map(|v| v.to_string()).unwrap_or_default(),
         ),
         None => (String::new(), String::new(), String::new(), String::new()),
     }
@@ -190,8 +191,8 @@ mod tests {
             let loc = Location {
                 latitude: 37.7749,
                 longitude: -122.4194,
-                altitude: 10.0,
-                accuracy: 5.0,
+                altitude: Some(10.0),
+                accuracy: Some(5.0),
             };
             w.write_wifi(
                 "AA:BB:CC:DD:EE:FF",
@@ -283,8 +284,8 @@ mod tests {
         let loc = Location {
             latitude: 1.0,
             longitude: 2.0,
-            altitude: 3.0,
-            accuracy: 4.0,
+            altitude: Some(3.0),
+            accuracy: Some(4.0),
         };
 
         type WriteCase<'a> = Box<dyn Fn(&mut WigleWriter<&mut Vec<u8>>) + 'a>;

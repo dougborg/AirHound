@@ -13,7 +13,7 @@ macos-private-addresses = ["dep:corebluetooth-address"]
 [dependencies]
 airhound = { path = "..", default-features = false, features = ["board-host"] }
 btleplug = "0.13"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process", "io-util", "net"] }
 futures-lite = "2"
 log = "0.4"
 env_logger = "0.11"
