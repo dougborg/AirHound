@@ -34,6 +34,7 @@ objc2 = "0.6"
 objc2-core-bluetooth = { version = "0.3", default-features = false, features = ["std", "CBCentralManager", "CBManager"] }
 
 [dev-dependencies]
+libc = "0.2"
 tokio = { version = "1", features = ["test-util"] }
 
 [lints.rust]

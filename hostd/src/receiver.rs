@@ -282,11 +282,44 @@ fn phy_response(packet: &[u8], index: u16) -> Result<Option<ControllerPhy>, &'st
     }))
 }
 
+// Exercise the actual bounded socket receive path with local datagrams in tests;
+// this does not require a Bluetooth controller or privileged MGMT socket.
+#[cfg(any(target_os = "linux", test))]
+fn receive_phy(
+    fd: std::os::fd::RawFd,
+    index: u16,
+    timeout: std::time::Duration,
+) -> Result<ControllerPhy, &'static str> {
+    use std::time::Instant;
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("mgmt_query_timeout");
+        }
+        let mut pollfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut pollfd, 1, remaining.as_millis().max(1) as i32) } <= 0 {
+            return Err("mgmt_query_timeout");
+        }
+        let mut packet = [0u8; 1024];
+        let size = unsafe { libc::recv(fd, packet.as_mut_ptr().cast(), packet.len(), 0) };
+        if size < 0 {
+            return Err("mgmt_receive_failed");
+        }
+        if let Some(phy) = phy_response(&packet[..size as usize], index)? {
+            return Ok(phy);
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::time::{Duration, Instant};
     #[repr(C)]
     struct SockAddrHci {
         family: libc::sa_family_t,
@@ -334,30 +367,7 @@ mod linux {
         {
             return Err("mgmt_send_failed");
         }
-        let deadline = Instant::now() + Duration::from_millis(400);
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err("mgmt_query_timeout");
-            }
-            let mut pollfd = libc::pollfd {
-                fd: fd.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            if unsafe { libc::poll(&mut pollfd, 1, remaining.as_millis().max(1) as i32) } <= 0 {
-                return Err("mgmt_query_timeout");
-            }
-            let mut packet = [0u8; 1024];
-            let size =
-                unsafe { libc::recv(fd.as_raw_fd(), packet.as_mut_ptr().cast(), packet.len(), 0) };
-            if size < 0 {
-                return Err("mgmt_receive_failed");
-            }
-            if let Some(phy) = phy_response(&packet[..size as usize], index)? {
-                return Ok(phy);
-            }
-        }
+        receive_phy(fd.as_raw_fd(), index, std::time::Duration::from_millis(400))
     }
 }
 
@@ -427,6 +437,45 @@ mod tests {
         assert_eq!(
             health["receiver"]["coded_rx"]["validated_reception"],
             "unknown"
+        );
+    }
+
+    #[test]
+    fn management_transport_ignores_other_controllers_and_bounds_failure() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixDatagram;
+        use std::time::Duration;
+        let (reader, writer) = UnixDatagram::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut response = vec![1, 0, 2, 0, 15, 0, 0x44, 0, 0];
+        response.extend_from_slice(&(1u32 << 14).to_le_bytes());
+        response.extend_from_slice(&0u32.to_le_bytes());
+        response.extend_from_slice(&(1u32 << 10).to_le_bytes());
+        let mut unrelated = response.clone();
+        unrelated[2] = 3;
+        writer.send(&unrelated).unwrap();
+        writer.send(&response).unwrap();
+        let phy = receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)).unwrap();
+        assert_eq!(phy.supported_mask, 1 << 14);
+        assert_eq!(phy.system_selected_mask, 1 << 10);
+        assert_eq!(
+            receive_phy(reader.as_raw_fd(), 2, Duration::ZERO),
+            Err("mgmt_query_timeout")
+        );
+        assert_eq!(
+            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(5)),
+            Err("mgmt_query_timeout")
+        );
+        writer.send(&[1, 0]).unwrap();
+        assert_eq!(
+            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)),
+            Err("malformed_mgmt_response")
+        );
+        response[8] = 0x14;
+        writer.send(&response).unwrap();
+        assert_eq!(
+            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)),
+            Err("mgmt_permission_denied")
         );
     }
 
