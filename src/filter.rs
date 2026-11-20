@@ -11,9 +11,10 @@ use crate::defaults::{
     self, BLE_AD_BYTES_PATTERNS, BLE_MANUFACTURER_IDS, BLE_NAME_PATTERNS, BLE_SERVICE_UUIDS_16,
     SSID_EXACT, SSID_KEYWORDS, SSID_PATTERNS, WIFI_NAME_KEYWORDS,
 };
+use crate::evidence::{self, AlertPolicy, Detection, RuleEvidence};
 use crate::mac_index::MacIndex;
 use crate::protocol::{MatchDetail, MatchReason};
-use crate::rules::{evaluate_rules, MatchCategory, RuleDb, SigMatchSet};
+use crate::rules::{MatchCategory, RuleDb, SigMatchSet};
 
 /// Runtime filter configuration. Allows the companion app to adjust
 /// filtering without reflashing.
@@ -51,8 +52,16 @@ pub struct WiFiScanInput<'a> {
 }
 
 /// Input data for filtering a BLE scan event
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BleAddressType {
+    Public,
+    Random,
+    Unknown,
+}
+
 pub struct BleScanInput<'a> {
     pub mac: &'a [u8; 6],
+    pub address_type: BleAddressType,
     pub name: &'a str,
     pub rssi: i8,
     /// 16-bit service UUIDs found in advertisement
@@ -65,6 +74,11 @@ pub struct BleScanInput<'a> {
 
 /// Result of filter evaluation
 pub struct FilterResult {
+    pub evidence: Vec<RuleEvidence, 4>,
+    pub evidence_more: bool,
+    pub watchlist: bool,
+    pub ruleset: &'static str,
+    pub basis: &'static str,
     /// Whether any filter matched
     pub matched: bool,
     /// Up to 4 match reasons
@@ -80,12 +94,43 @@ pub struct FilterResult {
 impl FilterResult {
     fn new() -> Self {
         Self {
+            evidence: Vec::new(),
+            evidence_more: false,
+            watchlist: false,
+            ruleset: "none",
+            basis: "observed_fields",
             matched: false,
             matches: Vec::new(),
             sig_matches: SigMatchSet::new(),
             rule_names: Vec::new(),
             rule_categories: Vec::new(),
         }
+    }
+
+    pub fn detection(&self, policy: AlertPolicy) -> Detection<'_> {
+        let mut sig = Vec::new();
+        let mut more = self.evidence_more;
+        for id in 0..crate::rules::MAX_SIGNATURES as u16 {
+            if self.sig_matches.get(id) && sig.push(id).is_err() {
+                more = true;
+            }
+        }
+        Detection {
+            engine: "evidence-1",
+            policy,
+            pack: defaults::SIGNATURE_PACK_ID,
+            ruleset: self.ruleset,
+            sig,
+            rules: &self.evidence,
+            more,
+            basis: self.basis,
+            alert: policy.decide(self.matched, self.watchlist, &self.evidence),
+        }
+    }
+    pub fn should_alert(&self) -> bool {
+        AlertPolicy::RulesAndWatchlist
+            .decide(self.matched, self.watchlist, &self.evidence)
+            .fires()
     }
 
     fn add_match(&mut self, filter_type: &'static str, detail: &str) {
@@ -95,7 +140,10 @@ impl FilterResult {
             let truncated = if detail.len() <= 32 {
                 detail
             } else {
-                &detail[..32]
+                &detail[..(0..=32)
+                    .rev()
+                    .find(|&n| detail.is_char_boundary(n))
+                    .unwrap_or(0)]
             };
             let _ = d.push_str(truncated);
             let _ = self.matches.push(MatchReason {
@@ -126,7 +174,7 @@ fn filter_wifi_identity(mac: &[u8; 6], ssid: &str, mac_index: &MacIndex) -> Filt
     let mut result = FilterResult::new();
 
     // MAC lookup via hash index (OUI signatures + watchlist)
-    check_mac(mac, mac_index, &mut result);
+    check_mac(mac, mac_index, &mut result, mac[0] & 3 == 0);
 
     // SSID structured pattern check (e.g., Flock-XXXXXX)
     for (i, pattern) in SSID_PATTERNS.iter().enumerate() {
@@ -201,7 +249,12 @@ pub fn filter_ble(
     }
 
     // MAC lookup via hash index (OUI signatures + watchlist)
-    check_mac(input.mac, mac_index, &mut result);
+    check_mac(
+        input.mac,
+        mac_index,
+        &mut result,
+        input.address_type == BleAddressType::Public && input.mac[0] & 1 == 0,
+    );
 
     // BLE device name pattern check (case-insensitive substring)
     if !input.name.is_empty() {
@@ -301,6 +354,7 @@ pub fn filter_ble_snapshot(
         ..*input
     };
     let mut result = filter_ble(&base, config, mac_index);
+    result.basis = "possibly_cached";
     if !config.ble_enabled || input.rssi < config.min_rssi {
         return result;
     }
@@ -338,7 +392,7 @@ pub fn filter_ble_snapshot(
         }
     }
     // Explicit migration for the known Find My frame. Legacy v1 raw offsets
-    // remain unchanged in filter_ble; do not promote an incomplete header here.
+    // use the same complete Find My framing requirement as raw packet matching.
     let find_my = crate::ble_data::BytePattern {
         bytes: &[0x12, 0x19],
         mask: None,
@@ -399,64 +453,49 @@ fn apply_rules(result: &mut FilterResult, db: &RuleDb) {
     if !result.matched {
         return;
     }
-    let rule_matches = evaluate_rules(db, &result.sig_matches);
-    for rm in &rule_matches {
-        let _ = result.rule_names.push(rm.name);
-        let _ = result.rule_categories.push(rm.category);
+    result.ruleset = db.id;
+    let (proofs, more) = evidence::evaluate(db, &result.sig_matches);
+    for proof in &proofs {
+        let rule = &db.rules[usize::from(proof.id)];
+        let _ = result.rule_names.push(rule.name);
+        let _ = result.rule_categories.push(rule.category);
     }
+    result.evidence = proofs;
+    result.evidence_more = more;
 }
 
 /// Check MAC address against the hash index (OUI signatures + watchlist).
-fn check_mac(mac: &[u8; 6], mac_index: &MacIndex, result: &mut FilterResult) {
+fn check_mac(mac: &[u8; 6], mac_index: &MacIndex, result: &mut FilterResult, allow_vendor: bool) {
     let lookup = mac_index.lookup(mac);
-    if lookup.sig_idx != crate::mac_index::NO_ID {
+    if allow_vendor && lookup.sig_idx != crate::mac_index::NO_ID {
         result.sig_matches.set(lookup.sig_idx);
         let vendor = defaults::vendor_for_sig_idx(lookup.sig_idx);
         result.add_match("mac_oui", vendor);
     }
     if lookup.has_watchlist_match() {
+        result.watchlist = true;
         result.add_match("watchlist", "");
     }
 }
 
-/// Extract manufacturer-specific data sections from raw AD bytes.
-///
-/// AD type 0xFF = manufacturer-specific data. The data after the type byte
-/// contains the company ID (2 bytes LE) followed by manufacturer payload.
-/// We return the full data portion (including company ID bytes) for pattern matching.
-fn find_manufacturer_data(raw_ad: &[u8]) -> Option<&[u8]> {
-    let mut pos = 0;
-    while pos < raw_ad.len() {
-        let len = raw_ad[pos] as usize;
-        if len == 0 || pos + 1 + len > raw_ad.len() {
-            break;
-        }
-        let ad_type = raw_ad[pos + 1];
-        if ad_type == 0xFF {
-            return Some(&raw_ad[pos + 2..pos + 1 + len]);
-        }
-        pos += 1 + len;
-    }
-    None
-}
-
 /// Check raw BLE advertisement data against known byte patterns.
 fn check_ble_ad_bytes(raw_ad: &[u8], result: &mut FilterResult) {
-    let mfr_data = find_manufacturer_data(raw_ad);
-
     for (i, pattern) in BLE_AD_BYTES_PATTERNS.iter().enumerate() {
-        if pattern.bytes.is_empty() {
+        if !pattern.active || pattern.bytes.is_empty() {
             continue;
         }
         let matched = match pattern.offset {
             Some(offset) => {
                 // Fixed offset match within manufacturer-specific data
-                if let Some(data) = mfr_data {
-                    data.len() >= offset + pattern.bytes.len()
-                        && data[offset..offset + pattern.bytes.len()] == *pattern.bytes
-                } else {
-                    false
-                }
+                crate::ble_data::AdStructures::new(raw_ad).any(|field| {
+                    let data = field.data;
+                    field.kind == 0xFF
+                        && pattern
+                            .exact_manufacturer_len
+                            .is_none_or(|len| data.len() == len)
+                        && data.get(offset..offset.saturating_add(pattern.bytes.len()))
+                            == Some(pattern.bytes)
+                })
             }
             None => {
                 // Search anywhere in raw AD data
@@ -500,6 +539,7 @@ mod tests {
     fn snapshot_context_requires_full_frame_and_preserves_uuid_identity() {
         use crate::ble_data::{Advertisement, ManufacturerData, Uuid};
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0; 6],
             name: "",
             rssi: -40,
@@ -558,6 +598,95 @@ mod tests {
         let mut cfg = default_config();
         cfg.ble_enabled = false;
         assert!(!filter_ble_snapshot(&input, &data, &cfg, &test_mac_index()).matched);
+    }
+
+    #[test]
+    fn address_type_gates_vendor_evidence_but_preserves_explicit_watchlists() {
+        let mac = [0xB4, 0x1E, 0x52, 1, 2, 3];
+        let mut index = test_mac_index();
+        let mut input = BleScanInput {
+            mac: &mac,
+            address_type: BleAddressType::Public,
+            name: "",
+            rssi: -50,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        assert!(filter_ble(&input, &default_config(), &index).matched);
+        for kind in [BleAddressType::Random, BleAddressType::Unknown] {
+            input.address_type = kind;
+            assert!(!filter_ble(&input, &default_config(), &index).matched);
+        }
+        index.add_watchlist_full(mac, 7);
+        let result = filter_ble_with_rules(
+            &input,
+            &default_config(),
+            &defaults::DEFAULT_RULE_DB,
+            &index,
+        );
+        assert!(result.watchlist && result.should_alert());
+        assert!(result.evidence.is_empty());
+        assert!(result
+            .detection(AlertPolicy::RulesAndWatchlist)
+            .sig
+            .is_empty());
+    }
+
+    #[test]
+    fn find_my_checks_all_complete_manufacturer_sections_and_rejects_truncation() {
+        let mut ad = [0u8; 35];
+        ad[..4].copy_from_slice(&[3, 0xff, 1, 2]);
+        ad[4..10].copy_from_slice(&[30, 0xff, 0x4c, 0, 0x12, 0x19]);
+        let mut result = FilterResult::new();
+        check_ble_ad_bytes(&ad, &mut result);
+        assert!(result.sig_matches.get(defaults::SIG_IDX_BLE_AD_BYTES_START));
+        for end in 0..ad.len() {
+            let mut truncated = FilterResult::new();
+            check_ble_ad_bytes(&ad[..end], &mut truncated);
+            assert!(!truncated
+                .sig_matches
+                .get(defaults::SIG_IDX_BLE_AD_BYTES_START));
+        }
+    }
+
+    #[test]
+    fn composite_candidate_alert_keeps_unrelated_clues_separate() {
+        let input = WiFiScanInput {
+            mac: &[0xb4, 0x1e, 0x52, 1, 2, 3],
+            ssid: "Flock-ABCDEF",
+            rssi: -50,
+        };
+        let result = filter_wifi_with_rules(
+            &input,
+            &default_config(),
+            &defaults::DEFAULT_RULE_DB,
+            &test_mac_index(),
+        );
+        assert!(result.should_alert());
+        assert_eq!(
+            &result.evidence[0].sig[..],
+            &[
+                defaults::SIG_IDX_MAC_OUI_START,
+                defaults::SIG_IDX_SSID_PATTERN_START
+            ]
+        );
+        assert!(result.sig_matches.get(defaults::SIG_IDX_SSID_KEYWORD_START));
+        assert_eq!(result.evidence[0].sig.len(), 2);
+    }
+
+    #[test]
+    fn compact_details_are_utf8_safe_and_signature_overflow_is_visible() {
+        let mut result = FilterResult::new();
+        result.add_match("test", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaé");
+        assert_eq!(result.matches[0].detail.len(), 31);
+        for i in 0..9 {
+            result.sig_matches.set(i);
+        }
+        let record = result.detection(AlertPolicy::Silent);
+        assert!(record.more);
+        assert_eq!(record.sig.len(), 8);
+        assert!(!record.alert.fires());
     }
 
     // ── WiFi filter tests ───────────────────────────────────────────
@@ -732,6 +861,7 @@ mod tests {
     fn ble_name_flock_matches() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Flock Camera",
             rssi: -50,
@@ -748,6 +878,7 @@ mod tests {
     fn ble_name_fs_ext_battery_matches() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "FS Ext Battery",
             rssi: -50,
@@ -763,6 +894,7 @@ mod tests {
     fn ble_name_pigvision_case_insensitive() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "PIGVISION-device",
             rssi: -50,
@@ -778,6 +910,7 @@ mod tests {
     fn ble_manufacturer_id_xuntong_matches() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -794,6 +927,7 @@ mod tests {
     fn ble_raven_service_uuid_matches() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -810,6 +944,7 @@ mod tests {
     fn ble_standard_uuid_matches() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -829,6 +964,7 @@ mod tests {
     fn ble_no_match_for_unknown_device() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03],
             name: "My Headphones",
             rssi: -50,
@@ -847,6 +983,7 @@ mod tests {
             ..default_config()
         };
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xB4, 0x1E, 0x52, 0x01, 0x02, 0x03],
             name: "Flock",
             rssi: -50,
@@ -865,6 +1002,7 @@ mod tests {
             ..default_config()
         };
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xB4, 0x1E, 0x52, 0x01, 0x02, 0x03],
             name: "Flock",
             rssi: -70,
@@ -883,11 +1021,10 @@ mod tests {
         let config = default_config();
         // Realistic AirTag AD: manufacturer-specific data with Apple FindMy header
         // AD structure: len=0x1B, type=0xFF, data=[0x4C, 0x00, 0x12, 0x19, ...]
-        let raw_ad = [
-            0x1B, 0xFF, 0x4C, 0x00, 0x12, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
+        let mut raw_ad = [0u8; 31];
+        raw_ad[..6].copy_from_slice(&[30, 0xFF, 0x4C, 0, 0x12, 0x19]);
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -900,7 +1037,8 @@ mod tests {
         assert!(result
             .matches
             .iter()
-            .any(|m| m.filter_type == "ble_ad_bytes" && m.detail.as_str() == "Apple AirTag"));
+            .any(|m| m.filter_type == "ble_ad_bytes"
+                && m.detail.as_str() == "Find My framing candidate"));
     }
 
     #[test]
@@ -912,6 +1050,7 @@ mod tests {
             0x05, 0xFF, 0x80, 0x30, 0x01, 0x02, // Manufacturer data with 0x80,0x30
         ];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -920,11 +1059,8 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result.matched);
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.filter_type == "ble_ad_bytes" && m.detail.as_str() == "Flipper Zero"));
+        assert!(!result.matched);
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -933,6 +1069,7 @@ mod tests {
         // Flipper Zero Black: [0x81, 0x30]
         let raw_ad = [0x04, 0xFF, 0x81, 0x30, 0x01];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -941,11 +1078,8 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble(&input, &config, &test_mac_index());
-        assert!(result.matched);
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.filter_type == "ble_ad_bytes"));
+        assert!(!result.matched);
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -955,6 +1089,7 @@ mod tests {
         // Manufacturer data: [0x00, 0x4C, 0x00, 0x12, 0x19] — offset by 1
         let raw_ad = [0x06, 0xFF, 0x00, 0x4C, 0x00, 0x12, 0x19];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -967,7 +1102,7 @@ mod tests {
         assert!(!result
             .matches
             .iter()
-            .any(|m| m.detail.as_str() == "Apple AirTag"));
+            .any(|m| m.detail.as_str() == "Find My framing candidate"));
     }
 
     #[test]
@@ -978,6 +1113,7 @@ mod tests {
             0x03, 0xFF, 0xAA, 0xBB, // Random manufacturer data
         ];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -996,6 +1132,7 @@ mod tests {
     fn ble_ad_bytes_empty_raw_ad_no_match() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1054,6 +1191,7 @@ mod tests {
     fn sig_matches_populated_for_ble_name() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Flock Camera",
             rssi: -50,
@@ -1069,6 +1207,7 @@ mod tests {
     fn sig_matches_populated_for_ble_uuid() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1084,6 +1223,7 @@ mod tests {
     fn sig_matches_populated_for_ble_mfr() {
         let config = default_config();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1098,11 +1238,10 @@ mod tests {
     #[test]
     fn sig_matches_populated_for_ble_ad_bytes() {
         let config = default_config();
-        let raw_ad = [
-            0x1B, 0xFF, 0x4C, 0x00, 0x12, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
+        let mut raw_ad = [0u8; 31];
+        raw_ad[..6].copy_from_slice(&[30, 0xFF, 0x4C, 0, 0x12, 0x19]);
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1122,7 +1261,9 @@ mod tests {
         let index = test_mac_index();
         let mac = [0xB4, 0x1E, 0x52, 1, 2, 3];
         let identity = filter_wifi_identity_with_rules(&mac, "SomeNetwork", true, db, &index);
-        assert!(identity.rule_names.contains(&"Flock Safety Camera"));
+        assert!(identity.matched);
+        assert!(identity.rule_names.is_empty());
+        assert!(!identity.should_alert());
         let weak = WiFiScanInput {
             mac: &mac,
             ssid: "SomeNetwork",
@@ -1150,7 +1291,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1164,7 +1306,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1178,7 +1321,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1192,7 +1336,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1206,7 +1351,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1214,6 +1360,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Flock Camera",
             rssi: -50,
@@ -1223,7 +1370,8 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1232,6 +1380,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Flock Device",
             rssi: -50,
@@ -1241,16 +1390,17 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(result.rule_names.contains(&"Flock-like candidate"));
     }
 
     #[test]
     fn rule_flock_safety_no_match_mfr_only() {
-        // xuntong_mfr alone should NOT trigger Flock Safety Camera rule
+        // xuntong_mfr alone should NOT trigger Flock-like candidate rule
         // (allOf needs both mfr AND ble name)
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Random Device", // no "Flock" in name
             rssi: -50,
@@ -1261,7 +1411,7 @@ mod tests {
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         // It matches on ble_mfr signature, but should NOT trigger the rule
         assert!(result.matched); // still a signature match
-        assert!(!result.rule_names.contains(&"Flock Safety Camera"));
+        assert!(!result.rule_names.contains(&"Flock-like candidate"));
     }
 
     #[test]
@@ -1269,6 +1419,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1278,7 +1429,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
+        assert!(result.rule_names.contains(&"Raven UUID candidate"));
     }
 
     #[test]
@@ -1286,6 +1437,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1295,7 +1447,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
+        assert!(result.rule_names.contains(&"Raven UUID candidate"));
     }
 
     #[test]
@@ -1303,6 +1455,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1312,18 +1465,17 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched); // signature match (std UUID)
-        assert!(!result.rule_names.contains(&"Raven Acoustic Sensor"));
+        assert!(!result.rule_names.contains(&"Raven UUID candidate"));
     }
 
     #[test]
     fn rule_apple_airtag_matches() {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
-        let raw_ad = [
-            0x1B, 0xFF, 0x4C, 0x00, 0x12, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
+        let mut raw_ad = [0u8; 31];
+        raw_ad[..6].copy_from_slice(&[30, 0xFF, 0x4C, 0, 0x12, 0x19]);
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1333,7 +1485,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Apple AirTag"));
+        assert!(result.rule_names.contains(&"Find My framing candidate"));
     }
 
     #[test]
@@ -1343,6 +1495,7 @@ mod tests {
         // Apple manufacturer data but NOT FindMy format
         let raw_ad = [0x05, 0xFF, 0x4C, 0x00, 0x01, 0x02];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1351,7 +1504,7 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
-        assert!(!result.rule_names.contains(&"Apple AirTag"));
+        assert!(!result.rule_names.contains(&"Find My framing candidate"));
     }
 
     #[test]
@@ -1363,6 +1516,7 @@ mod tests {
             0x05, 0xFF, 0x80, 0x30, 0x01, 0x02,
         ];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1371,8 +1525,8 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
-        assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flipper Zero"));
+        assert!(!result.matched);
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1381,6 +1535,7 @@ mod tests {
         let db = &defaults::DEFAULT_RULE_DB;
         let raw_ad = [0x04, 0xFF, 0x81, 0x30, 0x01];
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1389,8 +1544,8 @@ mod tests {
             raw_ad: &raw_ad,
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
-        assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flipper Zero"));
+        assert!(!result.matched);
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1399,6 +1554,7 @@ mod tests {
         let db = &defaults::DEFAULT_RULE_DB;
         let raw_ad = [0x04, 0xFF, 0x82, 0x30, 0x01]; // 0x82 instead of 0x80/0x81
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "",
             rssi: -50,
@@ -1415,6 +1571,7 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03],
             name: "My Headphones",
             rssi: -50,
@@ -1449,17 +1606,18 @@ mod tests {
         let config = default_config();
         let db = &defaults::DEFAULT_RULE_DB;
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
             name: "Flock Device",
             rssi: -50,
             service_uuids_16: &[0x3100], // Raven GPS
-            manufacturer_id: 0,
+            manufacturer_id: 0x09C8,
             raw_ad: &[],
         };
         let result = filter_ble_with_rules(&input, &config, db, &test_mac_index());
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Flock Safety Camera"));
-        assert!(result.rule_names.contains(&"Raven Acoustic Sensor"));
+        assert!(result.rule_names.contains(&"Flock-like candidate"));
+        assert!(result.rule_names.contains(&"Raven UUID candidate"));
         assert_eq!(result.rule_names.len(), 2);
     }
 
@@ -1608,6 +1766,7 @@ mod tests {
         idx.add_watchlist_full(mac, 2);
 
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &mac,
             name: "",
             rssi: -50,
@@ -1620,13 +1779,14 @@ mod tests {
         assert!(result.matches.iter().any(|m| m.filter_type == "watchlist"));
     }
 
-    // ── Card Skimmer rule tests ──────────────────────────────────────
+    // ── HC-series module rule tests ──────────────────────────────────────
 
     #[test]
     fn rule_card_skimmer_hc05_matches() {
         let config = default_config();
         let idx = test_mac_index();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
             name: "HC-05",
             rssi: -50,
@@ -1636,7 +1796,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Card Skimmer"));
+        assert!(result.rule_names.contains(&"HC-series module"));
     }
 
     #[test]
@@ -1644,6 +1804,7 @@ mod tests {
         let config = default_config();
         let idx = test_mac_index();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
             name: "hc-06",
             rssi: -50,
@@ -1653,7 +1814,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Card Skimmer"));
+        assert!(result.rule_names.contains(&"HC-series module"));
     }
 
     // ── Pwnagotchi rule tests ────────────────────────────────────────
@@ -1668,8 +1829,8 @@ mod tests {
             rssi: -50,
         };
         let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
-        assert!(result.matched);
-        assert!(result.rule_names.contains(&"Pwnagotchi"));
+        assert!(!result.matched);
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1685,13 +1846,14 @@ mod tests {
         assert!(!result.rule_names.contains(&"Pwnagotchi"));
     }
 
-    // ── Open Drone ID rule tests ──────────────────────────────────────
+    // ── Remote ID service candidate rule tests ──────────────────────────────────────
 
     #[test]
     fn rule_odid_ble_uuid_matches() {
         let config = default_config();
         let idx = test_mac_index();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
             name: "",
             rssi: -50,
@@ -1701,7 +1863,7 @@ mod tests {
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Open Drone ID"));
+        assert!(result.rule_names.contains(&"Remote ID service candidate"));
         assert!(result
             .rule_categories
             .iter()
@@ -1719,11 +1881,8 @@ mod tests {
         };
         let result = filter_wifi_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
         assert!(result.matched);
-        assert!(result.rule_names.contains(&"Open Drone ID"));
-        assert!(result
-            .rule_categories
-            .iter()
-            .any(|c| matches!(c, MatchCategory::Drone)));
+        assert!(result.rule_names.is_empty());
+        assert!(!result.should_alert());
     }
 
     #[test]
@@ -1731,6 +1890,7 @@ mod tests {
         let config = default_config();
         let idx = test_mac_index();
         let input = BleScanInput {
+            address_type: crate::filter::BleAddressType::Public,
             mac: &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
             name: "",
             rssi: -50,
@@ -1739,6 +1899,6 @@ mod tests {
             raw_ad: &[],
         };
         let result = filter_ble_with_rules(&input, &config, &defaults::DEFAULT_RULE_DB, &idx);
-        assert!(!result.rule_names.contains(&"Open Drone ID"));
+        assert!(!result.rule_names.contains(&"Remote ID service candidate"));
     }
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/device-message.v1.schema.json",
   "title": "AirHound Device Message Protocol v1",
-  "description": "Validates a single Device→Host NDJSON line. Each line is a JSON object discriminated by the 'type' field. Emitted over BLE GATT notifications (chunked at 20 bytes) and serial UART (no_std M5: 460800 baud; other builds: 115200). Maximum serialized size: 512 bytes including newline.",
+  "description": "Validates a single Device\u2192Host NDJSON line. Each line is a JSON object discriminated by the 'type' field. Emitted over BLE GATT notifications (chunked at 20 bytes) and serial UART (no_std M5: 460800 baud; other builds: 115200). Maximum serialized size: 512 bytes including newline.",
   "discriminator": {
     "propertyName": "type"
   },
@@ -30,6 +30,9 @@
     },
     {
       "$ref": "#/$defs/stream_stats"
+    },
+    {
+      "$ref": "#/$defs/detection"
     }
   ],
   "$defs": {
@@ -77,7 +80,7 @@
         "ble_ad_bytes",
         "watchlist"
       ],
-      "description": "Signature type that triggered this match. Maps to signature types in signatures.v1.schema.json: mac_oui→mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name→wifi_ssid, ble_name→ble_name, ble_uuid/ble_uuid_std→ble_service_uuid, ble_mfr→ble_manufacturer_id, ble_ad_bytes→ble_ad_bytes. 'watchlist' indicates a user-defined watchlist target match."
+      "description": "Signature type that triggered this match. Maps to signature types in signatures.v1.schema.json: mac_oui\u2192mac_oui, ssid_pattern/ssid_exact/ssid_keyword/wifi_name\u2192wifi_ssid, ble_name\u2192ble_name, ble_uuid/ble_uuid_std\u2192ble_service_uuid, ble_mfr\u2192ble_manufacturer_id, ble_ad_bytes\u2192ble_ad_bytes. 'watchlist' indicates a user-defined watchlist target match."
     },
     "match_reason": {
       "type": "object",
@@ -136,7 +139,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 177,
-          "description": "WiFi channel: firmware supports 2.4 GHz; desktop capture also supports 5 GHz (36–177)."
+          "description": "WiFi channel: firmware supports 2.4 GHz; desktop capture also supports 5 GHz (36\u2013177)."
         },
         "frame": {
           "$ref": "#/$defs/wifi_frame_type",
@@ -541,6 +544,134 @@
         }
       },
       "description": "Cumulative wrapping u32 counters since boot: parsed observations rejected by scan queue, records rejected by shared output queue, records rejected by BLE output queue or discarded on disconnect, and event serialization failures. No client means BLE forwarding is inactive, not a drop. Does not certify over-air delivery."
+    },
+    "detection_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "policy",
+        "pack",
+        "ruleset",
+        "sig",
+        "rules",
+        "more",
+        "basis",
+        "alert"
+      ],
+      "properties": {
+        "engine": {
+          "const": "evidence-1"
+        },
+        "policy": {
+          "enum": [
+            "rules_and_watchlist",
+            "watchlist_only",
+            "all_matches",
+            "silent"
+          ]
+        },
+        "pack": {
+          "type": "string"
+        },
+        "ruleset": {
+          "type": "string"
+        },
+        "sig": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "rules": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "sig",
+              "more"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "sig": {
+                "type": "array",
+                "maxItems": 4,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "more": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "basis": {
+          "enum": [
+            "observed_fields",
+            "possibly_cached"
+          ]
+        },
+        "alert": {
+          "enum": [
+            "none",
+            "suppressed",
+            "watchlist",
+            "rule",
+            "match"
+          ]
+        }
+      }
+    },
+    "detection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "scope",
+        "ts",
+        "detection"
+      ],
+      "properties": {
+        "type": {
+          "const": "detection"
+        },
+        "id": {
+          "$ref": "#/$defs/mac_address"
+        },
+        "scope": {
+          "enum": [
+            "wifi_address",
+            "ble_address"
+          ]
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "detection": {
+          "$ref": "#/$defs/detection_evidence"
+        }
+      }
     }
   }
 }

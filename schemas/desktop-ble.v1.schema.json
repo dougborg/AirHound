@@ -261,6 +261,9 @@
           }
         }
       }
+    },
+    "detection": {
+      "$ref": "device-message.v1.schema.json#/$defs/detection_evidence"
     }
   }
 }

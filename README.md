@@ -143,7 +143,9 @@ AirHound defines JSON Schemas ([draft 2020-12](https://json-schema.org/draft/202
 | [`desktop-ble.v1.schema.json`](schemas/desktop-ble.v1.schema.json) | Desktop BLE observations with platform UUIDs and optional addresses | Desktop consumers |
 | [`desktop-remote-id.v1.schema.json`](schemas/desktop-remote-id.v1.schema.json) | Decoded BLE Remote ID with optional hardware address and explicit snapshot provenance |
 
-An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates the format with Flock Safety, Raven, and AirTag signatures.
+An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates conservative Flock-like and Raven UUID candidate rules. These examples are not yet the compiled source of truth.
+
+The [shared evidence pipeline](docs/detection-evidence.md) records which signatures support each rule and applies alert policy separately. Weak clues remain visible; generic vendor/name matches do not automatically sound the buzzer.
 
 ## ESP32 Firmware
 
@@ -161,7 +163,7 @@ The no_std build provides:
 - **TFT display** (240×135 landscape) — Overview separates AP, other WiFi and BLE address counts from signature hits; Details shows memory and WiFi queue statistics.
 - **Front button A** — switches Overview / Details.
 - **Side button B** — toggles detection sound; companion buzzer commands update the same state.
-- **Passive buzzer** (GPIO2) — short alert on signature matches. Settings reset at reboot.
+- **Passive buzzer** (GPIO2) — short alert for explicit watchlists and alert-enabled rules. Quiet signature clues still update counts and the display. Settings reset at reboot.
 
 See the [controls guide](docs/m5-controls.md) for debounce and validation details.
 These controls describe the no_std runtime; do not assume ESP-IDF UI parity.
@@ -331,7 +333,7 @@ AirHound's value lives in three separable, portable layers ([#17](https://github
 ### Library Modules
 
 The portable library currently includes frame parsing (`scanner`, `odid`),
-signature/rule evaluation (`filter`, `rules`, `defaults`), bounded observation and
+signature/rule evaluation (`filter`, `rules`, `evidence`, `defaults`), bounded observation and
 address tracking (`observations`, `mac_index`), watchlist/proximity primitives,
 button state handling, and protocol serialization (`protocol`, `comm`). Module
 availability does not imply every runtime exposes every feature as a command.

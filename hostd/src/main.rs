@@ -606,7 +606,12 @@ async fn filter_task<W: Write, O: Write>(
                     )?;
                 }
                 let input = BleScanInput {
-                    mac: if snapshot.address_type == "public" {
+                    address_type: if snapshot.address_type == "public" {
+                        airhound::filter::BleAddressType::Public
+                    } else {
+                        airhound::filter::BleAddressType::Unknown
+                    },
+                    mac: if address.is_some() {
                         &event.mac
                     } else {
                         &[0; 6]
@@ -617,7 +622,7 @@ async fn filter_task<W: Write, O: Write>(
                     manufacturer_id: 0,
                     raw_ad: &[],
                 };
-                let index = if snapshot.address_type == "public" {
+                let index = if address.is_some() {
                     &mac_index
                 } else {
                     &anonymous_mac_index
@@ -629,12 +634,14 @@ async fn filter_task<W: Write, O: Write>(
                 });
                 // Linux consumers keep the legacy matched-record stream during migration.
                 if !cfg!(target_os = "macos") && address.is_some() && snapshot.rssi_available {
-                    handle_ble_event(event, &cfg, index, start_time, &mut output)?;
+                    emit_ble_match(event, &result, start_time, &mut output)?;
                 }
                 observation::write(
                     &mut output,
                     &observation::BleObservation {
                         kind: "ble_observation",
+                        detection: result
+                            .detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
                         peripheral_id: id,
                         address: observed_mac.as_ref().map(|s| s.as_str()),
                         address_source: observed_mac.as_ref().map(|_| {
@@ -690,6 +697,7 @@ async fn filter_task<W: Write, O: Write>(
                 address,
             } => {
                 let input = BleScanInput {
+                    address_type: airhound::filter::BleAddressType::Unknown,
                     mac: &[0; 6],
                     name: event.name.as_str(),
                     rssi: event.rssi,
@@ -723,6 +731,8 @@ async fn filter_task<W: Write, O: Write>(
                     &mut output,
                     &observation::BleObservation {
                         kind: "ble_observation",
+                        detection: result
+                            .detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
                         advertisement: None,
                         peripheral_id: id,
                         address: observed_mac.as_ref().map(|s| s.as_str()),
@@ -794,6 +804,7 @@ fn handle_ble_event(
     output: &mut impl Write,
 ) -> io::Result<()> {
     let input = BleScanInput {
+        address_type: airhound::filter::BleAddressType::Unknown,
         mac: &event.mac,
         name: event.name.as_str(),
         rssi: event.rssi,
@@ -803,6 +814,15 @@ fn handle_ble_event(
     };
 
     let result = filter_ble_with_rules(&input, cfg, &defaults::DEFAULT_RULE_DB, mac_index);
+    emit_ble_match(event, &result, start_time, output)
+}
+
+fn emit_ble_match(
+    event: &airhound::scanner::BleEvent,
+    result: &airhound::filter::FilterResult,
+    start_time: Instant,
+    output: &mut impl Write,
+) -> io::Result<()> {
     if !result.matched {
         return Ok(());
     }
@@ -834,7 +854,16 @@ fn handle_ble_event(
         ts,
     };
 
-    write_message(output, &msg)
+    write_message(output, &msg)?;
+    write_message(
+        output,
+        &DeviceMessage::Detection {
+            id: mac_str.as_str(),
+            scope: "ble_address",
+            ts,
+            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+        },
+    )
 }
 
 /// Filter and emit a WiFi scan event (NDJSON on stdout if matched).
@@ -872,7 +901,16 @@ fn handle_wifi_event(
         ts,
     };
 
-    write_message(output, &msg)
+    write_message(output, &msg)?;
+    write_message(
+        output,
+        &DeviceMessage::Detection {
+            id: mac_str.as_str(),
+            scope: "wifi_address",
+            ts,
+            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+        },
+    )
 }
 
 /// Read bounded command lines, preserving framing across arbitrary read chunks.
@@ -1078,12 +1116,15 @@ mod tests {
         }
     }
 
-    // Existing observation/command assertions exclude the additive health stream.
+    // Existing observation/command assertions exclude additive health/evidence streams.
     fn data_output(output: &RecordingWriter) -> String {
         recorded(output)
             .lines()
             .filter(|line| {
-                serde_json::from_str::<serde_json::Value>(line).unwrap()["type"] != "scanner_health"
+                !matches!(
+                    serde_json::from_str::<serde_json::Value>(line).unwrap()["type"].as_str(),
+                    Some("scanner_health" | "detection")
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1434,6 +1475,18 @@ mod tests {
         assert_eq!(csv.lines().count(), 7, "{csv}");
         assert!(csv.contains("56:56:56:56:56:56"));
         assert!(csv.contains("-110"));
+        let all: Vec<serde_json::Value> = recorded(&output)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let evidence: Vec<_> = all.iter().filter(|r| r["type"] == "detection").collect();
+        assert_eq!(evidence.len(), 2);
+        for e in evidence {
+            assert_eq!(e["detection"]["alert"], "suppressed");
+            assert!(all
+                .iter()
+                .any(|r| r["mac"] == e["id"] && r["ts"] == e["ts"]));
+        }
         let messages = data_output(&output);
         assert_eq!(messages.lines().count(), 2, "{messages}");
         assert!(messages.contains("Flock-123456"));

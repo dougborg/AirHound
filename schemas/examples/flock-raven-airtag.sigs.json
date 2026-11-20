@@ -9,18 +9,6 @@
       "description": "Flock Safety registered OUI"
     },
     {
-      "id": "silabs-588e81",
-      "type": "mac_oui",
-      "oui": "58:8E:81",
-      "description": "Silicon Labs (used by Flock Safety hardware)"
-    },
-    {
-      "id": "silabs-cccccc",
-      "type": "mac_oui",
-      "oui": "CC:CC:CC",
-      "description": "Silicon Labs"
-    },
-    {
       "id": "flock-ssid-prefix",
       "type": "wifi_ssid",
       "match": "regex",
@@ -33,14 +21,6 @@
       "match": "exact",
       "value": "FS Ext Battery",
       "description": "Flock Safety external battery WiFi"
-    },
-    {
-      "id": "flock-ssid-keyword",
-      "type": "wifi_ssid",
-      "match": "contains",
-      "value": "flock",
-      "case_sensitive": false,
-      "description": "Any SSID containing 'flock'"
     },
     {
       "id": "flock-ble-name",
@@ -92,43 +72,13 @@
       "type": "ble_service_uuid",
       "uuid": "3500",
       "description": "Raven Error service"
-    },
-    {
-      "id": "airtag-findmy-ad",
-      "type": "ble_ad_bytes",
-      "bytes": [
-        76,
-        0,
-        18,
-        25
-      ],
-      "offset": 0,
-      "description": "Apple FindMy / AirTag advertisement (company=Apple, type=0x12, len=0x19)"
-    },
-    {
-      "id": "flipper-zero-white",
-      "type": "ble_ad_bytes",
-      "bytes": [
-        128,
-        48
-      ],
-      "description": "Flipper Zero (White) BLE service data"
-    },
-    {
-      "id": "flipper-zero-black",
-      "type": "ble_ad_bytes",
-      "bytes": [
-        129,
-        48
-      ],
-      "description": "Flipper Zero (Black) BLE service data"
     }
   ],
   "rules": [
     {
       "id": "flock-safety-camera",
-      "name": "Flock Safety Camera",
-      "description": "Flock Safety ALPR camera detected via WiFi or BLE",
+      "name": "Flock-like candidate",
+      "description": "Heuristic candidate requiring a vendor and name clue; not verified identity.",
       "tags": [
         "alpr",
         "flock_safety"
@@ -136,28 +86,24 @@
       "detect": {
         "anyOf": [
           {
-            "sig": "flock-safety-oui"
+            "allOf": [
+              {
+                "sig": "flock-safety-oui"
+              },
+              {
+                "sig": "flock-ssid-prefix"
+              }
+            ]
           },
           {
-            "sig": "silabs-588e81"
-          },
-          {
-            "sig": "silabs-cccccc"
-          },
-          {
-            "sig": "flock-ssid-prefix"
-          },
-          {
-            "sig": "fs-ext-battery-ssid"
-          },
-          {
-            "sig": "flock-ssid-keyword"
-          },
-          {
-            "sig": "flock-ble-name"
-          },
-          {
-            "sig": "fs-ext-battery-ble"
+            "allOf": [
+              {
+                "sig": "flock-safety-oui"
+              },
+              {
+                "sig": "fs-ext-battery-ssid"
+              }
+            ]
           },
           {
             "allOf": [
@@ -168,14 +114,24 @@
                 "sig": "flock-ble-name"
               }
             ]
+          },
+          {
+            "allOf": [
+              {
+                "sig": "xuntong-mfr"
+              },
+              {
+                "sig": "fs-ext-battery-ble"
+              }
+            ]
           }
         ]
       }
     },
     {
       "id": "raven-acoustic-sensor",
-      "name": "Raven Acoustic Sensor",
-      "description": "ShotSpotter/Raven gunshot detection device",
+      "name": "Raven UUID candidate",
+      "description": "Reported service UUID clue; not proof of a product or operator.",
       "tags": [
         "acoustic_sensor",
         "raven"
@@ -196,37 +152,6 @@
           },
           {
             "sig": "raven-error-uuid"
-          }
-        ]
-      }
-    },
-    {
-      "id": "apple-airtag",
-      "name": "Apple AirTag",
-      "description": "Apple AirTag or FindMy-compatible tracker",
-      "tags": [
-        "tracker",
-        "apple"
-      ],
-      "detect": {
-        "sig": "airtag-findmy-ad"
-      }
-    },
-    {
-      "id": "flipper-zero",
-      "name": "Flipper Zero",
-      "description": "Flipper Zero multi-tool device",
-      "tags": [
-        "multi_tool",
-        "flipper"
-      ],
-      "detect": {
-        "anyOf": [
-          {
-            "sig": "flipper-zero-white"
-          },
-          {
-            "sig": "flipper-zero-black"
           }
         ]
       }
