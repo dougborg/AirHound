@@ -1,5 +1,5 @@
 [target.xtensa-esp32-none-elf]
-runner = "espflash flash --monitor"
+runner = "espflash flash --monitor --monitor-baud 460800"
 rustflags = ["-C", "link-arg=-Wl,-Tlinkall.x", "-C", "link-arg=-nostartfiles"]
 
 [target.xtensa-esp32s3-none-elf]

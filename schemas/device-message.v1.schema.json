@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/device-message.v1.schema.json",
   "title": "AirHound Device Message Protocol v1",
-  "description": "Validates a single Device→Host NDJSON line. Each line is a JSON object discriminated by the 'type' field. Emitted over BLE GATT notifications (chunked at 20 bytes) and serial UART (115200 baud). Maximum serialized size: 512 bytes including newline.",
+  "description": "Validates a single Device→Host NDJSON line. Each line is a JSON object discriminated by the 'type' field. Emitted over BLE GATT notifications (chunked at 20 bytes) and serial UART (no_std M5: 460800 baud; other builds: 115200). Maximum serialized size: 512 bytes including newline.",
   "discriminator": {
     "propertyName": "type"
   },

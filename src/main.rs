@@ -79,13 +79,19 @@ struct AirHoundServer {
 
 // ── Channel type aliases ──────────────────────────────────────────────
 
-// ESP32 (M5StickC): 8 slots — tighter DRAM budget (~180KB limit)
-#[cfg(feature = "esp32")]
+// Favor compact scan events over 512-byte output slots in scarce internal RAM.
+#[cfg(feature = "m5stickc")]
+type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 20>;
+#[cfg(all(feature = "esp32", not(feature = "m5stickc")))]
 type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 8>;
 // ESP32-S3 (XIAO): 16 slots — ample DRAM
 #[cfg(not(feature = "esp32"))]
 type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
-type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 8>;
+#[cfg(feature = "m5stickc")]
+const OUTPUT_CAPACITY: usize = 4;
+#[cfg(not(feature = "m5stickc"))]
+const OUTPUT_CAPACITY: usize = 8;
+type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, OUTPUT_CAPACITY>;
 type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
 type CommandChannel = Channel<CriticalSectionRawMutex, Option<HostCommand>, 4>;
 
@@ -253,6 +259,21 @@ async fn main(spawner: embassy_executor::Spawner) {
     });
     let peripherals = esp_hal::init(config);
     #[cfg(feature = "m5stickc")]
+    {
+        // Configure the console once. Retain clock/pin ownership for firmware
+        // lifetime without storing a UART handle in the main async task.
+        let serial = esp_hal::uart::UartTx::new(
+            peripherals.UART0,
+            esp_hal::uart::Config::default().with_baudrate(460_800),
+        )
+        .expect("UART0 configuration failed")
+        .with_tx(peripherals.GPIO1);
+        core::mem::forget(serial);
+        // Separate any boot-ROM bytes sent at 115200 from application logs.
+        esp_println::println!();
+    }
+
+    #[cfg(feature = "m5stickc")]
     memory::init(peripherals.PSRAM);
     #[cfg(not(feature = "m5stickc"))]
     memory::init();
@@ -351,6 +372,11 @@ async fn main(spawner: embassy_executor::Spawner) {
             "unknown"
         }
     );
+
+    // Poll display initialization and consumer tasks before either radio starts.
+    // Avoid collecting a startup burst while the synchronous LCD reset runs.
+    #[cfg(feature = "m5stickc")]
+    embassy_futures::yield_now().await;
 
     // ── BLE radio initialization ───────────────────────────────────────
     // BLE must be initialized BEFORE WiFi for coexistence to work
@@ -585,7 +611,7 @@ async fn handle_gatt_connection<'s, P: PacketPool>(
 }
 
 /// Filter task — receives raw scan events, applies filters, and serializes
-/// matching results to the output channel.
+/// all observations with match metadata to the output channel.
 #[embassy_executor::task]
 async fn filter_task() {
     log::info!("Filter task started");
@@ -594,6 +620,8 @@ async fn filter_task() {
     let output_tx = OUTPUT_CHANNEL.sender();
 
     loop {
+        // Yield before acquiring an event: buffers must not live across this await.
+        embassy_futures::yield_now().await;
         let event = scan_rx.receive().await;
 
         if !SCANNING.load(Ordering::Relaxed) {
@@ -673,7 +701,12 @@ fn emit_drone_sighting(
     rssi: i8,
     source: &'static str,
     rule_name: Option<&'static str>,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
+    output_tx: &embassy_sync::channel::Sender<
+        '_,
+        CriticalSectionRawMutex,
+        MsgBuffer,
+        OUTPUT_CAPACITY,
+    >,
 ) {
     ODID_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
 
@@ -725,7 +758,12 @@ fn emit_drone_sighting(
 fn handle_wifi_event(
     wifi: &WiFiEvent,
     config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
+    output_tx: &embassy_sync::channel::Sender<
+        '_,
+        CriticalSectionRawMutex,
+        MsgBuffer,
+        OUTPUT_CAPACITY,
+    >,
 ) {
     if !config.wifi_enabled {
         return;
@@ -801,7 +839,12 @@ fn handle_wifi_event(
 fn handle_ble_event(
     ble: &BleEvent,
     config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
+    output_tx: &embassy_sync::channel::Sender<
+        '_,
+        CriticalSectionRawMutex,
+        MsgBuffer,
+        OUTPUT_CAPACITY,
+    >,
 ) {
     if !config.ble_enabled {
         return;
@@ -877,6 +920,8 @@ async fn output_serial_task() {
     let output_rx = OUTPUT_CHANNEL.receiver();
 
     loop {
+        // Keep the previous 512-byte message out of the suspended task state.
+        embassy_futures::yield_now().await;
         let msg = output_rx.receive().await;
 
         // Forward to BLE output channel (non-blocking, drops if full or no client)

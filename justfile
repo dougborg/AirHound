@@ -79,7 +79,7 @@ flash-xiao-host:
 # Flash pre-built M5StickC binary (espflash auto-detects port; override: just device=/dev/cu.xxx flash-m5stickc-host)
 [group('host')]
 flash-m5stickc-host:
-    espflash flash --monitor --chip esp32 target/{{ m5_target }}/release/airhound
+    espflash flash --monitor --monitor-baud 460800 --chip esp32 target/{{ m5_target }}/release/airhound
 
 # Remove build artifacts
 [group('host')]

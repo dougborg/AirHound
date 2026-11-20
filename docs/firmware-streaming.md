@@ -22,8 +22,8 @@ work. Examples are in `schemas/examples/*-observation.device.json`.
 
 ## Delivery and loss
 
-Radio callbacks and event processing never wait for a slow consumer. Existing
-bounded queues are retained; no framebuffer, larger heap, or growing history is
+Radio callbacks and event processing never wait for a slow consumer. Bounded queues are retained (M5: 20 compact scan-event slots, four serialized
+output slots); no framebuffer, larger heap, or growing history is
 introduced. A `stream_stats` record is attempted every 30 seconds:
 
 - `scan_drops`: parsed observations rejected by the scan queue.
@@ -40,7 +40,10 @@ that a remote client received a BLE notification. ESP-IDF notification delivery
 errors are not measurable through these queue counters.
 
 No connected client means BLE forwarding is inactive, not a reported drop.
-Serial still emits records at 115200 baud, wrapped by diagnostic log prefixes;
+The no_std M5 build emits serial records at **460800 baud**; other builds retain
+115200. Boot-ROM/bootloader output still uses 115200, so early boot bytes may
+look garbled when monitoring at the application rate. A newline separates the
+application logs after the baud switch. Records have diagnostic log prefixes;
 a USB reader must strip log framing and ignore non-JSON diagnostics. BLE records
 are split into 20-byte notifications with newline padding at the end. Reassemble
 through the terminating newline and ignore empty lines; discard partial records

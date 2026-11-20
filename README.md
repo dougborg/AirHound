@@ -139,7 +139,7 @@ espflash write-bin --chip esp32s3 0x0 airhound-xiao.bin             # XIAO ESP32
 espflash write-bin --chip esp32 0x0 airhound-m5stickc.bin           # M5StickC Plus2
 
 # 3. Connect from a companion app over BLE, or monitor serial output
-espflash monitor --speed 115200
+espflash monitor --monitor-baud 460800 # no_std M5; other builds: 115200
 ```
 
 AirHound starts scanning immediately on boot. All parsed WiFi/BLE observations from enabled radios appear as NDJSON on BLE GATT notifications and serial; signature matches are metadata, not a condition for streaming. See [firmware streaming](docs/firmware-streaming.md) for loss counters and transport limits.
@@ -281,7 +281,7 @@ The library is organized in two code layers. Layer 1 is implemented; Layer 2 mod
          ▼         ▼         ▼
 ┌──────────┐ ┌──────────┐ ┌──────────────┐
 │ BLE GATT │ │ Serial   │ │ Display/Buzz │
-│ (notify) │ │ (115200) │ │ (M5StickC)   │
+│ (notify) │ │ (UART)   │ │ (M5StickC)   │
 └──────────┘ └──────────┘ └──────────────┘
 ```
 
