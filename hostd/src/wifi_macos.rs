@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use crate::health::{Phase, Scanner};
 use crate::ScanEvent;
 use airhound::comm;
 use airhound::scanner::{FrameType, WiFiEvent};
@@ -57,6 +58,19 @@ where
         if !crate::control::wait_running(&mut state, &tx).await {
             return Ok(());
         }
+        if crate::location_macos::permission_blocked() {
+            control.set_health(
+                Scanner::Wifi,
+                Phase::Blocked,
+                "location_permission_denied_or_disabled",
+            );
+            tokio::select! {
+                _ = tx.closed() => return Ok(()),
+                _ = state.changed() => {},
+                _ = tokio::time::sleep(SCAN_INTERVAL) => {},
+            }
+            continue;
+        }
         let generation = state.borrow().generation;
         log::debug!("WiFi scan requested");
         let scan = scan();
@@ -77,8 +91,22 @@ where
 
         match networks {
             Ok(wifis) => {
-                // Check for Location Services on first scan
-                if !wifis.is_empty() && !warned && wifis.iter().all(|w| w.mac.is_empty()) {
+                // Redaction is observable even before authorization settles.
+                let redacted = !wifis.is_empty() && wifis.iter().all(|w| w.mac.is_empty());
+                control.set_health(
+                    Scanner::Wifi,
+                    if redacted {
+                        Phase::Blocked
+                    } else {
+                        Phase::Running
+                    },
+                    if redacted {
+                        "addresses_redacted_check_location_permission"
+                    } else {
+                        "scan_completed"
+                    },
+                );
+                if redacted && !warned {
                     log::warn!(
                         "WiFi scan: all BSSIDs empty — grant Location Services permission \
                          to AirHound or the launching terminal in System Settings → Privacy & Security → Location Services"
@@ -86,6 +114,10 @@ where
                     warned = true;
                 }
 
+                if !redacted && warned {
+                    log::info!("WiFi addresses are available again");
+                    warned = false;
+                }
                 let mut count = 0u32;
                 for wifi in &wifis {
                     if state.borrow().generation != generation {
@@ -102,6 +134,7 @@ where
                 log::debug!("WiFi scan: {count} networks (of {} total)", wifis.len());
             }
             Err(e) => {
+                control.set_health(Scanner::Wifi, Phase::Unavailable, "scan_failed_retrying");
                 log::warn!("WiFi scan failed: {e}");
             }
         }

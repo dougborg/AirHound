@@ -5,6 +5,7 @@ use btleplug::platform::{Adapter, Manager};
 use futures_lite::StreamExt;
 use tokio::sync::mpsc;
 
+use crate::health::{Phase, Scanner};
 use crate::ScanEvent;
 use airhound::scanner::BleEvent;
 
@@ -16,6 +17,32 @@ pub async fn get_adapter() -> Result<Adapter, btleplug::Error> {
         .into_iter()
         .next()
         .ok_or(btleplug::Error::DeviceNotFound)
+}
+
+/// Bound adapter initialization and cancel it cooperatively at shutdown.
+/// A timeout is not proof of denial: the adapter may also be off/unavailable.
+pub async fn initialize<T>(
+    future: impl std::future::Future<Output = Result<T, btleplug::Error>>,
+    control: &crate::control::ScanControl,
+    tx: &mpsc::Sender<ScanEvent>,
+) -> std::io::Result<Option<T>> {
+    let mut state = control.subscribe();
+    let operation = tokio::time::timeout(std::time::Duration::from_secs(10), future);
+    tokio::pin!(operation);
+    loop {
+        if state.borrow().shutdown || tx.is_closed() {
+            return Ok(None);
+        }
+        tokio::select! {
+            _ = tx.closed() => return Ok(None),
+            changed = state.changed() => { if changed.is_err() { return Ok(None); } },
+            result = &mut operation => return match result {
+                Ok(result) => result.map(Some).map_err(std::io::Error::other),
+                Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut,
+                    "BLE adapter initialization timed out; check Bluetooth permission and power, then restart AirHound")),
+            }
+        }
+    }
 }
 
 /// Run the BLE scan loop, converting btleplug events into AirHound `BleEvent`s.
@@ -32,6 +59,7 @@ pub async fn scan_loop(
     while crate::control::wait_running(&mut state, &tx).await {
         let mut events = adapter.events().await?;
         adapter.start_scan(ScanFilter::default()).await?;
+        control.set_health(Scanner::Ble, Phase::Running, "scan_started");
         log::info!("BLE scan started");
         let finished = forward_events(
             &mut events,
@@ -66,10 +94,12 @@ pub async fn scan_loop(
         let stopped = adapter.stop_scan().await;
         log::info!("BLE scan stopped");
         stopped?;
+        control.set_health(Scanner::Ble, Phase::Paused, "scan_paused");
         if finished {
             break;
         }
     }
+    control.set_health(Scanner::Ble, Phase::Stopped, "scan_stopped");
     Ok(())
 }
 
@@ -294,6 +324,36 @@ mod tests {
     use btleplug::api::{BDAddr, PeripheralProperties};
     use std::collections::HashMap;
     use uuid::Uuid;
+
+    #[tokio::test(start_paused = true)]
+    async fn initialization_timeout_and_shutdown_do_not_hang_session() {
+        let (tx, _rx) = mpsc::channel(1);
+        let control = crate::control::ScanControl::new(true);
+        let error = initialize(
+            std::future::pending::<Result<(), btleplug::Error>>(),
+            &control,
+            &tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        control.shutdown();
+        assert_eq!(
+            initialize(
+                std::future::pending::<Result<(), btleplug::Error>>(),
+                &control,
+                &tx
+            )
+            .await
+            .unwrap(),
+            None
+        );
+        let control = crate::control::ScanControl::new(true);
+        assert_eq!(
+            initialize(async { Ok(7) }, &control, &tx).await.unwrap(),
+            Some(7)
+        );
+    }
 
     fn make_props() -> PeripheralProperties {
         PeripheralProperties {

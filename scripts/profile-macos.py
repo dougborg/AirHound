@@ -62,6 +62,7 @@ class ObservationLog:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--seconds', type=int, default=45)
+    parser.add_argument('--allow-empty', action='store_true', help='Diagnostic-only run: permit no observations; reception remains unverified')
     parser.add_argument('--mode', choices=['all', 'ble', 'wifi'], default='all')
     parser.add_argument('--pause-at', type=int, default=15)
     parser.add_argument('--resume-at', type=int, default=25)
@@ -190,7 +191,21 @@ def main():
                 errors.append(f'Command {expected_command!r} did not succeed')
         else:
             errors.append(f'Command {expected_command!r} was not acknowledged')
+    reception = {'wifi': any(row.get('Type') == 'WIFI' for row in rows), 'ble': bool(ble)}
+    required = ('wifi', 'ble') if args.mode == 'all' else (args.mode,)
+    if not args.allow_empty:
+        for scanner in required:
+            if not reception[scanner]:
+                errors.append(f'No {scanner.upper()} observations; check scanner health and permissions')
+    shutdown_timeout = 'Scanner exceeded shutdown budget' in diagnostics.read_text(errors='replace') if diagnostics.exists() else False
+    if shutdown_timeout:
+        errors.append('Scanner needed task cancellation at shutdown')
+    health = [record for record in records if record.get('type') == 'scanner_health']
     metrics = {
+        'reception_verified': all(reception[scanner] for scanner in required),
+        'reception': reception, 'allow_empty': args.allow_empty,
+        'scanner_health_latest': health[-1] if health else None,
+        'scanner_shutdown_timeout': shutdown_timeout,
         'schema_version': 1, 'mode': args.mode, 'directory': str(directory),
         'success': not errors, 'errors': errors,
         'measurement_complete': complete, 'requested_duration_s': args.seconds,
