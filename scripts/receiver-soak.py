@@ -6,7 +6,7 @@ launched once and may claim hardware. Raw logs stay in a new private directory;
 summary.json contains only aggregate measurements, never captured identifiers.
 """
 import argparse
-from collections import deque
+from collections import Counter, deque
 import datetime
 import json
 import math
@@ -82,7 +82,7 @@ def sample_resources(pid):
         lsof = shutil.which('lsof') or ('/usr/sbin/lsof' if Path('/usr/sbin/lsof').exists() else None)
         if not lsof:
             raise ValueError('FD measurement needs procfs or lsof')
-        result = subprocess.run([lsof, '-a', '-p', str(pid), '-F', 'f'],
+        result = subprocess.run([lsof, '-nP', '-a', '-p', str(pid), '-F', 'f'],
                                 capture_output=True, text=True, timeout=2, check=False)
         if result.returncode:
             raise ValueError('FD measurement unavailable')
@@ -232,6 +232,7 @@ def run(args, command):
     end = None
     interrupted = False
     metric_errors = 0
+    metric_error_kinds = Counter()
     next_sample = next_status = launch
     next_pause = None
     resume_at = None
@@ -284,8 +285,10 @@ def run(args, command):
                 if now >= next_sample:
                     try:
                         measurements.add(now - protocol.ready_at, sample_resources(process.pid))
-                    except (OSError, ValueError, subprocess.TimeoutExpired):
+                    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                         metric_errors += 1
+                        # Aggregate categories only; never persist command output.
+                        metric_error_kinds[type(error).__name__] += 1
                     next_sample = time.monotonic() + args.sample_seconds
                 if not protocol.pending:
                     cmd = None
@@ -391,6 +394,7 @@ def run(args, command):
         'exit_code': process.returncode if process else None, 'commands_acknowledged': protocol.acks,
         'cleanup_verified': protocol.cleanup_verified, 'beacon_records': protocol.beacon_records,
         'counters': protocol.counters, 'resource_measurement_errors': metric_errors,
+        'resource_error_kinds': dict(metric_error_kinds),
         'resources': resources, 'limits': {'rss_growth_mib': args.max_rss_growth_mib,
                                          'fd_growth': args.max_fd_growth, 'drops': args.max_drops},
         'method': {'cpu': 'ps cumulative child CPU delta divided by observed monotonic interval',
