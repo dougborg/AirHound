@@ -94,3 +94,46 @@ conversion/matching/output where possible, not a separate lookalike evaluator.
 through decoding and desktop output without a generic signature prerequisite or
 fabricated MAC. Hardware validation then separately establishes legacy, extended
 and PHY-specific reception using an identified receiver and controlled transmitter.
+
+## First payload/UUID implementation
+
+`ble_data` supplies canonical UUIDs, borrowed AD/manufacturer/service views and
+contextual byte masks/offset/length checks. The desktop `advertisement` extension
+preserves up to 64 advertised UUIDs, 16 manufacturer records and 16 service
+records, at most 1,024 bytes per record and 4,096 payload bytes in total. These are
+application limits, not Bluetooth limits. Lowest sorted keys win; manufacturer
+payloads consume the budget before service payloads. Empty records and company
+ID zero remain representable. Omitted entry counts and per-record truncation are
+explicit; truncated payloads are excluded from matching. Normalization occurs
+before the bounded address-enrichment queue. OS-owned properties can still be
+larger before normalization and the upstream library owns its own event buffers.
+
+Desktop output retains the numeric `service_uuids` compatibility array while
+`advertisement.advertised_services` and service-data keys carry full UUID strings.
+Linux also retains legacy matched `type: ble` records while emitting the new
+all-observation `ble_observation` records; consumers must select a stream rather
+than count both as independent observations. Full payload output is private
+capture data and follows the same handling as existing identifiers.
+
+Update-only manufacturer/service events are retained even when property lookup
+fails. `advertisement.rssi_available=false` means the legacy outer `rssi=0` is
+an unavailable-value placeholder, not a measurement. Such records are excluded
+from RSSI-dependent matching and WiGLE export. Names and addresses may be absent.
+Receiver identity is an integration hook populated by the adapter work (#171).
+
+Normalized snapshots evaluate primitive clues but do not run composite rules:
+cached fields cannot establish same-packet corroboration. The migrated Find My
+pattern requires company `004C`, payload type `12`, declared length `19`, and
+exactly 27 payload bytes after the company ID. It is labeled a framing candidate,
+not a model identification. Legacy raw-AD search-anywhere patterns are not applied
+to OS maps. Existing raw-AD/v1 offset semantics are unchanged.
+
+The raw AD iterator reports incomplete envelopes separately from malformed typed
+UUID/company/service fields. Full UUID borrowed accessors and base-alias matching
+use retained embedded bytes; owned `BleEvent` storage has not grown. Embedded
+capacity/provenance reporting, primary UUID output, full configurable UUID rule
+loading and signature schema migration remain follow-up work. The existing
+62-byte bound still prevents a general extended-advertisement support claim.
+
+Reference for AD field boundaries:
+[Bluetooth Supplement, Data Types](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/CSS_v11/out/en/supplement-to-the-bluetooth-core-specification/data-types-specification.html).

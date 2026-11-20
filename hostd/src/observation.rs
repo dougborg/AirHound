@@ -5,7 +5,16 @@ use airhound::scanner::{BleEvent, WiFiEvent};
 
 #[derive(Clone)]
 pub enum ScanEvent {
+    // Legacy synthetic inputs remain for regression fixtures; live adapters use BleSnapshot.
+    #[cfg_attr(not(test), allow(dead_code))]
     Ble(BleEvent),
+    BleSnapshot {
+        event: BleEvent,
+        id: String,
+        address: Option<[u8; 6]>,
+        snapshot: Box<crate::ble_payload::Snapshot>,
+    },
+    #[cfg_attr(not(test), allow(dead_code))]
     BlePeripheral {
         event: BleEvent,
         id: String,
@@ -46,6 +55,8 @@ pub struct BleObservation<'a> {
     #[serde(rename = "match")]
     pub matches: &'a [airhound::protocol::MatchReason],
     pub ts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertisement: Option<&'a crate::ble_payload::Snapshot>,
 }
 
 pub fn write(out: &mut impl std::io::Write, message: &BleObservation<'_>) -> std::io::Result<()> {

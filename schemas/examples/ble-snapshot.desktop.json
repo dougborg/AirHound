@@ -1,0 +1,48 @@
+{
+  "type": "ble_observation",
+  "peripheral_id": "fixture-device",
+  "identity_scope": "btleplug",
+  "address_type": "unknown",
+  "name": "",
+  "rssi": 0,
+  "service_uuids": [],
+  "manufacturer_id": 0,
+  "match": [],
+  "ts": 123,
+  "advertisement": {
+    "provenance": "os_property_snapshot",
+    "freshness": "possibly_cached",
+    "completeness": "unknown",
+    "address_type": "unknown",
+    "rssi_available": false,
+    "advertised_services": [
+      "12345678-0000-1000-8000-00805f9b34fb"
+    ],
+    "manufacturer_data": [
+      {
+        "company_id": 0,
+        "payload": [],
+        "original_len": 0,
+        "truncated": false
+      }
+    ],
+    "service_data": [
+      {
+        "uuid": "12345678-1122-3344-5566-778899aabbcc",
+        "payload": [
+          1,
+          2,
+          3
+        ],
+        "original_len": 3,
+        "truncated": false
+      }
+    ],
+    "capacity": {
+      "omitted_uuids": 0,
+      "omitted_manufacturer_records": 0,
+      "omitted_service_records": 0,
+      "truncated_payloads": 0
+    }
+  }
+}

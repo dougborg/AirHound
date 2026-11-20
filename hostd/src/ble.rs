@@ -57,19 +57,36 @@ pub async fn scan_loop(
             control.clone(),
             |event| async {
                 use btleplug::api::CentralEvent;
-                match event {
-                    CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
-                        let peripheral = adapter.peripheral(&id).await.ok()?;
-                        let props = peripheral.properties().await.ok().flatten()?;
-                        let id = id.to_string();
-                        Some((id, props))
-                    }
+                let id = match &event {
+                    CentralEvent::DeviceDiscovered(id)
+                    | CentralEvent::DeviceUpdated(id)
+                    | CentralEvent::ManufacturerDataAdvertisement { id, .. }
+                    | CentralEvent::ServiceDataAdvertisement { id, .. }
+                    | CentralEvent::ServicesAdvertisement { id, .. } => id,
                     CentralEvent::StateUpdate(state) => {
-                        crate::receiver::update_state(&control, state);
-                        None
+                        crate::receiver::update_state(&control, state.clone());
+                        return None;
                     }
-                    _ => None,
-                }
+                    _ => return None,
+                };
+                let props = match adapter.peripheral(id).await {
+                    Ok(peripheral) => peripheral.properties().await.ok().flatten(),
+                    Err(_) => None,
+                };
+                let id = id.to_string();
+                let update = match event {
+                    CentralEvent::ManufacturerDataAdvertisement {
+                        manufacturer_data, ..
+                    } => PropertyUpdate::Manufacturer(manufacturer_data),
+                    CentralEvent::ServiceDataAdvertisement { service_data, .. } => {
+                        PropertyUpdate::Service(service_data)
+                    }
+                    CentralEvent::ServicesAdvertisement { services, .. } => {
+                        PropertyUpdate::Services(services)
+                    }
+                    _ => PropertyUpdate::Discovery,
+                };
+                updated_properties(props, update).map(|props| (id, props))
             },
             |id| async move {
                 #[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
@@ -101,6 +118,32 @@ pub async fn scan_loop(
     }
     control.set_health(Scanner::Ble, Phase::Stopped, "scan_stopped");
     Ok(())
+}
+
+enum PropertyUpdate {
+    Discovery,
+    Manufacturer(std::collections::HashMap<u16, Vec<u8>>),
+    Service(std::collections::HashMap<uuid::Uuid, Vec<u8>>),
+    Services(Vec<uuid::Uuid>),
+}
+
+// Available update payloads survive missing/erroring peripheral properties. Other
+// metadata remains unknown; normalization marks RSSI unavailable and fields cached.
+fn updated_properties(
+    props: Option<btleplug::api::PeripheralProperties>,
+    update: PropertyUpdate,
+) -> Option<btleplug::api::PeripheralProperties> {
+    if props.is_none() && matches!(update, PropertyUpdate::Discovery) {
+        return None;
+    }
+    let mut props = props.unwrap_or_default();
+    match update {
+        PropertyUpdate::Discovery => {}
+        PropertyUpdate::Manufacturer(data) => props.manufacturer_data.extend(data),
+        PropertyUpdate::Service(data) => props.service_data.extend(data),
+        PropertyUpdate::Services(services) => props.services = services,
+    }
+    Some(props)
 }
 
 // Keep enrichment bounded independently of btleplug's small discovery buffer.
@@ -145,16 +188,14 @@ where
                 props = properties(event) => props,
             };
             if let Some(props) = props {
-                match pending.try_send(props) {
+                let (id, props) = props;
+                let event = observation(&id, &props, None);
+                drop(props); // Do not retain unbounded OS maps across output backpressure.
+                match pending.try_send((id, event)) {
                     Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full((id, props))) => {
-                        if !send_in_generation(
-                            &tx,
-                            &mut ingest_state,
-                            initial.generation,
-                            observation(&id, &props, None),
-                        )
-                        .await
+                    Err(mpsc::error::TrySendError::Full((_id, event))) => {
+                        if !send_in_generation(&tx, &mut ingest_state, initial.generation, event)
+                            .await
                         {
                             return false;
                         }
@@ -172,7 +213,7 @@ where
             if !same_scan_generation(current, initial.generation) {
                 break;
             }
-            let (id, props) = tokio::select! {
+            let (id, mut event) = tokio::select! {
                 _ = output.closed() => break,
                 _ = enrich_state.changed() => continue,
                 props = enrichment.recv() => match props { Some(props) => props, None => break },
@@ -190,14 +231,12 @@ where
                     resolved = address(id.clone()) => resolved,
                 }
             };
-            if !send_in_generation(
-                &output,
-                &mut enrich_state,
-                initial.generation,
-                observation(&id, &props, resolved),
-            )
-            .await
-            {
+            if let ScanEvent::BleSnapshot { address, .. } = &mut event {
+                if resolved.is_some() {
+                    *address = resolved;
+                }
+            }
+            if !send_in_generation(&output, &mut enrich_state, initial.generation, event).await {
                 break;
             }
         }
@@ -241,20 +280,19 @@ async fn send_in_generation(
     }
 }
 
-fn observation(
+pub(crate) fn observation(
     id: &str,
     props: &btleplug::api::PeripheralProperties,
     address: Option<[u8; 6]>,
 ) -> ScanEvent {
     let event = convert_properties(props);
-    if cfg!(target_os = "macos") || event.mac == [0; 6] {
-        ScanEvent::BlePeripheral {
-            event,
-            id: id.to_owned(),
-            address,
-        }
-    } else {
-        ScanEvent::Ble(event)
+    let address = address
+        .or_else(|| (!cfg!(target_os = "macos") && event.mac != [0; 6]).then_some(event.mac));
+    ScanEvent::BleSnapshot {
+        event,
+        id: id.to_owned(),
+        address,
+        snapshot: Box::new(crate::ble_payload::Snapshot::from_properties(props)),
     }
 }
 
@@ -278,25 +316,26 @@ fn convert_properties(props: &btleplug::api::PeripheralProperties) -> BleEvent {
         .unwrap_or(0)
         .clamp(i8::MIN as i16, i8::MAX as i16) as i8;
 
-    // Extract 16-bit service UUIDs
-    let mut service_uuids_16 = heapless::Vec::new();
+    // The compatibility array is deterministic too; full identities live in Snapshot.
+    let mut service_uuids_16: heapless::Vec<u16, 8> = heapless::Vec::new();
     for uuid in &props.services {
-        // Check if this is a 16-bit UUID (Bluetooth Base UUID pattern)
-        let uuid_bytes = uuid.as_bytes();
-        // 16-bit UUIDs have the form 0000XXXX-0000-1000-8000-00805f9b34fb
-        if uuid_bytes[4..]
-            == [
-                0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
-            ]
-            && uuid_bytes[0..2] == [0x00, 0x00]
-        {
-            let short = u16::from_be_bytes([uuid_bytes[2], uuid_bytes[3]]);
+        let Some(short) = airhound::ble_data::Uuid(*uuid.as_bytes()).as_u16() else {
+            continue;
+        };
+        if !service_uuids_16.contains(&short) {
+            if service_uuids_16.is_full() {
+                if short >= service_uuids_16[7] {
+                    continue;
+                }
+                service_uuids_16.pop();
+            }
             let _ = service_uuids_16.push(short);
+            service_uuids_16.sort_unstable();
         }
     }
 
     // Extract manufacturer ID (first key if any)
-    let manufacturer_id = props.manufacturer_data.keys().next().copied().unwrap_or(0);
+    let manufacturer_id = props.manufacturer_data.keys().min().copied().unwrap_or(0);
 
     // raw_ad is not available from btleplug on macOS (CoreBluetooth abstracts it)
     let raw_ad = heapless::Vec::new();
@@ -433,6 +472,43 @@ mod tests {
     }
 
     #[test]
+    fn payload_update_survives_missing_properties_and_supersedes_cached_bytes() {
+        let uuid = Uuid::from_bytes(airhound::ble_data::Uuid::from_u16(0xfffa).0);
+        let update = PropertyUpdate::Service(HashMap::from([(uuid, vec![0x0d, 7])]));
+        let props = updated_properties(None, update).unwrap();
+        let ScanEvent::BleSnapshot { snapshot, .. } = observation("update-only", &props, None)
+        else {
+            panic!("snapshot required")
+        };
+        assert!(!snapshot.rssi_available);
+        assert_eq!(snapshot.service_data[0].payload, [0x0d, 7]);
+        assert!(updated_properties(None, PropertyUpdate::Discovery).is_none());
+        let mut cached = make_props();
+        cached.manufacturer_data.insert(0, vec![1]);
+        let props = updated_properties(
+            Some(cached),
+            PropertyUpdate::Manufacturer(HashMap::from([(0, vec![2])])),
+        )
+        .unwrap();
+        assert_eq!(props.manufacturer_data[&0], [2]);
+        let props = updated_properties(Some(props), PropertyUpdate::Services(vec![uuid])).unwrap();
+        assert_eq!(props.services, [uuid]);
+    }
+
+    #[test]
+    fn compatibility_uuid_subset_is_deterministic_and_excludes_custom_collisions() {
+        let mut props = make_props();
+        props.services = (0..20)
+            .rev()
+            .map(|n| Uuid::from_bytes(airhound::ble_data::Uuid::from_u16(n).0))
+            .collect();
+        let first = convert_properties(&props).service_uuids_16;
+        props.services.reverse();
+        assert_eq!(first, convert_properties(&props).service_uuids_16);
+        assert_eq!(&first[..], &[0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
     fn convert_non_16bit_uuid_skipped() {
         // A custom 128-bit UUID (not from the Bluetooth Base range)
         let uuid = Uuid::from_u128(0x4a690001_1c4a_4e3c_b5d8_f47b2e1c0a9d);
@@ -484,7 +560,9 @@ mod tests {
         ));
         let event = rx.recv().await.unwrap();
         let event = match event {
-            ScanEvent::Ble(event) | ScanEvent::BlePeripheral { event, .. } => event,
+            ScanEvent::Ble(event)
+            | ScanEvent::BlePeripheral { event, .. }
+            | ScanEvent::BleSnapshot { event, .. } => event,
             _ => panic!("expected BLE"),
         };
         assert_eq!(event.mac, [0xaa, 0xbb, 0xcc, 0x11, 0x22, 0x33]);
@@ -585,7 +663,7 @@ mod tests {
             let mut ids = std::collections::HashSet::new();
             let mut enriched = 0;
             while let Some(event) = observations.recv().await {
-                let ScanEvent::BlePeripheral { id, address, .. } = event else {
+                let ScanEvent::BleSnapshot { id, address, .. } = event else {
                     panic!("expected UUID observation");
                 };
                 assert!(ids.insert(id), "observation must be emitted exactly once");
@@ -646,7 +724,7 @@ mod tests {
             );
             let mut ids = std::collections::HashSet::new();
             while let Some(event) = observations.recv().await {
-                let ScanEvent::BlePeripheral { id, address, .. } = event else {
+                let ScanEvent::BleSnapshot { id, address, .. } = event else {
                     panic!("expected UUID observation");
                 };
                 assert!(address.is_none());

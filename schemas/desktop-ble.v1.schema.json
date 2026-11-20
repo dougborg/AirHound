@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble.v1.schema.json",
   "title": "AirHound desktop BLE observation v1",
-  "description": "Desktop observation with an opaque host-scoped peripheral ID and optional observed Bluetooth address. Address type is unknown; this is not a permanent device identity. Separate from the size-bounded firmware protocol.",
+  "description": "Desktop observation with backend-scoped identity, optional observed address, and optional bounded OS advertisement snapshot. Normalized snapshots may contain cached fields; they are not raw packets.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -51,10 +51,17 @@
       }
     },
     "address_source": {
-      "const": "corebluetooth_private"
+      "enum": [
+        "corebluetooth_private",
+        "btleplug"
+      ]
     },
     "address_type": {
-      "const": "unknown"
+      "enum": [
+        "public",
+        "random",
+        "unknown"
+      ]
     },
     "name": {
       "type": "string",
@@ -104,6 +111,156 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 4294967295
+    },
+    "advertisement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance",
+        "freshness",
+        "completeness",
+        "address_type",
+        "rssi_available",
+        "advertised_services",
+        "manufacturer_data",
+        "service_data",
+        "capacity"
+      ],
+      "properties": {
+        "provenance": {
+          "const": "os_property_snapshot"
+        },
+        "freshness": {
+          "const": "possibly_cached"
+        },
+        "completeness": {
+          "const": "unknown"
+        },
+        "address_type": {
+          "enum": [
+            "public",
+            "random",
+            "unknown"
+          ]
+        },
+        "rssi_available": {
+          "type": "boolean",
+          "description": "When false the legacy outer rssi=0 is an unavailable-value placeholder, never a measured signal."
+        },
+        "receiver_id": {
+          "type": "string"
+        },
+        "advertised_services": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "manufacturer_data": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "company_id",
+              "payload",
+              "original_len",
+              "truncated"
+            ],
+            "properties": {
+              "company_id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "payload": {
+                "type": "array",
+                "maxItems": 1024,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "original_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "service_data": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "uuid",
+              "payload",
+              "original_len",
+              "truncated"
+            ],
+            "properties": {
+              "uuid": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "payload": {
+                "type": "array",
+                "maxItems": 1024,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "original_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "omitted_uuids",
+            "omitted_manufacturer_records",
+            "omitted_service_records",
+            "truncated_payloads"
+          ],
+          "properties": {
+            "omitted_uuids": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omitted_manufacturer_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omitted_service_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated_payloads": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
     }
   }
 }
