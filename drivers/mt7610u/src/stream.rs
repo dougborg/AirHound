@@ -46,6 +46,7 @@ struct Runtime<H> {
     generation: u64,
     dropped: u64,
     reconnect_attempts: u64,
+    mcu_timeouts: u64,
     recovery_attempts: u32,
     recovery_started: Instant,
     retry_at: Instant,
@@ -64,6 +65,7 @@ impl<H: ReceiverHardware> Runtime<H> {
             generation: 0,
             dropped: 0,
             reconnect_attempts: 0,
+            mcu_timeouts: 0,
             recovery_attempts: 0,
             recovery_started: now,
             retry_at: now,
@@ -78,7 +80,7 @@ impl<H: ReceiverHardware> Runtime<H> {
             State::Paused => "paused",
             State::Recovering => "recovering",
         };
-        let mut value = json!({"type":"status","state":state,"session_id":self.session,"dropped_observations":self.dropped,"reconnect_attempts":self.reconnect_attempts,"cleanup_verified":self.cleanup_verified});
+        let mut value = json!({"type":"status","state":state,"session_id":self.session,"dropped_observations":self.dropped,"reconnect_attempts":self.reconnect_attempts,"mcu_timeouts":self.mcu_timeouts,"cleanup_verified":self.cleanup_verified});
         if let Some(metrics) = self.hardware.metrics().as_object() {
             for (key, count) in metrics {
                 value[key] = count.clone();
@@ -136,13 +138,27 @@ impl<H: ReceiverHardware> Runtime<H> {
         Ok(())
     }
     fn recover(&mut self, error: anyhow::Error, out: &Output) -> Result<()> {
-        if !error
+        let mcu_timeout = error
             .chain()
-            .any(|e| e.downcast_ref::<rusb::Error>() == Some(&rusb::Error::NoDevice))
-        {
+            .any(|e| e.is::<mt7610u_lab::transport::McuTimeout>());
+        let disconnected = error
+            .chain()
+            .any(|e| e.downcast_ref::<rusb::Error>() == Some(&rusb::Error::NoDevice));
+        if !mcu_timeout && !disconnected {
             return Err(error);
         }
         self.cleanup_verified = self.hardware.shutdown().is_ok();
+        if mcu_timeout {
+            self.mcu_timeouts += 1;
+            ensure!(
+                self.cleanup_verified,
+                "MCU timeout recovery requires verified radio shutdown"
+            );
+            ensure!(
+                self.mcu_timeouts < 3,
+                "MCU timeout recovery budget exhausted"
+            );
+        }
         self.dropped += out.discard_observations();
         if self.state != State::Recovering {
             self.recovery_started = Instant::now();
@@ -355,6 +371,42 @@ mod tests {
             request_id: Some(json!(id)),
         }
     }
+    #[test]
+    fn mcu_timeout_recovery_requires_cleanup_and_has_a_session_wide_limit() {
+        let out = Output::new(Vec::new());
+        let mut runtime = Runtime::new(FakeHardware::default());
+        runtime.start(&out).unwrap();
+        let original = runtime.session.clone();
+        let error = || {
+            anyhow::Error::from(mt7610u_lab::transport::McuTimeout {
+                command: 31,
+                sequence: 7,
+            })
+        };
+        runtime.recover(error(), &out).unwrap();
+        assert!(runtime.cleanup_verified);
+        assert_eq!(runtime.state, State::Recovering);
+        runtime.start(&out).unwrap();
+        assert_ne!(runtime.session, original);
+        runtime.recover(error(), &out).unwrap();
+        runtime.start(&out).unwrap();
+        assert!(runtime
+            .recover(error(), &out)
+            .unwrap_err()
+            .to_string()
+            .contains("budget exhausted"));
+        let mut runtime = Runtime::new(FakeHardware {
+            fail_shutdown: true,
+            ..Default::default()
+        });
+        assert!(runtime
+            .recover(error(), &out)
+            .unwrap_err()
+            .to_string()
+            .contains("verified radio shutdown"));
+        out.finish(Duration::from_secs(1)).unwrap();
+    }
+
     #[test]
     fn event_loop_processes_commands_cancellation_eof_and_input_failure() {
         for input_error in [None, Some("invalid control input")] {
