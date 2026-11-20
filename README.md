@@ -142,7 +142,7 @@ espflash write-bin --chip esp32 0x0 airhound-m5stickc.bin           # M5StickC P
 espflash monitor --speed 115200
 ```
 
-AirHound starts scanning immediately on boot. Matched devices appear as NDJSON on both BLE GATT notifications and serial.
+AirHound starts scanning immediately on boot. All parsed WiFi/BLE observations from enabled radios appear as NDJSON on BLE GATT notifications and serial; signature matches are metadata, not a condition for streaming. See [firmware streaming](docs/firmware-streaming.md) for loss counters and transport limits.
 
 Live radio coexistence, runtime memory headroom, buzzer behavior and board
 flashing remain tracked in [#141](https://github.com/dougborg/AirHound/issues/141).

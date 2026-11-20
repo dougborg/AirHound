@@ -1,0 +1,9 @@
+{
+  "type": "ble",
+  "mac": "02:00:00:00:00:02",
+  "name": "ordinary",
+  "rssi": -99,
+  "mfr": 0,
+  "match": [],
+  "ts": 101
+}

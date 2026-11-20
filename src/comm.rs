@@ -383,6 +383,39 @@ mod tests {
         assert!(json.contains("\"type\":\"wifi\""));
     }
 
+    #[test]
+    fn ordinary_ble_observation_and_loss_counters_fit_the_wire_budget() {
+        let mac = MacString::try_from("02:00:00:00:00:01").unwrap();
+        let name = NameString::try_from("ordinary").unwrap();
+        let matches = Vec::<MatchReason, 4>::new();
+        let msg = DeviceMessage::BleScan {
+            mac: &mac,
+            name: &name,
+            rssi: -99,
+            uuid: None,
+            mfr: 0,
+            matches: &matches,
+            rule: None,
+            ts: 1,
+        };
+        let mut buf = [0; crate::protocol::MAX_MSG_LEN];
+        let len = serialize_message(&msg, &mut buf).unwrap();
+        let text = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(text.contains("\"match\":[]"));
+        assert!(!text.contains("\"rule\""));
+        assert!(text.ends_with('\n'));
+        let stats = DeviceMessage::StreamStats {
+            scan_drops: u32::MAX,
+            output_drops: u32::MAX,
+            ble_output_drops: u32::MAX,
+            serialize_errors: u32::MAX,
+        };
+        let len = serialize_message(&stats, &mut buf).unwrap();
+        let text = core::str::from_utf8(&buf[..len]).unwrap();
+        assert!(text.contains("stream_stats"));
+        assert!(text.contains("4294967295"));
+    }
+
     // ── parse_command tests ─────────────────────────────────────────
 
     #[test]

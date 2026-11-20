@@ -33,6 +33,14 @@ pub struct MatchReason {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum DeviceMessage<'a> {
+    /// Cumulative best-effort transport losses since boot (wrapping u32).
+    #[serde(rename = "stream_stats")]
+    StreamStats {
+        scan_drops: u32,
+        output_drops: u32,
+        ble_output_drops: u32,
+        serialize_errors: u32,
+    },
     /// Outcome of one parsed command, after its state changes have completed.
     #[serde(rename = "command_result")]
     CommandResult {
@@ -50,7 +58,7 @@ pub enum DeviceMessage<'a> {
         ch: u8,
         /// Frame type: "beacon", "probe_req", "probe_resp", "data", "other"
         frame: &'static str,
-        /// Why this result matched the filter
+        /// Signature reasons; empty for ordinary or below-threshold observations
         #[serde(rename = "match")]
         matches: &'a Vec<MatchReason, 4>,
         /// First matched rule name, if any
@@ -70,7 +78,7 @@ pub enum DeviceMessage<'a> {
         uuid: Option<&'a UuidString>,
         /// Manufacturer company ID
         mfr: u16,
-        /// Why this result matched the filter
+        /// Signature reasons; empty for ordinary or below-threshold observations
         #[serde(rename = "match")]
         matches: &'a Vec<MatchReason, 4>,
         /// First matched rule name, if any
