@@ -206,25 +206,28 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         if scanning { Rgb565::GREEN } else { Rgb565::RED },
     );
 
-    let odid_count = crate::ODID_MATCH_COUNT.load(Ordering::Relaxed);
-    if odid_count > 0 {
-        row!(
-            s,
-            FG,
-            " W:{} B:{} D:{}",
-            crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
-            crate::BLE_MATCH_COUNT.load(Ordering::Relaxed),
-            odid_count
-        );
-    } else {
-        row!(
-            s,
-            FG,
-            " WiFi: {}    BLE: {}",
-            crate::WIFI_MATCH_COUNT.load(Ordering::Relaxed),
-            crate::BLE_MATCH_COUNT.load(Ordering::Relaxed)
-        );
-    }
+    let counts = crate::memory::counts();
+    row!(
+        s,
+        DIM,
+        " Addresses since boot{}",
+        if counts.limited { " (limit)" } else { "" }
+    );
+    row!(
+        s,
+        FG,
+        " APs: {}  Other WiFi: {}",
+        counts.aps,
+        counts.wifi_other
+    );
+    row!(s, FG, " BLE devices: {}", counts.ble);
+    row!(
+        s,
+        ACCENT,
+        " Signature hits: WiFi {}  BLE {}",
+        counts.wifi_hits,
+        counts.ble_hits
+    );
 
     let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
     if !last.is_empty() {
@@ -256,8 +259,9 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
     row!(
         s,
         DIM,
-        " Heap: {}K free  Buzzer: {}",
-        esp_alloc::HEAP.free() / 1024,
+        " Free RAM: {}K + PSRAM {}K  Bz:{}",
+        crate::memory::internal_free() / 1024,
+        crate::memory::external_free() / 1024,
         buzzer
     );
 }

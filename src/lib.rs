@@ -22,6 +22,7 @@ pub mod comm;
 pub mod defaults;
 pub mod filter;
 pub mod mac_index;
+pub mod observations;
 pub mod odid;
 pub mod protocol;
 pub mod proximity;
