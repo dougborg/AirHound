@@ -2,11 +2,11 @@
 
 Published tracking index: [#160](https://github.com/dougborg/AirHound/issues/160).
 
-Groomed 2026-11-19 from the project conversation, all open GitHub issues/PRs, current source, and local hardware reports. Priorities are sequencing, not delivery promises. Issue bodies own acceptance criteria; this index owns ordering and status. Integration follow-up: #150 and #151 are merged; firmware #162 is undergoing final combined-tree checks. No release has been published.
+Groomed 2026-11-19 from the project conversation, all open GitHub issues/PRs, current source, and local hardware reports. Priorities are sequencing, not delivery promises. Issue bodies own acceptance criteria; this index owns ordering and status. Integration follow-up: #150, #151 and firmware #162 are merged after final combined-tree checks. No release has been published.
 
 ## Recommended order
 
-1. Integrate reviewable commits and refresh final-head evidence (#152), with #150 and #151 merged and firmware #162 in final validation.
+1. Integrate reviewable commits and refresh final-head evidence (#152), with #150, #151 and #162 merged; dependency follow-up remains.
 2. Fix firmware resource/stack/drop limits (#153), signature-confidence problems (#154), and macOS live capture regressions (#159). Keep #141 as the release gate.
 3. Complete receiver endurance/fault acceptance (#155) and controlled RF/channel/RSSI validation (#156), then distribution/signing/license evidence (#157).
 4. Deliver typed observations/health (#71), improve sensor UI (#8), evaluate the native desktop GUI (#158), then expand transport, storage and integrations as needed.
@@ -20,8 +20,8 @@ Groomed 2026-11-19 from the project conversation, all open GitHub issues/PRs, cu
 | Protocol outcomes | #143 merged explicit supported/unsupported/error responses. Actual mode/category/proximity/export effects remain #72 and its feature children. |
 | macOS lifecycle, BLE address lookup, benchmarks | #150 merged. Standard build includes private address lookup; public-API-only build is optional. UUID-only fallback is retained. Final live capture/permissions need #159; profiler success alone is not reception evidence. |
 | External ALFA receiver | #151 merged (reviewed head 923dc3a). Separate GPL-2.0-only passive userspace receiver; MIT host uses a process protocol. Includes live supervision, 38 passive HT20 channels, refactoring, 75 driver tests and 85.52% local driver line coverage (81% gates). Linux/macOS coverage, fuzzing, performance, driver checks and clean-source candidate packaging passed. Not production ready. |
-| M5StickC Plus2 | PR #162: missing WiFi start fixed, AP/other WiFi/BLE counts separated from signature hits, 4,096-entry tracker in isolated 2 MiB PSRAM. Full PSRAM self-test and 180-second coexistence run pass; 149 addresses, 1,106 WiFi packets, 42 initial drops, zero hop errors. Internal free 3,672 B; external free 2,068,472 B. Final combined-tree CI pending (#152). |
-| Quality baseline | Latest local core: 313 tests, 89.76% production-line coverage (89% floor); 38 Python tests on the combined integration tree; strict core Clippy and both no_std board builds pass. These do not replace final-head Linux/macOS/four-firmware-target CI or live acceptance. |
+| M5StickC Plus2 | #162 merged: missing WiFi start fixed, AP/other WiFi/BLE counts separated from signature hits, 4,096-entry tracker in isolated 2 MiB PSRAM. Full PSRAM self-test and 180-second coexistence run pass; 149 addresses, 1,106 WiFi packets, 42 initial drops, zero hop errors. Internal free 3,672 B; external free 2,068,472 B. Combined-tree CI, all four firmware builds, preview packaging, coverage, fuzzing and CodeQL passed. |
+| Quality baseline | Combined-tree CI: core 89.76%, host Linux 85.23%, host macOS 84.64%, receiver macOS 85.52% production-line coverage; all coverage floors and fuzzing pass. Local combined checks pass 313 core and 38 Python tests. Linked startup stack is 7,420 B (6,144 B minimum). Hardware acceptance remains separate. |
 | Release | #123 remains open. Newly published assets, clean-host installs and live support matrix still need #141/#157. No eight-hour receiver soak or calibrated RSSI claim. |
 
 ## Decisions and limits carried forward
@@ -42,9 +42,9 @@ Every open implementation/research issue at this grooming snapshot appears once 
 
 | Issue | Work | Status / scope |
 | --- | --- | --- |
-| [#152](https://github.com/dougborg/AirHound/issues/152) | integrate the validated firmware and receiver work into reviewable PRs | #150/#151 merged; #162 in validation; dependency/release follow-up remains |
+| [#152](https://github.com/dougborg/AirHound/issues/152) | integrate the validated firmware and receiver work into reviewable PRs | #150/#151/#162 merged; dependency/release follow-up remains |
 | [#141](https://github.com/dougborg/AirHound/issues/141) | test: validate firmware and desktop scanners before the next release | Partial hardware evidence; release gate remains open |
-| [#153](https://github.com/dougborg/AirHound/issues/153) | enforce firmware memory/stack budgets and reduce scan-event loss | PSRAM and linked startup-stack guard in #162; runtime heap/stack/drop work remains |
+| [#153](https://github.com/dougborg/AirHound/issues/153) | enforce firmware memory/stack budgets and reduce scan-event loss | PSRAM and linked startup-stack guard merged in #162; runtime heap/stack/drop work remains |
 | [#154](https://github.com/dougborg/AirHound/issues/154) | distinguish signature evidence from confirmed device identification | New; audit broad signatures and confidence |
 | [#159](https://github.com/dougborg/AirHound/issues/159) | resolve macOS live scanner permission and startup regressions | Known live macOS capture/startup failures still need resolution |
 | [#155](https://github.com/dougborg/AirHound/issues/155) | complete MT7610U endurance, disconnect and sleep/wake acceptance | Short runs pass; eight-hour/fault acceptance absent |
@@ -62,7 +62,7 @@ Every open implementation/research issue at this grooming snapshot appears once 
 | [#36](https://github.com/dougborg/AirHound/issues/36) | feat: parse BLE 128-bit service UUIDs (AD types 0x06/0x07) | 128-bit parsing/matching and embedded UUID emission incomplete |
 | [#71](https://github.com/dougborg/AirHound/issues/71) | feat(protocol): define observation/catalog and scanner-health messages | Catalog/typed health contract unresolved; current counters are screen/log only |
 | [#72](https://github.com/dougborg/AirHound/issues/72) | feat(protocol): complete command effects and acknowledgments | Acknowledgments merged; feature effects remain scoped to children |
-| [#8](https://github.com/dougborg/AirHound/issues/8) | feat(m5stickc): multi-screen UI with button navigation | Observed/suspect and memory counts local; buttons/pages unfinished |
+| [#8](https://github.com/dougborg/AirHound/issues/8) | feat(m5stickc): multi-screen UI with button navigation | Observed/suspect and memory counts merged; buttons/pages unfinished |
 | [#7](https://github.com/dougborg/AirHound/issues/7) | feat(m5stickc): get buzzer working on match detection | Driver initializes; audible behavior unverified |
 | [#19](https://github.com/dougborg/AirHound/issues/19) | feat: BLE duty cycling and batched notifications for power and throughput | Active continuous BLE; batching/duty-cycle evaluation remains |
 | [#30](https://github.com/dougborg/AirHound/issues/30) | lib: channel strategy module (channel.rs) | Basic hopping exists; measured/adaptive/shared scheduling remains |
@@ -84,7 +84,7 @@ Every open implementation/research issue at this grooming snapshot appears once 
 | [#14](https://github.com/dougborg/AirHound/issues/14) | feat: runtime signature loading and update protocol | Open backlog; see issue acceptance criteria |
 | [#16](https://github.com/dougborg/AirHound/issues/16) | feat: interoperability with OUI-Spy, FlockSquawk, Flock-You, and other projects | Open backlog; see issue acceptance criteria |
 | [#28](https://github.com/dougborg/AirHound/issues/28) | lib: GPS data types module (gps.rs) | Open backlog; see issue acceptance criteria |
-| [#29](https://github.com/dougborg/AirHound/issues/29) | lib: device tracker module (tracker.rs) | Bounded address counter local; history/expiry/address types remain |
+| [#29](https://github.com/dougborg/AirHound/issues/29) | lib: device tracker module (tracker.rs) | Bounded address counter merged; history/expiry/address types remain |
 | [#31](https://github.com/dougborg/AirHound/issues/31) | lib: extract and extend the existing hostd WiGLE writer | Hostd WiGLE writer exists; extraction/additional exports remain |
 | [#32](https://github.com/dougborg/AirHound/issues/32) | lib: WIDS rules module (wids.rs) | Open backlog; see issue acceptance criteria |
 | [#38](https://github.com/dougborg/AirHound/issues/38) | feat: extract frame subtype, BSSID, and IEs from WiFi frames | Open backlog; see issue acceptance criteria |
@@ -150,11 +150,10 @@ Every open implementation/research issue at this grooming snapshot appears once 
 
 ## Open pull-request queue
 
-- #162: M5Stick WiFi startup, observation counts, PSRAM and stack-budget guard; final combined-tree validation running.
-- #150/#151 are merged; live/production acceptance remains #159/#155–#157.
+- #150/#151/#162 are merged; live/production acceptance remains #159/#155–#157.
 - #149: btleplug update rebased locally; default/public-only host tests and strict Clippy pass. A 45-second live run acknowledged commands but captured zero observations and cancelled a stalled scanner at shutdown (#159); final remote checks remain.
 - #161: grouped dependency update (supersedes #148); rebase and test.
-- #163: receiver SHA-2 dependency update; candidate workflow failure needs review before merge.
+- #163: receiver SHA-2 dependency update; digest-format compatibility fixed, 75 local tests/Clippy and clean-source candidate packaging pass; final CI pending.
 - #136–#140: release/upload/checkout/install/simulator Actions updates; review compatibility and final workflows.
 - #123: release automation PR; gated by evidence, assets and the documented support matrix.
 

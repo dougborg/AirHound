@@ -314,7 +314,7 @@ complete open-issue inventory, dependencies, evidence and release gates.
 Desktop CLI, Linux monitor-interface WiFi and command outcomes are already
 merged, along with macOS lifecycle/address enrichment (#150) and the
 experimental external receiver (#151). M5Stick WiFi startup, PSRAM/counting
-fixes and a startup-stack CI guard are in PR #162 for final validation. Hardware release
+fixes and a startup-stack CI guard are merged in #162. Hardware release
 validation remains [#141](https://github.com/dougborg/AirHound/issues/141).
 
 Directions are not delivery promises. The roadmap distinguishes implemented,
