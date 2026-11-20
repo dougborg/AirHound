@@ -147,6 +147,12 @@ pub async fn scan(
     match source {
         Source::Pcap(path) => {
             // Replay is finite and never silently restarted from the beginning on pause.
+            if !tokio::fs::metadata(&path).await?.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "BLE replay requires a regular saved PCAP file",
+                ));
+            }
             let file = tokio::fs::File::open(path).await?;
             if !wait_running(&mut state, &tx).await {
                 return Ok(());
@@ -408,6 +414,13 @@ mod tests {
         )
         .await
         .is_err());
+        assert_eq!(
+            scan(Source::Pcap(std::env::temp_dir()), tx.clone(), c.clone())
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
         let path =
             std::env::temp_dir().join(format!("airhound-ble-replay-{}.pcap", std::process::id()));
         std::fs::write(&path, pcap(&[frame(0, &[])])).unwrap();
