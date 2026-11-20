@@ -10,9 +10,12 @@ publish = false
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 ctrlc = { version = "3.4", features = ["termination"] }
-rusb = "0.9"
+rusb = { version = "0.9", features = ["vendored"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 
 [workspace]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

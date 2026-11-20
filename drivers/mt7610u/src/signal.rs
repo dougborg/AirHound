@@ -48,6 +48,7 @@ fn estimate_with_gains(raw: [u8; 4], rx_info: u32, lna_gain: i8, rssi_offset: i8
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -62,6 +63,8 @@ mod tests {
             has_5ghz: false,
             has_2ghz: true,
             lna_gain_5ghz: 0,
+            lna_gain_5ghz_mid: 0,
+            lna_gain_5ghz_high: 0,
             rssi_offset_5ghz: 0,
         }
     }
@@ -77,7 +80,7 @@ mod tests {
         for channel in [36, 40, 44, 48] {
             assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, channel), Some(-74));
         }
-        assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 52), None);
+        assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 169), None);
         cal.has_5ghz = false;
         assert_eq!(estimate_rssi_for_channel(raw, 0, &cal, 36), None);
     }

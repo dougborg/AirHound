@@ -36,8 +36,72 @@ pub trait RegisterIo {
     }
 }
 
-pub struct UsbDevice {
-    handle: DeviceHandle<UsbContext>,
+/// Only endpoint I/O is abstracted; production framing, retries and validation
+/// run unchanged with either libusb or a scripted transport in tests.
+pub trait UsbIo {
+    fn write_control(
+        &mut self,
+        request_type: u8,
+        request: u8,
+        value: u16,
+        index: u16,
+        data: &[u8],
+        timeout: Duration,
+    ) -> rusb::Result<usize>;
+    fn read_control(
+        &mut self,
+        request_type: u8,
+        request: u8,
+        value: u16,
+        index: u16,
+        data: &mut [u8],
+        timeout: Duration,
+    ) -> rusb::Result<usize>;
+    fn write_bulk(&mut self, endpoint: u8, data: &[u8], timeout: Duration) -> rusb::Result<usize>;
+    fn read_bulk(
+        &mut self,
+        endpoint: u8,
+        data: &mut [u8],
+        timeout: Duration,
+    ) -> rusb::Result<usize>;
+    fn release(&mut self);
+}
+impl UsbIo for DeviceHandle<UsbContext> {
+    fn write_control(
+        &mut self,
+        t: u8,
+        r: u8,
+        v: u16,
+        i: u16,
+        d: &[u8],
+        timeout: Duration,
+    ) -> rusb::Result<usize> {
+        DeviceHandle::write_control(self, t, r, v, i, d, timeout)
+    }
+    fn read_control(
+        &mut self,
+        t: u8,
+        r: u8,
+        v: u16,
+        i: u16,
+        d: &mut [u8],
+        timeout: Duration,
+    ) -> rusb::Result<usize> {
+        DeviceHandle::read_control(self, t, r, v, i, d, timeout)
+    }
+    fn write_bulk(&mut self, e: u8, d: &[u8], timeout: Duration) -> rusb::Result<usize> {
+        DeviceHandle::write_bulk(self, e, d, timeout)
+    }
+    fn read_bulk(&mut self, e: u8, d: &mut [u8], timeout: Duration) -> rusb::Result<usize> {
+        DeviceHandle::read_bulk(self, e, d, timeout)
+    }
+    fn release(&mut self) {
+        let _ = self.release_interface(0);
+    }
+}
+
+pub struct UsbDevice<T: UsbIo = DeviceHandle<UsbContext>> {
+    handle: T,
     pub input_endpoints: Vec<u8>,
     pub output_endpoints: Vec<u8>,
     sequence: u8,
@@ -54,6 +118,9 @@ impl UsbDevice {
                     .is_ok_and(|v| v.vendor_id() == 0x0e8d && v.product_id() == 0x7610)
             })
             .collect();
+        if matching.is_empty() {
+            return Err(rusb::Error::NoDevice.into());
+        }
         ensure!(
             matching.len() == 1,
             "Expected exactly one USB 0e8d:7610, found {}",
@@ -87,6 +154,23 @@ impl UsbDevice {
         ensure!(input_endpoints.len() == 2 && output_endpoints.len() == 6,
             "Unexpected MT7610U bulk endpoint layout: in={input_endpoints:x?}, out={output_endpoints:x?}");
         handle.claim_interface(0).context("claiming interface 0")?;
+        Self::from_io(handle, input_endpoints, output_endpoints)
+    }
+}
+
+impl<T: UsbIo> UsbDevice<T> {
+    /// Construct a transport from claimed endpoint I/O. The first OUT endpoint
+    /// is the MCU endpoint; WLAN transmit endpoints are never used.
+    pub fn from_io(handle: T, input_endpoints: Vec<u8>, output_endpoints: Vec<u8>) -> Result<Self> {
+        ensure!(
+            input_endpoints.len() == 2 && output_endpoints.len() == 6,
+            "expected two input and six output endpoints"
+        );
+        ensure!(
+            input_endpoints.iter().all(|e| e & 0x80 != 0)
+                && output_endpoints.iter().all(|e| e & 0x80 == 0 && *e != 0),
+            "invalid endpoint direction"
+        );
         Ok(Self {
             handle,
             input_endpoints,
@@ -96,7 +180,7 @@ impl UsbDevice {
     }
 
     pub fn control_out(&mut self, request: u8, value: u16, index: u16, data: &[u8]) -> Result<()> {
-        let write = || {
+        let mut write = || {
             self.handle
                 .write_control(0x40, request, value, index, data, TIMEOUT)
         };
@@ -190,7 +274,7 @@ impl UsbDevice {
     }
 }
 
-impl RegisterIo for UsbDevice {
+impl<T: UsbIo> RegisterIo for UsbDevice<T> {
     fn read32(&mut self, reg: u32) -> Result<u32> {
         ensure!(
             reg & 0xc0000000 == 0,
@@ -226,9 +310,9 @@ impl RegisterIo for UsbDevice {
     }
 }
 
-impl Drop for UsbDevice {
+impl<T: UsbIo> Drop for UsbDevice<T> {
     fn drop(&mut self) {
-        let _ = self.handle.release_interface(0);
+        self.handle.release();
     }
 }
 
@@ -244,8 +328,96 @@ pub fn mcu_packet(command: u8, sequence: u8, payload: &[u8]) -> Result<Vec<u8>> 
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[test]
+    fn register_io_and_mcu_exchange_validate_real_wire_protocol() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut device = endpoint.device();
+        device.write32(0x123456, 0xaabbccdd).unwrap();
+        assert_eq!(device.read32(0x123456).unwrap(), 0xaabbccdd);
+        assert_eq!(device.rmw32(0x123456, 0xff, 0x12).unwrap(), 0xaabbcc12);
+        device.fce_write(0x230, 0x12345678).unwrap();
+        assert!(device.fce_write(u16::MAX, 0).is_err());
+        assert!(device.read32(0xc0000000).is_err());
+        assert!(device.write32(0xc0000000, 0).is_err());
+        device.mcu_command(1, &[0; 8], false).unwrap();
+        for _ in 0..17 {
+            device.mcu_command(1, &[0; 8], true).unwrap();
+        }
+        assert_eq!(device.sequence, 2);
+        let address = 0x80000001u32;
+        let mut payload = address.to_le_bytes().to_vec();
+        payload.extend(0x34u32.to_le_bytes());
+        device.mcu_command(12, &payload, true).unwrap();
+        assert_eq!(device.mcu_query(10, &payload).unwrap(), payload);
+        assert!(device.mcu_command(128, &[], true).is_err());
+        let writes = &endpoint.0.lock().unwrap().writes;
+        assert!(writes
+            .iter()
+            .any(|w| (w.1, w.2, w.3) == (0x42, 0x5678, 0x230)));
+        assert!(writes
+            .iter()
+            .any(|w| (w.1, w.2, w.3) == (0x42, 0x1234, 0x232)));
+    }
+
+    #[test]
+    fn transport_short_io_disconnect_and_reply_validation() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut d = endpoint.device();
+        endpoint.0.lock().unwrap().short_read = true;
+        assert!(d.read32(0).unwrap_err().to_string().contains("Short"));
+        endpoint.0.lock().unwrap().short_read = false;
+        endpoint.0.lock().unwrap().short_write = true;
+        assert!(d.write32(0, 1).is_err());
+        assert!(d.write_mcu_bulk(&[0; 8]).is_err());
+        endpoint.0.lock().unwrap().short_write = false;
+        let mut buf = [0; 32];
+        assert_eq!(d.read_packets(&mut buf, Duration::ZERO).unwrap(), 0);
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .packets
+            .push_back(Ok(vec![1, 2, 3]));
+        assert_eq!(d.read_packets(&mut buf, Duration::ZERO).unwrap(), 3);
+        for error in [rusb::Error::NoDevice, rusb::Error::Pipe] {
+            endpoint.0.lock().unwrap().error = Some(error);
+            assert!(d.read_packets(&mut buf, Duration::ZERO).is_err());
+            assert!(d.write32(0, 0).is_err());
+            assert!(d.read32(0).is_err());
+        }
+        endpoint.0.lock().unwrap().error = None;
+        for reply in [Ok(vec![0; 3]), Err(rusb::Error::NoDevice)] {
+            endpoint.0.lock().unwrap().responses.clear();
+            endpoint.0.lock().unwrap().responses.push_back(reply);
+            assert!(d.mcu_query(1, &[]).is_err());
+        }
+        endpoint.0.lock().unwrap().responses.clear();
+        let seq = d.sequence % 15 + 1;
+        let mut reply = (((seq as u32) << 16) | (1 << 20)).to_le_bytes().to_vec();
+        reply.extend([0; 4]);
+        endpoint.0.lock().unwrap().responses.push_back(Ok(reply));
+        assert!(d
+            .mcu_query(1, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("event"));
+        endpoint.0.lock().unwrap().responses.clear();
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .responses
+            .extend([Err(rusb::Error::Timeout), Ok(vec![0; 8])]);
+        assert!(d.mcu_query(1, &[]).is_ok()); // timeout and stale sequence skipped
+        drop(d);
+        assert_eq!(endpoint.0.lock().unwrap().released, 1);
+        assert!(UsbDevice::from_io(endpoint.clone(), vec![], vec![]).is_err());
+        assert!(UsbDevice::from_io(endpoint, vec![1, 2], vec![1, 2, 3, 4, 5, 6]).is_err());
+    }
+
     #[test]
     fn control_retries_timeouts_but_stops_on_disconnect() {
         let mut attempts = 0;

@@ -112,6 +112,7 @@ fn replay_with_limit(mut reader: impl Read, recording_limit: u64) -> io::Result<
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::Cursor;

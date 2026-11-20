@@ -10,6 +10,8 @@
 mod address_macos;
 mod ble;
 mod control;
+mod external_scanner;
+use airhound_hostd::external_wifi;
 mod observation;
 use control::ScanControl;
 #[cfg(target_os = "macos")]
@@ -55,6 +57,7 @@ use wigle::{Location, WigleWriter};
     name = "airhound-hostd",
     about = "AirHound host daemon — WiFi/BLE scanner with WiGLE CSV output"
 )]
+#[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner"]))))]
 struct Args {
     /// Output WiGLE CSV file path [default: airhound-YYYYMMDD-HHMMSS.csv]
     #[arg(short, long)]
@@ -68,12 +71,23 @@ struct Args {
     rssi: i8,
     /// Disable BLE scanning
     #[arg(long, conflicts_with = "no_wifi")]
-    #[cfg_attr(target_os = "linux", arg(requires = "wifi_interface"))]
+    #[cfg_attr(target_os = "linux", arg(requires = "wifi_source"))]
     no_ble: bool,
     /// Linux monitor-mode interface (must be configured externally)
     #[cfg(target_os = "linux")]
     #[arg(long, conflicts_with = "no_wifi")]
     wifi_interface: Option<String>,
+    /// Explicit companion executable (direct execution; no shell).
+    #[arg(long, requires = "external_firmware", conflicts_with = "no_wifi")]
+    external_scanner: Option<PathBuf>,
+    /// Pinned firmware file supplied to the external receiver.
+    #[arg(long, requires = "external_scanner")]
+    external_firmware: Option<PathBuf>,
+    /// External receiver channels; replaces the platform WiFi scanner.
+    #[arg(long, value_delimiter = ',', default_value = "1")]
+    external_channels: Vec<u8>,
+    #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u16).range(100..=10000))]
+    external_dwell_ms: u16,
     /// Disable WiFi scanning
     #[arg(long)]
     no_wifi: bool,
@@ -146,10 +160,46 @@ async fn main() -> io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
         .format_timestamp_millis()
         .init();
+    if args.external_scanner.is_some() {
+        let channels = &args.external_channels;
+        if channels.is_empty()
+            || channels.len() > 38
+            || channels
+                .iter()
+                .any(|c| !external_wifi::supported_receive_channel(*c))
+            || channels
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != channels.len()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Choose unique supported external channels",
+            ));
+        }
+    }
+    let external = args
+        .external_scanner
+        .as_ref()
+        .map(|path| external_scanner::Options {
+            executable: path.clone(),
+            firmware: args
+                .external_firmware
+                .clone()
+                .expect("clap requires firmware"),
+            channels: args.external_channels.clone(),
+            dwell_ms: args.external_dwell_ms,
+        });
     let writer = prepare_output(&args)?;
     #[cfg(target_os = "macos")]
     location_macos::start();
     run_session(
+        if external.is_some() {
+            SessionPolicy::external()
+        } else {
+            SessionPolicy::native()
+        },
         args.filter_config(),
         writer,
         io::stdout(),
@@ -161,6 +211,9 @@ async fn main() -> io::Result<()> {
                     .map_err(io::Error::other)
             },
             wifi: |tx, control| async move {
+                if let Some(options) = external {
+                    return external_scanner::scan_loop(options, tx, control).await;
+                }
                 #[cfg(target_os = "macos")]
                 {
                     wifi_macos::scan_loop(tx, control)
@@ -189,9 +242,43 @@ async fn main() -> io::Result<()> {
             },
         },
         stdin_command_loop,
-        tokio::signal::ctrl_c(),
+        shutdown_signal(),
     )
     .await
+}
+
+/// SIGTERM uses the same cooperative scanner shutdown as Ctrl-C.
+async fn shutdown_signal() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! { result = tokio::signal::ctrl_c() => result, _ = terminate.recv() => Ok(()) }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SessionPolicy {
+    shutdown_budget: std::time::Duration,
+    fatal_wifi_errors: bool,
+}
+impl SessionPolicy {
+    fn native() -> Self {
+        Self {
+            shutdown_budget: std::time::Duration::from_secs(1),
+            fatal_wifi_errors: false,
+        }
+    }
+    fn external() -> Self {
+        Self {
+            shutdown_budget: std::time::Duration::from_secs(40),
+            fatal_wifi_errors: true,
+        }
+    }
 }
 
 struct Scanners<B, W> {
@@ -202,6 +289,7 @@ struct Scanners<B, W> {
 // Inject only the OS boundaries; startup, task ownership and shutdown are shared
 // unchanged between the executable and in-memory integration tests.
 async fn run_session<W, O, B, BF, F, FF, C, CF, S>(
+    policy: SessionPolicy,
     config: FilterConfig,
     writer: WigleWriter<W>,
     output: O,
@@ -231,6 +319,7 @@ where
     let start = Instant::now();
     let (tx, rx) = mpsc::channel(32);
     let ble_tx = tx.clone();
+    let (failure_tx, mut failures) = mpsc::channel(2);
     let ble_control = control.clone();
     let ble = tokio::spawn(async move {
         if cfg.ble_enabled {
@@ -244,6 +333,9 @@ where
         if cfg.wifi_enabled {
             if let Err(e) = (scanners.wifi)(tx, wifi_control).await {
                 log::error!("WiFi scan error: {e}");
+                if policy.fatal_wifi_errors {
+                    let _ = failure_tx.send(e).await;
+                }
             }
         }
     });
@@ -258,35 +350,50 @@ where
     ));
     let command_task = tokio::spawn(commands(config, start, control.clone()));
     let result = tokio::select! {
+        Some(error) = failures.recv() => {
+            control.shutdown(); command_task.abort();
+            let forced = stop_scanners(ble, wifi, policy.shutdown_budget).await;
+            let _ = filter.await;
+            if forced { log::error!("Scanner task cleanup exceeded shutdown budget"); }
+            Err(error)
+        }
         signal = shutdown => {
             control.shutdown();
             command_task.abort();
-            stop_scanners(ble, wifi).await;
-            signal.and(filter.await.map_err(io::Error::other).and_then(|result| result))
+            let forced = stop_scanners(ble, wifi, policy.shutdown_budget).await;
+            let drained = signal.and(filter.await.map_err(io::Error::other).and_then(|result| result));
+            if forced && policy.fatal_wifi_errors { Err(io::Error::other("external scanner cleanup task aborted; radio state unverified")) } else { match failures.try_recv() { Ok(error) => Err(error), Err(_) => drained } }
         }
         result = &mut filter => {
             control.shutdown();
             command_task.abort();
-            stop_scanners(ble, wifi).await;
-            result.map_err(io::Error::other).and_then(|result| result)
+            let forced = stop_scanners(ble, wifi, policy.shutdown_budget).await;
+            let result = result.map_err(io::Error::other).and_then(|result| result);
+            if forced && policy.fatal_wifi_errors { Err(io::Error::other("external scanner cleanup task aborted; radio state unverified")) } else { match failures.try_recv() { Ok(error) => Err(error), Err(_) => result } }
         }
     };
     let _ = command_task.await;
     result
 }
 
-async fn stop_scanners(ble: tokio::task::JoinHandle<()>, wifi: tokio::task::JoinHandle<()>) {
-    async fn stop(mut task: tokio::task::JoinHandle<()>) {
-        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut task)
-            .await
-            .is_err()
-        {
-            log::warn!("Scanner did not stop within one second; canceling its task");
-            task.abort();
-            let _ = task.await;
+async fn stop_scanners(
+    ble: tokio::task::JoinHandle<()>,
+    wifi: tokio::task::JoinHandle<()>,
+    budget: std::time::Duration,
+) -> bool {
+    async fn stop(mut task: tokio::task::JoinHandle<()>, budget: std::time::Duration) -> bool {
+        match tokio::time::timeout(budget, &mut task).await {
+            Ok(result) => result.is_err(),
+            Err(_) => {
+                log::warn!("Scanner exceeded shutdown budget; canceling its task");
+                task.abort();
+                let _ = task.await;
+                true
+            }
         }
     }
-    tokio::join!(stop(ble), stop(wifi));
+    let (ble_forced, wifi_forced) = tokio::join!(stop(ble, budget), stop(wifi, budget));
+    ble_forced || wifi_forced
 }
 
 /// Export address-bearing observations to CSV, matches and peripheral identities to NDJSON.
@@ -315,6 +422,17 @@ async fn filter_task<W: Write, O: Write>(
                 continue;
             }
         };
+        if let ScanEvent::ExternalStatus {
+            ref state,
+            dropped,
+            producer_dropped,
+            reconnect_attempts,
+        } = event
+        {
+            let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts});
+            observation::write_json(&mut output, &value)?;
+            continue;
+        }
         if !control.load(Ordering::Relaxed) {
             continue;
         }
@@ -397,6 +515,15 @@ async fn filter_task<W: Write, O: Write>(
                     },
                 )?;
             }
+            ScanEvent::ExternalWiFi {
+                ref event,
+                generation,
+            } => {
+                if cfg.wifi_enabled && control.subscribe().borrow().generation == generation {
+                    observation::write_external(&mut output, event, &mac_index)?;
+                }
+            }
+            ScanEvent::ExternalStatus { .. } => unreachable!("status handled before pause gate"),
             ScanEvent::WiFi(ref wifi_event) => {
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
@@ -872,7 +999,12 @@ mod tests {
                 ScanControl::new(true),
             ));
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                stop_scanners(scanner, tokio::spawn(async {})).await;
+                stop_scanners(
+                    scanner,
+                    tokio::spawn(async {}),
+                    std::time::Duration::from_secs(1),
+                )
+                .await;
                 output.await.unwrap()
             })
             .await
@@ -992,6 +1124,7 @@ mod tests {
         let csv = RecordingWriter::default();
         let output = RecordingWriter::default();
         run_session(
+            SessionPolicy::native(),
             FilterConfig::new(),
             WigleWriter::new(csv.clone()).unwrap(),
             output.clone(),
@@ -1049,6 +1182,7 @@ mod tests {
                 ..FilterConfig::new()
             };
             run_session(
+                SessionPolicy::native(),
                 config,
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
@@ -1072,6 +1206,7 @@ mod tests {
         }
         let output = RecordingWriter::default();
         run_session(
+            SessionPolicy::native(),
             FilterConfig::new(),
             WigleWriter::new(Vec::new()).unwrap(),
             output.clone(),
@@ -1096,6 +1231,7 @@ mod tests {
             let output = RecordingWriter::default();
             let (ready, wait) = tokio::sync::oneshot::channel();
             let result = run_session(
+                SessionPolicy::native(),
                 FilterConfig::new(),
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
@@ -1137,6 +1273,7 @@ mod tests {
             }
         }
         let result = run_session(
+            SessionPolicy::native(),
             FilterConfig::new(),
             WigleWriter::new(Vec::new()).unwrap(),
             FailingWriter,
@@ -1423,6 +1560,7 @@ mod tests {
         let (started, ready) = tokio::sync::oneshot::channel();
         let (cleaned, cleanup) = tokio::sync::oneshot::channel();
         run_session(
+            SessionPolicy::native(),
             FilterConfig::new(),
             WigleWriter::new(Vec::new()).unwrap(),
             Vec::new(),
@@ -1446,5 +1584,73 @@ mod tests {
         .await
         .unwrap();
         cleanup.await.unwrap();
+    }
+    #[tokio::test]
+    async fn external_signal_estimates_preserve_provenance_and_never_enter_csv() {
+        let record = serde_json::json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","session_id":"synthetic","sequence":0,"bssid":"02:00:00:00:00:01","ssid_bytes":b"Flock-123456".to_vec(),"advertised_channel":6,"receive_channel":1,"elapsed_ms":22,"observed_at_unix_ms":1700000000022u64,"dwell_elapsed_ms":22,"channel_epoch":0,"rssi_dbm":null,"estimated_rssi_dbm":-121,"rssi_validated":false,"rssi_estimate_basis":"mt76_eeprom_formula","raw_rssi":[146,0,0,0],"full_calibration":false});
+        let event = external_wifi::SessionValidator::default()
+            .accept(&serde_json::to_vec(&record).unwrap())
+            .unwrap();
+        let csv = RecordingWriter::default();
+        let output = RecordingWriter::default();
+        let (tx, rx) = mpsc::channel(2);
+        tx.send(ScanEvent::ExternalWiFi {
+            event: event.clone(),
+            generation: 0,
+        })
+        .await
+        .unwrap();
+        tx.send(ScanEvent::ExternalWiFi {
+            event,
+            generation: 2,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        let control = ScanControl::new(true);
+        control.store(false, Ordering::Relaxed);
+        control.store(true, Ordering::Relaxed);
+        filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            WigleWriter::new(csv.clone()).unwrap(),
+            output.clone(),
+            control,
+        )
+        .await
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&recorded(&output)).unwrap();
+        assert_eq!(value["type"], "external_wifi_observation");
+        assert!(value["rssi_dbm"].is_null());
+        assert_eq!(value["estimated_rssi_dbm"], -121);
+        assert_eq!(value["rssi_validated"], false);
+        assert_eq!(value["observed_at_unix_ms"], 1700000000022u64);
+        assert_eq!(value["filter_policy"], "identity_only_unvalidated");
+        assert!(!value["match"].as_array().unwrap().is_empty());
+        assert!(!recorded(&csv).contains("02:00:00:00:00:01"));
+        assert!(!recorded(&csv).contains("Flock-123456"));
+    }
+
+    #[tokio::test]
+    async fn external_backend_failure_is_fatal_and_reports_shutdown_failure() {
+        let result = run_session(
+            SessionPolicy::external(),
+            FilterConfig::new(),
+            WigleWriter::new(Vec::new()).unwrap(),
+            Vec::new(),
+            Scanners {
+                ble: |_, _| async { Ok(()) },
+                wifi: |_, _| async { Err(io::Error::other("companion cleanup unverified")) },
+            },
+            |_, _, _| std::future::pending(),
+            std::future::pending(),
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("companion cleanup unverified"));
     }
 }

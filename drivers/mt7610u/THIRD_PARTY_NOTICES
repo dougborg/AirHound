@@ -6,6 +6,12 @@ Pinned revision: 22f7ff9be59890cb10cde16cc25a30f78b504f23
 This standalone crate is GPL-2.0-only; it is not part of AirHound's MIT-licensed
 core build. Derived files retain source attribution in their headers.
 
+The receiver now links vendored libusb through rusb/libusb1-sys. libusb retains
+its LGPL-2.1-or-later terms. Candidate packages include its COPYING file as
+LIBUSB-LICENSE, dependency license/notice files, and a separate source archive
+with the exact locked dependency sources used to rebuild the executable offline.
+These materials do not replace the separate firmware terms below.
+
 USB transport/firmware helper sources: usb.c, mt76x02_usb_core.c,
 mt76x02_usb_mcu.c, mt76x0/usb_mcu.c.
 Copyright (C) 2018 Lorenzo Bianconi <lorenzo.bianconi83@gmail.com>

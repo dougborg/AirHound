@@ -7,7 +7,7 @@
 // mt76x02_{regs,eeprom,mcu}.{h,c}: BSD-3-Clause-Clear, Copyright 2016 Felix Fietkau
 // and 2018 Lorenzo Bianconi. See this crate's third-party license notices.
 
-//! Experimental 2.4/low-5GHz, 20MHz receive-only setup, after firmware bootstrap.
+//! Experimental 2.4/5GHz, 20MHz receive-only setup, after firmware bootstrap.
 //!
 //! This is deliberately not the complete Linux radio initialization sequence:
 //! FULL, LC, TSSI and all TX calibration commands are omitted. Successful register
@@ -20,8 +20,15 @@ use anyhow::{bail, ensure, Context, Result};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+#[path = "channel_tables.rs"]
+mod channels;
 #[path = "radio_tables.rs"]
 mod tables;
+
+pub const SUPPORTED_CHANNELS: &[u8] = &[
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+    116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165,
+];
 
 const MAC_SYS_CTRL: u32 = 0x1004;
 const MAC_TX: u32 = 1 << 2;
@@ -45,6 +52,10 @@ pub struct RxCalibration {
     pub rssi_offset: i8,
     /// Low 5 GHz (channels <=64) chain-zero corrections.
     pub lna_gain_5ghz: i8,
+    /// Channels 100–128; zero/ff EEPROM fields fall back to the low-band gain.
+    pub lna_gain_5ghz_mid: i8,
+    /// Channels above 128 (independent of the RF band-switch boundary).
+    pub lna_gain_5ghz_high: i8,
     pub rssi_offset_5ghz: i8,
     pub has_2ghz: bool,
     pub antenna_config: u16,
@@ -58,12 +69,17 @@ impl RxCalibration {
     /// Returns (LNA gain, RSSI offset); unsupported board bands fail before tuning.
     pub fn gains_for_channel(&self, channel: u8) -> Result<(i8, i8)> {
         validate_channel(channel)?;
-        if channel <= 11 {
+        if channel <= 13 {
             ensure!(self.has_2ghz, "EEPROM board does not support 2.4 GHz");
             Ok((self.lna_gain, self.rssi_offset))
         } else {
             ensure!(self.has_5ghz, "EEPROM board does not support 5 GHz");
-            Ok((self.lna_gain_5ghz, self.rssi_offset_5ghz))
+            let gain = match channel {
+                0..=64 => self.lna_gain_5ghz,
+                65..=128 => self.lna_gain_5ghz_mid,
+                _ => self.lna_gain_5ghz_high,
+            };
+            Ok((gain, self.rssi_offset_5ghz))
         }
     }
 }
@@ -159,11 +175,22 @@ pub fn parse_calibration(bytes: &[u8; 512]) -> Result<RxCalibration> {
             0
         }
     };
+    // Linux falls back to the low-band gain when secondary fields are 0/ff.
+    let secondary_gain = |offset: usize| {
+        let gain = bytes[offset];
+        valid(if gain == 0 || gain == 0xff {
+            bytes[0x45]
+        } else {
+            gain
+        }) as i8
+    };
     Ok(RxCalibration {
         frequency_offset: base.wrapping_sub(adjustment as u8).min(0xbf),
         lna_gain: valid(bytes[0x44]) as i8,
         rssi_offset: rssi_offset(0x46),
         lna_gain_5ghz: valid(bytes[0x45]) as i8,
+        lna_gain_5ghz_mid: secondary_gain(0x49),
+        lna_gain_5ghz_high: secondary_gain(0x4d),
         rssi_offset_5ghz: rssi_offset(0x4a),
         has_2ghz: (nic0 >> 12) & 3 != 2,
         antenna_config: word(0x22),
@@ -305,8 +332,8 @@ fn configure_antenna(io: &mut impl RegisterIo, cal: &RxCalibration) -> Result<()
 
 fn validate_channel(channel: u8) -> Result<()> {
     ensure!(
-        (1..=11).contains(&channel) || [36, 40, 44, 48].contains(&channel),
-        "supported receive channels are 1..11 and 36/40/44/48, got {channel}"
+        SUPPORTED_CHANNELS.contains(&channel),
+        "unsupported passive HT20 receive channel {channel}"
     );
     Ok(())
 }
@@ -314,7 +341,7 @@ fn validate_channel(channel: u8) -> Result<()> {
 /// Center frequency for the explicit passive HT20 channel allowlist.
 pub fn channel_frequency_mhz(channel: u8) -> Result<u16> {
     validate_channel(channel)?;
-    Ok(if channel <= 11 {
+    Ok(if channel <= 13 {
         2412 + 5 * u16::from(channel - 1)
     } else {
         5000 + 5 * u16::from(channel)
@@ -323,14 +350,11 @@ pub fn channel_frequency_mhz(channel: u8) -> Result<u16> {
 
 fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8) -> Result<()> {
     let (lna_gain, _) = cal.gains_for_channel(channel)?;
-    let is_5ghz = channel > 11;
-    // Pinned mt76 frequency-plan entries: 36/40/44/48 differ only in R31.
-    // None of these supported channels uses the SDM plan.
-    let [r35, r33, r32, r31, pll_n, xo_div] = if is_5ghz {
-        [0x30, 0xd2, 4, (channel - 32) / 2, 0x2b, 3]
-    } else {
-        tables::CHANNEL_PLL[usize::from(channel - 1)]
-    };
+    let is_5ghz = channel > 13;
+    let plan = channels::PLANS
+        .iter()
+        .find(|p| p.channel == channel)
+        .context("missing Linux channel plan")?;
     mcu_pair(io, 1, 2, 0, true).context("MCU BW_SETTING 20MHz")?;
     rmw(io, 0x2004, 0x18 | 0x20, 0)?; // CORE1 bandwidth/Japan channel14 filter
     rmw(io, 0x2300, 0x7000 | 0x300, 0x1000)?; // AGC0 BW20, primary channel0
@@ -347,36 +371,44 @@ fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8)
     )?;
     write_rf(io, 5, 0, if is_5ghz { 0x44 } else { 0x45 })?;
     write_rf(io, 6, 0, if is_5ghz { 0x45 } else { 0x44 })?;
-    // Supported channels use the non-SDM frequency plan.
     for (reg, value) in [
-        (37, 0x02),
-        (36, 0x3f),
-        (35, r35),
-        (34, if is_5ghz { 0x97 } else { 0xdd }),
-        (33, r33),
+        (37, plan.r37),
+        (36, plan.r36),
+        (35, plan.r35),
+        (34, plan.r34),
+        (33, plan.r33),
     ] {
         write_rf(io, 0, reg, value)?;
     }
     for (reg, mask, value) in [
-        (32, 0xe0, 0x40),
-        (32, 0x1f, r32),
-        (31, 0xe0, 0x40),
-        (31, 0x1f, r31),
-        (30, 0x80, 0),
-        (30, 0x7c, 0),
-        (30, 2, 2),
+        (32, 0xe0, plan.r32_hi),
+        (32, 0x1f, plan.r32_lo),
+        (31, 0xe0, plan.r31_hi),
+        (31, 0x1f, plan.r31_lo),
     ] {
         rf_rmw(io, reg, mask, value)?;
     }
-    write_rf(io, 0, 29, pll_n)?;
-    rf_rmw(io, 30, 1, 0)?;
-    for (mask, value) in [(0xc0, 0), (0x30, 0x30), (0x0c, 0)] {
+    if plan.sdm {
+        rf_rmw(io, 30, 0x80, 0)?;
+        rf_rmw(io, 30, 0x80, 0x80)?;
+    } else {
+        rf_rmw(io, 30, 0x80, plan.r30_reset)?;
+    }
+    rf_rmw(io, 30, 0x7c, plan.r30_mash)?;
+    rf_rmw(io, 30, 2, plan.r30_bp << 1)?;
+    write_rf(io, 0, 29, plan.pll_n as u8)?;
+    rf_rmw(io, 30, 1, ((plan.pll_n >> 8) & 1) as u8)?;
+    for (mask, value) in [
+        (0xc0, plan.r28_iso),
+        (0x30, plan.r28_delay),
+        (0x0c, plan.r28_clock),
+    ] {
         rf_rmw(io, 28, mask, value)?;
     }
-    write_rf(io, 0, 26, 0)?;
-    write_rf(io, 0, 27, 0)?;
-    rf_rmw(io, 28, 3, 0)?;
-    rf_rmw(io, 24, 3, xo_div)?;
+    write_rf(io, 0, 26, plan.sdm_k as u8)?;
+    write_rf(io, 0, 27, (plan.sdm_k >> 8) as u8)?;
+    rf_rmw(io, 28, 3, ((plan.sdm_k >> 16) & 3) as u8)?;
+    rf_rmw(io, 24, 3, plan.xo_div)?;
     write_rf_table(
         io,
         if is_5ghz {
@@ -385,14 +417,11 @@ fn configure_channel(io: &mut impl RegisterIo, cal: &RxCalibration, channel: u8)
             tables::RF_BW_20
         },
     )?;
-    write_rf_table(
-        io,
-        if is_5ghz {
-            tables::RF_BAND_5G_LOW
-        } else {
-            tables::RF_BAND_2G
-        },
-    )?;
+    for &(reg, band, value) in channels::BAND_SWITCH {
+        if band & plan.band != 0 {
+            write_rf_table(io, &[(reg, value)])?;
+        }
+    }
     // External PA enable is intentionally left off for receive-only operation.
     rmw(io, 0x0518, 0x0c, 0)?;
     for &(reg, value) in if is_5ghz {
@@ -570,6 +599,7 @@ pub fn retune_with_drain<I: RegisterIo>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
@@ -581,6 +611,7 @@ mod tests {
         efuse_offset: usize,
         efuse_triggers: Vec<u32>,
         calibrations: Vec<u32>,
+        rf_writes: Vec<(u32, u32)>,
         calibration_parameters: Vec<u32>,
         fail_calibration: bool,
         bbp_ready: bool,
@@ -603,6 +634,7 @@ mod tests {
                 efuse_offset: 0,
                 efuse_triggers: Vec::new(),
                 calibrations: Vec::new(),
+                rf_writes: Vec::new(),
                 calibration_parameters: Vec::new(),
                 fail_calibration: false,
                 bbp_ready: true,
@@ -660,6 +692,7 @@ mod tests {
                         assert_eq!(address & 0x8000_0000, RF_MEMMAP);
                         assert!(value <= 255);
                         self.rf.insert(address, value);
+                        self.rf_writes.push((address, value));
                     }
                 }
                 31 => {
@@ -689,6 +722,143 @@ mod tests {
             response[4..]
                 .copy_from_slice(&self.rf.get(&address).copied().unwrap_or(0).to_le_bytes());
             Ok(response)
+        }
+    }
+
+    #[test]
+    fn published_ht20_channel_centers_match_and_reject_wide_channel_centers() {
+        // Independently transcribed from MathWorks WLAN channel table (Annex E).
+        // See docs/mt7610u-channels.md for sources and supported subset.
+        let expected = [
+            (1, 2412),
+            (2, 2417),
+            (3, 2422),
+            (4, 2427),
+            (5, 2432),
+            (6, 2437),
+            (7, 2442),
+            (8, 2447),
+            (9, 2452),
+            (10, 2457),
+            (11, 2462),
+            (12, 2467),
+            (13, 2472),
+            (36, 5180),
+            (40, 5200),
+            (44, 5220),
+            (48, 5240),
+            (52, 5260),
+            (56, 5280),
+            (60, 5300),
+            (64, 5320),
+            (100, 5500),
+            (104, 5520),
+            (108, 5540),
+            (112, 5560),
+            (116, 5580),
+            (120, 5600),
+            (124, 5620),
+            (128, 5640),
+            (132, 5660),
+            (136, 5680),
+            (140, 5700),
+            (144, 5720),
+            (149, 5745),
+            (153, 5765),
+            (157, 5785),
+            (161, 5805),
+            (165, 5825),
+        ];
+        assert_eq!(SUPPORTED_CHANNELS.len(), expected.len());
+        assert_eq!(channels::PLANS.len(), expected.len());
+        for (channel, mhz) in expected {
+            assert_eq!(channel_frequency_mhz(channel).unwrap(), mhz);
+            assert_eq!(
+                channels::PLANS
+                    .iter()
+                    .filter(|p| p.channel == channel)
+                    .count(),
+                1
+            );
+        }
+        for channel in [
+            0, 14, 38, 42, 50, 54, 58, 68, 96, 102, 106, 138, 151, 155, 163, 169, 177, 183,
+        ] {
+            assert!(channel_frequency_mhz(channel).is_err(), "{channel}");
+        }
+    }
+
+    #[test]
+    fn all_channels_and_sdm_transitions_preserve_passive_gates() {
+        let mut io = SimulatedDevice::new();
+        io.eeprom[0x45] = 7;
+        io.eeprom[0x49] = 9;
+        io.eeprom[0x4d] = 11;
+        let setup = initialize_channel_one(&mut io).unwrap();
+        for &channel in SUPPORTED_CHANNELS
+            .iter()
+            .chain(SUPPORTED_CHANNELS.iter().rev())
+        {
+            io.rf_writes.clear();
+            retune_with_drain(&mut io, &setup.calibration, channel, |_| Ok(())).unwrap();
+            let get = |bank: u32, reg: u32| io.rf[&(RF_MEMMAP | (bank << 16) | reg)];
+            let (r39, r12, r17, r24, r42) = match channel {
+                1..=13 => (0x36, 0x86, 0, 7, 0x5b),
+                36..=64 => (0x34, 0x44, 2, 0xa1, 0xfb),
+                100..=136 => (0x33, 0x44, 0, 0x41, 0xf3),
+                _ => (0x31, 0x55, 0, 0x21, 0xeb),
+            };
+            assert_eq!(get(0, 39), r39, "channel {channel}");
+            if channel > 13 {
+                assert_eq!(
+                    (get(6, 12), get(6, 17), get(6, 24), get(6, 42)),
+                    (r12, r17, r24, r42),
+                    "channel {channel}"
+                );
+            }
+            if channel == 153 || channel == 165 {
+                let reset_writes: Vec<_> = io
+                    .rf_writes
+                    .iter()
+                    .filter(|(address, _)| *address == RF_MEMMAP | 30)
+                    .map(|(_, value)| value & 0x80)
+                    .collect();
+                assert!(
+                    reset_writes.windows(2).any(|pair| pair == [0, 0x80]),
+                    "SDM reset requires a falling/rising edge on channel {channel}"
+                );
+                assert_eq!(get(0, 30) & 0xfe, 0x80);
+                assert_eq!(get(0, 35), 0x7f);
+                assert_eq!(get(0, 31), 0x80);
+                assert_eq!(get(0, 26), 0xaa);
+                assert_eq!(get(0, 27), 0x2a);
+                assert_eq!(get(0, 28) & 0x3f, if channel == 165 { 0x0a } else { 8 });
+            } else {
+                assert_eq!(get(0, 30) & 0xfe, 2, "SDM disabled on {channel}");
+                assert_eq!(get(0, 26), 0);
+                assert_eq!(get(0, 27), 0);
+                assert_eq!(get(0, 28) & 0x3f, 0x30);
+            }
+            assert_eq!(io.registers[&MAC_SYS_CTRL] & MAC_TX, 0);
+        }
+    }
+
+    #[test]
+    fn eeprom_gain_boundaries_and_linux_secondary_fallback() {
+        let mut io = SimulatedDevice::new();
+        io.eeprom[0x45] = 7;
+        io.eeprom[0x49] = 9;
+        io.eeprom[0x4d] = 11;
+        let cal = parse_calibration(&io.eeprom).unwrap();
+        for (channel, gain) in [(13, 12), (64, 7), (100, 9), (128, 9), (132, 11), (165, 11)] {
+            assert_eq!(cal.gains_for_channel(channel).unwrap().0, gain);
+        }
+        for invalid in [0, 255] {
+            io.eeprom[0x49] = invalid;
+            io.eeprom[0x4d] = invalid;
+            let cal = parse_calibration(&io.eeprom).unwrap();
+            assert_eq!(cal.gains_for_channel(100).unwrap().0, 7);
+            assert_eq!(cal.gains_for_channel(165).unwrap().0, 7);
         }
     }
 
@@ -843,7 +1013,7 @@ mod tests {
             }
         }
         let cal = parse_calibration(&SimulatedDevice::new().eeprom).unwrap();
-        for channel in [0, 12, 13, 14, 35, 37, 52, 100, 165, 255] {
+        for channel in [0, 14, 35, 37, 68, 96, 145, 169, 255] {
             assert!(initialize_channel(&mut NoIo, channel).is_err());
             assert!(
                 retune_with_drain(&mut NoIo, &cal, channel, |_| panic!("unexpected drain"))

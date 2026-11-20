@@ -89,8 +89,9 @@ GPS/time/location correlation and AirHound ingestion remain separate work.
 
 ## Current limits
 
-- Passive 20 MHz channels 1–11 and lower 5 GHz channels 36/40/44/48 only.
-  Other 5 GHz channels, wider receive bandwidths and 6 GHz are unsupported.
+- Passive 20 MHz channels 1–13, 36–64 (step 4), 100–144 (step 4), and
+  149–165 (step 4). See [channel provenance and validation](../../docs/mt7610u-channels.md).
+  Wider receive bandwidths, channels above 165, and 6 GHz are unsupported.
 - Full, LC, TSSI and TX-related calibration are omitted. Receive sensitivity
   remains experimental. `rssi_dbm` is `null`. `estimated_rssi_dbm` applies mt76's
   signed chain-zero formula (raw + EEPROM offset − LNA gain), selecting separate
@@ -103,16 +104,19 @@ GPS/time/location correlation and AirHound ingestion remain separate work.
   verified with RF test equipment.
 - No EEPROM/efuse programming or persistent firmware installation. Firmware
   lives in RAM; USB unplug/replug resets the device.
-- The [versioned file format](../../docs/external-wifi-v1.md) and independent
-  AirHound-side checker establish the data boundary. Live process supervision,
-  observation ingestion, detection matching and WiGLE export remain unimplemented.
+- The [versioned file format](../../docs/external-wifi-v1.md), independent checker
+  and [live process protocol](../../docs/external-scanner-stream-v1.md) establish
+  the data boundary. AirHound can supervise the receiver and perform explicitly
+  labeled identity-only matching. Unvalidated signal estimates are excluded
+  from WiGLE export and the firmware's numeric-RSSI protocol.
 - Automated tests use simulated registers and packet fixtures. Linux CI checks
   portability; Linux hardware operation has not been validated.
 
 ## Build and run
 
-Install stable Rust and libusb (`brew install libusb pkg-config` on macOS, or
-`libusb-1.0-0-dev pkg-config` on Debian/Ubuntu). Run from this directory so the
+Install stable Rust and a C toolchain (Xcode Command Line Tools on macOS).
+libusb is now built from vendored source; no Homebrew libusb runtime is required.
+Run from this directory so the
 independent `rust-toolchain.toml` is selected:
 
 ```sh
@@ -145,7 +149,7 @@ cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
 cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
   --output captures/hopping.ndjson --channels 1,6,11 --dwell-ms 500 --seconds 30
 
-# Cover all supported channels, at the cost of less time on each one.
+# Cover the original 2.4 GHz channel plan.
 cargo run --locked -- capture --firmware /path/to/mt7610e.bin \
   --output captures/all-channels.ndjson --channels 1,2,3,4,5,6,7,8,9,10,11 \
   --dwell-ms 500 --seconds 30
@@ -202,6 +206,35 @@ disable reception/transmission before releasing USB. Forced process termination
 cannot guarantee cleanup; unplug the adapter to reset it. A run without any
 valid beacons exits unsuccessfully instead of claiming receiver validation.
 
+For sustained operation, use the separately supervised stream mode:
+
+```sh
+cargo run --locked -- stream --firmware /path/to/mt7610e.bin \
+  --channels 1,6,11,48 --output-dir captures/new-session \
+  --rotate-mib 16 --keep-files 8
+```
+
+Keep stdin open for [control commands](../../docs/external-scanner-stream-v1.md);
+stdin EOF requests stop. Stdout contains hello/status/observation/stopped
+records, so it is not itself a beacon-only capture file. Optional recordings
+use a new mode-0700 directory and mode-0600 files, with independent version-1
+sessions in each segment. Old segments are deleted at the configured retention
+limit. Output queues, recordings and counters have bounded memory/storage;
+producer drops are reported. The default watchdog is nine hours, configurable
+with `--max-seconds` up to 24 hours. This leaves room for the actual eight-hour
+[soak procedure](../../docs/receiver-release-gates.md).
+
+## Release candidates
+
+`scripts/package-receiver.py` builds an unsigned macOS candidate from a clean
+committed tree, includes a corresponding-source archive with locked vendored
+dependencies, and rebuilds that source offline. It rejects non-system dynamic
+library dependencies and includes source/dependency license notices. Firmware
+is never bundled. The candidate workflow produces review artifacts; it does
+not publish a release or claim notarization. Signing, firmware-distribution
+review and the [hardware release gates](../../docs/receiver-release-gates.md)
+remain required before a supported release.
+
 ## Development
 
 ```sh
@@ -216,9 +249,10 @@ firmware/header boundaries, USB framing, malformed receive descriptors and
 beacon elements, EEPROM read-only commands, and simulated initialization traces
 that keep transmit/ACK/beacon gates disabled.
 
-Next milestones are longer capture/shutdown testing, receive calibration and
-RSSI validation, broader 5 GHz support, and supervised live companion-process
-integration with an explicit policy for unvalidated signal estimates. Hardware measurements must
+Next milestones are completion of long-run and physical recovery testing,
+controlled Linux comparisons, receive calibration/RSSI validation and broader
+5 GHz support. Live integration preserves unvalidated signal estimates and
+does not export them as calibrated measurements. Hardware measurements must
 remain separate from simulated-test claims.
 
 ## Licensing and provenance
@@ -228,3 +262,6 @@ Source is **GPL-2.0-only**, derived from the Linux mt76 implementation pinned at
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES), including retained BSD-Clear terms.
 This license is separate from AirHound's MIT license. Firmware has its own
 terms; source licensing does not grant firmware redistribution rights.
+
+See [driver structure, coverage and validation](TESTING.md) for module responsibilities,
+CI coverage gates, test commands and remaining hardware checks.

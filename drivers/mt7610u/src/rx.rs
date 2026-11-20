@@ -259,9 +259,15 @@ pub fn parse_beacon(bytes: &[u8]) -> Option<Beacon> {
                 if (id == 3 && len != 1) || (id == 61 && len != 22) {
                     return None;
                 }
-                // MT7610U is a 2.4/5 GHz part; no 6 GHz channel inference.
+                // Only primary channels representable by beacon-v1. Unsupported
+                // radio metadata stays unknown; it must not terminate the host's
+                // valid observation stream. Do not infer a tuned or 6 GHz channel.
                 let channel = value[0];
-                if channel == 0 || channel > 196 {
+                let supported_primary = (1..=14).contains(&channel)
+                    || ((36..=64).contains(&channel) && channel.is_multiple_of(4))
+                    || ((100..=144).contains(&channel) && channel.is_multiple_of(4))
+                    || ((149..=177).contains(&channel) && channel % 4 == 1);
+                if !supported_primary {
                     channel_conflict = true;
                 }
                 if advertised_channel.is_some_and(|previous| previous != channel) {
@@ -287,6 +293,7 @@ pub fn parse_beacon(bytes: &[u8]) -> Option<Beacon> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -451,6 +458,36 @@ mod tests {
         assert_eq!(parse_beacon(&mpdu).unwrap().channel, Some(36));
         mpdu[44] = 0;
         assert_eq!(parse_beacon(&mpdu).unwrap().channel, None);
+    }
+
+    #[test]
+    fn unsupported_advertised_primary_preserves_beacon_with_nullable_metadata() {
+        for channel in [0, 15, 35, 38, 65, 148, 178, 196, 255] {
+            for id in [3, 61] {
+                let mut mpdu = beacon()[..42].to_vec();
+                let len = if id == 3 { 1 } else { 22 };
+                mpdu.extend_from_slice(&[id, len, channel]);
+                mpdu.extend(std::iter::repeat_n(0, usize::from(len - 1)));
+                let frames = parse_usb_transfer(&segment(&mpdu, 0)).unwrap();
+                let parsed = frames[0].beacon.as_ref().expect("valid beacon survives");
+                assert_eq!(parsed.channel, None, "IE {id}, channel {channel}");
+                assert_eq!(parsed.ssid.as_deref(), Some(b"Test".as_slice()));
+                assert_eq!(parsed.bssid, [0x02, 1, 2, 3, 4, 5]);
+                // A later valid duplicate must not erase the invalid/conflicting IE.
+                mpdu.extend_from_slice(&[3, 1, 6]);
+                assert_eq!(parse_beacon(&mpdu).unwrap().channel, None);
+            }
+        }
+    }
+
+    #[test]
+    fn advertised_primary_accepts_supported_bands_independently_of_receive_plan() {
+        for channel in [1, 14, 36, 40, 44, 48, 64, 100, 144, 149, 165, 177] {
+            let mut mpdu = beacon()[..42].to_vec();
+            mpdu.extend_from_slice(&[61, 22, channel]);
+            mpdu.extend_from_slice(&[0; 21]);
+            assert_eq!(parse_beacon(&mpdu).unwrap().channel, Some(channel));
+        }
     }
 
     #[test]

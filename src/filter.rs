@@ -113,23 +113,24 @@ pub fn filter_wifi(
     config: &FilterConfig,
     mac_index: &MacIndex,
 ) -> FilterResult {
+    if !config.wifi_enabled || input.rssi < config.min_rssi {
+        return FilterResult::new();
+    }
+    filter_wifi_identity(input.mac, input.ssid, mac_index)
+}
+
+/// Evaluate MAC/SSID signatures without making a signal-strength claim.
+/// Callers must explicitly choose identity-only matching and preserve absent or
+/// unvalidated RSSI separately; this does not apply an RSSI threshold.
+fn filter_wifi_identity(mac: &[u8; 6], ssid: &str, mac_index: &MacIndex) -> FilterResult {
     let mut result = FilterResult::new();
 
-    if !config.wifi_enabled {
-        return result;
-    }
-
-    // RSSI threshold check
-    if input.rssi < config.min_rssi {
-        return result;
-    }
-
     // MAC lookup via hash index (OUI signatures + watchlist)
-    check_mac(input.mac, mac_index, &mut result);
+    check_mac(mac, mac_index, &mut result);
 
     // SSID structured pattern check (e.g., Flock-XXXXXX)
     for (i, pattern) in SSID_PATTERNS.iter().enumerate() {
-        if pattern.matches(input.ssid) {
+        if pattern.matches(ssid) {
             result
                 .sig_matches
                 .set(defaults::SIG_IDX_SSID_PATTERN_START + i as u16);
@@ -139,7 +140,7 @@ pub fn filter_wifi(
 
     // SSID exact match check
     for (i, &exact) in SSID_EXACT.iter().enumerate() {
-        if input.ssid == exact {
+        if ssid == exact {
             result
                 .sig_matches
                 .set(defaults::SIG_IDX_SSID_EXACT_START + i as u16);
@@ -148,9 +149,8 @@ pub fn filter_wifi(
     }
 
     // SSID keyword substring check (case-insensitive)
-    if !input.ssid.is_empty() {
-        let ssid_lower: Vec<u8, 33> = input
-            .ssid
+    if !ssid.is_empty() {
+        let ssid_lower: Vec<u8, 33> = ssid
             .bytes()
             .take(33)
             .map(|b| b.to_ascii_lowercase())
@@ -277,6 +277,23 @@ pub fn filter_wifi_with_rules(
     mac_index: &MacIndex,
 ) -> FilterResult {
     let mut result = filter_wifi(input, config, mac_index);
+    apply_rules(&mut result, db);
+    result
+}
+
+/// Explicit identity-only WiFi matching for observations with unknown or
+/// unvalidated signal. No numeric RSSI is accepted or fabricated by this API.
+pub fn filter_wifi_identity_with_rules(
+    mac: &[u8; 6],
+    ssid: &str,
+    enabled: bool,
+    db: &RuleDb,
+    mac_index: &MacIndex,
+) -> FilterResult {
+    if !enabled {
+        return FilterResult::new();
+    }
+    let mut result = filter_wifi_identity(mac, ssid, mac_index);
     apply_rules(&mut result, db);
     result
 }
@@ -950,6 +967,27 @@ mod tests {
     }
 
     // ── Rule integration tests ──────────────────────────────────────
+
+    #[test]
+    fn identity_only_wifi_matching_preserves_rules_without_bypassing_normal_rssi_policy() {
+        let db = &defaults::DEFAULT_RULE_DB;
+        let index = test_mac_index();
+        let mac = [0xB4, 0x1E, 0x52, 1, 2, 3];
+        let identity = filter_wifi_identity_with_rules(&mac, "SomeNetwork", true, db, &index);
+        assert!(identity.rule_names.contains(&"Flock Safety Camera"));
+        let weak = WiFiScanInput {
+            mac: &mac,
+            ssid: "SomeNetwork",
+            rssi: -120,
+        };
+        assert!(!filter_wifi_with_rules(&weak, &default_config(), db, &index).matched);
+        assert!(!filter_wifi_identity_with_rules(&mac, "SomeNetwork", false, db, &index).matched);
+        let unknown = [0x02, 1, 2, 3, 4, 5];
+        assert!(!filter_wifi_identity_with_rules(&unknown, "ordinary", true, db, &index).matched);
+        assert!(
+            filter_wifi_identity_with_rules(&unknown, "Flock-123456", true, db, &index).matched
+        );
+    }
     //
     // End-to-end: realistic scan inputs → filter_*_with_rules() → assert rule names
 
