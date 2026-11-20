@@ -60,3 +60,11 @@ and matched WiFi/BLE records, and retains only numeric `stream_stats` samples.
 It omits wireless identifiers from its summary. A passing monitor run establishes
 startup/stability checks; inspect the loss counters separately before claiming
 complete delivery. Serial validation does not validate BLE subscriber throughput.
+
+## Detection evidence
+
+Matched observations also produce a bounded `detection` companion record. This
+adds one best-effort queue entry per match; it shares existing output-drop and
+serialization-error counters. Counts and observations remain independent of
+audible alert policy. See [evidence and alert policy](detection-evidence.md) for
+record association, bounds, conservative defaults, and current limitations.

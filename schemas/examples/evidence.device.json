@@ -1,0 +1,31 @@
+{
+  "type": "detection",
+  "id": "B4:1E:52:01:02:03",
+  "scope": "wifi_address",
+  "ts": 42,
+  "detection": {
+    "engine": "evidence-1",
+    "policy": "rules_and_watchlist",
+    "pack": "builtin-2",
+    "ruleset": "builtin-rules-2",
+    "sig": [
+      0,
+      117,
+      120,
+      123
+    ],
+    "rules": [
+      {
+        "id": 0,
+        "sig": [
+          0,
+          117
+        ],
+        "more": false
+      }
+    ],
+    "more": false,
+    "basis": "observed_fields",
+    "alert": "rule"
+  }
+}

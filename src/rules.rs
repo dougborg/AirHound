@@ -1,12 +1,8 @@
-/// Boolean rule composition engine for named device detection.
-///
-/// Rules compose signatures with `anyOf`/`allOf`/`not` boolean logic,
-/// enabling the firmware to report "matched a Flock Safety Camera" rather
-/// than just "matched a Flock Safety MAC OUI."
-///
-/// The expression tree uses a **flat post-order encoding** — children precede
-/// their parent in the array. Evaluated with a fixed-size bool stack.
-/// Zero allocation, `no_std` compatible.
+//! Flat post-order rule definitions and legacy Boolean evaluation.
+//!
+//! Production filters use `crate::evidence` for rule-local supporting IDs and
+//! conservative handling of missing fields. The Boolean API remains available
+//! for callers that already have complete predicate truth values.
 use heapless::Vec;
 
 /// Index into the signature arrays in `defaults.rs`.
@@ -106,6 +102,8 @@ pub struct Rule {
     pub category: MatchCategory,
     /// Whether this rule is active. Inactive rules are skipped during evaluation.
     pub active: bool,
+    /// Explicit policy eligibility; not a confidence score.
+    pub alert: bool,
 }
 
 /// Result of a rule match, carrying the rule index, name, and category.
@@ -120,6 +118,8 @@ pub struct RuleMatch {
 /// an array of rules that reference slices of the pool.
 #[derive(Debug, Clone, Copy)]
 pub struct RuleDb {
+    /// Versioned identity for rule indices, independent of the signature pack.
+    pub id: &'static str,
     /// Shared pool of expression nodes (all rules' nodes concatenated).
     pub nodes: &'static [ExprNode],
     /// Array of rule definitions referencing slices of `nodes`.
@@ -872,8 +872,10 @@ mod tests {
             expr_len: 3,
             category: MatchCategory::Surveillance,
             active: true,
+            alert: false,
         }];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -902,6 +904,7 @@ mod tests {
                 expr_len: 3,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "Rule B",
@@ -909,9 +912,11 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Network,
                 active: true,
+                alert: false,
             },
         ];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -941,6 +946,7 @@ mod tests {
                 expr_len: 3,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "Rule B",
@@ -948,9 +954,11 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Drone,
                 active: true,
+                alert: false,
             },
         ];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -983,6 +991,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "R1",
@@ -990,6 +999,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "R2",
@@ -997,6 +1007,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "R3",
@@ -1004,6 +1015,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "R4",
@@ -1011,9 +1023,11 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
         ];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -1034,8 +1048,10 @@ mod tests {
             expr_len: 10, // way beyond nodes length
             category: MatchCategory::Surveillance,
             active: true,
+            alert: false,
         }];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -1056,6 +1072,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "Drone Rule",
@@ -1063,9 +1080,11 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Drone,
                 active: true,
+                alert: false,
             },
         ];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -1206,6 +1225,7 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: true,
+                alert: false,
             },
             Rule {
                 name: "Inactive",
@@ -1213,9 +1233,11 @@ mod tests {
                 expr_len: 1,
                 category: MatchCategory::Surveillance,
                 active: false,
+                alert: false,
             },
         ];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };
@@ -1236,8 +1258,10 @@ mod tests {
             expr_len: 1,
             category: MatchCategory::Surveillance,
             active: false,
+            alert: false,
         }];
         let db = RuleDb {
+            id: "test",
             nodes: NODES,
             rules: RULES,
         };

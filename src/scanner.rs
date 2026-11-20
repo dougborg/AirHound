@@ -495,6 +495,7 @@ mod tests {
         ad[8..16].copy_from_slice(b"LEGACY01");
         let event = BleAdvParser::parse(&[0x02; 6], -50, &ad);
         let input = crate::filter::BleScanInput {
+            address_type: crate::filter::BleAddressType::Unknown,
             mac: &event.mac,
             name: event.name.as_str(),
             rssi: event.rssi,

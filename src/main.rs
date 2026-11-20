@@ -705,7 +705,9 @@ fn update_last_match_and_buzz(result: &filter::FilterResult) {
         });
     }
 
-    let _ = BUZZER_SIGNAL.try_send(());
+    if result.should_alert() {
+        let _ = BUZZER_SIGNAL.try_send(());
+    }
 }
 
 /// Emit a DroneSighting message from parsed ODID data.
@@ -848,6 +850,24 @@ fn handle_wifi_event(
     } else {
         SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
     }
+    if result.matched {
+        let msg = DeviceMessage::Detection {
+            id: mac_str.as_str(),
+            scope: "wifi_address",
+            ts,
+            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+        };
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            if output_tx.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 fn handle_ble_event(
@@ -864,6 +884,7 @@ fn handle_ble_event(
         return;
     }
     let input = BleScanInput {
+        address_type: airhound::filter::BleAddressType::Unknown,
         mac: &ble.mac,
         name: ble.name.as_str(),
         rssi: ble.rssi,
@@ -922,6 +943,24 @@ fn handle_ble_event(
         }
     } else {
         SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+    if result.matched {
+        let msg = DeviceMessage::Detection {
+            id: mac_str.as_str(),
+            scope: "ble_address",
+            ts,
+            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+        };
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            if output_tx.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

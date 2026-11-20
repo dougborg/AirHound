@@ -138,10 +138,10 @@ pub static MAC_PREFIXES: &[([u8; 3], &str)] = &[
     ([0x00, 0x1C, 0x27], "Sunell Electronics"),
     // === Pwnagotchi ===
     // pwnagotchi uses fixed transmitter address DE:AD:BE:EF:DE:AD
-    ([0xDE, 0xAD, 0xBE], "Pwnagotchi"),
+    ([0xDE, 0xAD, 0xBE], "Locally administered prefix"),
     // === Open Drone ID ===
     // ASTM F3411 vendor IE OUI for WiFi beacon-based Remote ID
-    ([0x90, 0x3A, 0xE6], "Open Drone ID"),
+    ([0x90, 0x3A, 0xE6], "Unverified address prefix"),
 ];
 
 /// WiFi SSID exact-prefix patterns.
@@ -151,7 +151,7 @@ pub static SSID_PATTERNS: &[SsidPattern] = &[
         prefix: "Flock-",
         suffix_len: 6,
         suffix_kind: SuffixKind::HexChars,
-        description: "Flock Safety camera WiFi",
+        description: "Flock-like SSID pattern",
     },
     SsidPattern {
         prefix: "Penguin-",
@@ -207,6 +207,8 @@ pub static BLE_MANUFACTURER_IDS: &[u16] = &[
 
 /// A BLE advertisement byte pattern signature.
 pub struct BleAdBytesPattern {
+    pub active: bool,
+    pub exact_manufacturer_len: Option<usize>,
     /// Byte sequence to match
     pub bytes: &'static [u8],
     /// Match position: `None` = search anywhere in raw AD data,
@@ -224,21 +226,27 @@ pub static BLE_AD_BYTES_PATTERNS: &[BleAdBytesPattern] = &[
     // Apple AirTag / FindMy: manufacturer data starts with Apple company ID (0x004C)
     // followed by FindMy type byte 0x12 and length 0x19
     BleAdBytesPattern {
+        active: true,
+        exact_manufacturer_len: Some(29),
         bytes: &[0x4C, 0x00, 0x12, 0x19],
         offset: Some(0),
-        description: "Apple AirTag",
+        description: "Find My framing candidate",
     },
     // Flipper Zero White: [0x80, 0x30] in manufacturer-specific data
     BleAdBytesPattern {
+        active: false,
+        exact_manufacturer_len: None,
         bytes: &[0x80, 0x30],
         offset: None,
-        description: "Flipper Zero",
+        description: "Unverified byte pattern",
     },
     // Flipper Zero Black: [0x81, 0x30] in manufacturer-specific data
     BleAdBytesPattern {
+        active: false,
+        exact_manufacturer_len: None,
         bytes: &[0x81, 0x30],
         offset: None,
-        description: "Flipper Zero",
+        description: "Unverified byte pattern",
     },
 ];
 
@@ -288,16 +296,12 @@ pub const SIG_COUNT: usize = SIG_IDX_BLE_AD_BYTES_START as usize + BLE_AD_BYTES_
 // Flock Safety Camera signatures
 /// MAC_PREFIXES[0] = Flock Safety OUI B4:1E:52
 const SIG_FLOCK_SAFETY_OUI: SigIdx = SIG_IDX_MAC_OUI_START;
-/// MAC_PREFIXES[1] = Silicon Labs 58:8E:81
-const SIG_SILABS_588E81: SigIdx = SIG_IDX_MAC_OUI_START + 1;
-/// MAC_PREFIXES[2] = Silicon Labs CC:CC:CC
-const SIG_SILABS_CCCCCC: SigIdx = SIG_IDX_MAC_OUI_START + 2;
+
 /// SSID_PATTERNS[0] = Flock-XXXXXX
 const SIG_FLOCK_SSID_PREFIX: SigIdx = SIG_IDX_SSID_PATTERN_START;
 /// SSID_EXACT[0] = "FS Ext Battery"
 const SIG_FS_EXT_BATTERY_SSID: SigIdx = SIG_IDX_SSID_EXACT_START;
-/// SSID_KEYWORDS[0] = "flock"
-const SIG_FLOCK_SSID_KEYWORD: SigIdx = SIG_IDX_SSID_KEYWORD_START;
+
 /// BLE_NAME_PATTERNS[0] = "Flock"
 const SIG_FLOCK_BLE_NAME: SigIdx = SIG_IDX_BLE_NAME_START;
 /// BLE_NAME_PATTERNS[2] = "FS Ext Battery"
@@ -340,8 +344,7 @@ const SIG_SKIMMER_HC06: SigIdx = SIG_IDX_BLE_NAME_START + 6;
 const SIG_PWNAGOTCHI_OUI: SigIdx = SIG_IDX_MAC_OUI_START + (MAC_PREFIXES.len() as SigIdx - 2);
 
 // Open Drone ID signatures
-/// MAC_PREFIXES[last] = Open Drone ID WiFi OUI 90:3A:E6
-const SIG_ODID_WIFI_OUI: SigIdx = SIG_IDX_MAC_OUI_START + (MAC_PREFIXES.len() as SigIdx - 1);
+
 /// BLE_SERVICE_UUIDS_16[5] = 0xFFFA (ASTM F3411 Open Drone ID)
 const SIG_ODID_BLE_UUID: SigIdx = SIG_IDX_BLE_UUID_START + 5;
 
@@ -358,122 +361,99 @@ const _: () = {
 
 /// Shared post-order expression node pool for all rules.
 ///
-/// Layout:
-///   [0..12)  Flock Safety Camera (12 nodes)
-///   [12..18) Raven Acoustic Sensor (6 nodes)
-///   [18]     Apple AirTag (1 node)
-///   [19..22) Flipper Zero (3 nodes)
-///   [22..26) Card Skimmer (4 nodes)
-///   [26]     Pwnagotchi (1 node)
-///   [27..30) Open Drone ID (3 nodes)
 static DEFAULT_RULE_NODES: &[ExprNode] = &[
-    // ── Flock Safety Camera ──
-    // anyOf(
-    //   flock-safety-oui, silabs-588e81, silabs-cccccc,
-    //   flock-ssid-prefix, fs-ext-battery-ssid, flock-ssid-keyword,
-    //   flock-ble-name, fs-ext-battery-ble,
-    //   allOf(xuntong-mfr, flock-ble-name)
-    // )
-    ExprNode::Sig(SIG_FLOCK_SAFETY_OUI),    // [0]
-    ExprNode::Sig(SIG_SILABS_588E81),       // [1]
-    ExprNode::Sig(SIG_SILABS_CCCCCC),       // [2]
-    ExprNode::Sig(SIG_FLOCK_SSID_PREFIX),   // [3]
-    ExprNode::Sig(SIG_FS_EXT_BATTERY_SSID), // [4]
-    ExprNode::Sig(SIG_FLOCK_SSID_KEYWORD),  // [5]
-    ExprNode::Sig(SIG_FLOCK_BLE_NAME),      // [6]
-    ExprNode::Sig(SIG_FS_EXT_BATTERY_BLE),  // [7]
-    // allOf(xuntong-mfr, flock-ble-name) — nested AND
-    ExprNode::Sig(SIG_XUNTONG_MFR),    // [8]
-    ExprNode::Sig(SIG_FLOCK_BLE_NAME), // [9]  (same sig referenced again)
-    ExprNode::AllOf { count: 2 },      // [10]
-    // Top-level anyOf: 8 direct sigs + 1 allOf result = 9 children
-    ExprNode::AnyOf { count: 9 }, // [11]
-    // ── Raven Acoustic Sensor ──
-    // anyOf(raven-gps, raven-power, raven-network, raven-upload, raven-error)
-    ExprNode::Sig(SIG_RAVEN_GPS_UUID),     // [12]
-    ExprNode::Sig(SIG_RAVEN_POWER_UUID),   // [13]
-    ExprNode::Sig(SIG_RAVEN_NETWORK_UUID), // [14]
-    ExprNode::Sig(SIG_RAVEN_UPLOAD_UUID),  // [15]
-    ExprNode::Sig(SIG_RAVEN_ERROR_UUID),   // [16]
-    ExprNode::AnyOf { count: 5 },          // [17]
-    // ── Apple AirTag ──
-    // Single sig reference
-    ExprNode::Sig(SIG_AIRTAG_FINDMY_AD), // [18]
-    // ── Flipper Zero ──
-    // anyOf(flipper-white, flipper-black)
-    ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE), // [19]
-    ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK), // [20]
-    ExprNode::AnyOf { count: 2 },          // [21]
-    // ── Card Skimmer ──
-    // anyOf(hc-03, hc-05, hc-06)
-    ExprNode::Sig(SIG_SKIMMER_HC03), // [22]
-    ExprNode::Sig(SIG_SKIMMER_HC05), // [23]
-    ExprNode::Sig(SIG_SKIMMER_HC06), // [24]
-    ExprNode::AnyOf { count: 3 },    // [25]
-    // ── Pwnagotchi ──
-    // Single sig: pwnagotchi OUI
-    ExprNode::Sig(SIG_PWNAGOTCHI_OUI), // [26]
-    // ── Open Drone ID ──
-    // anyOf(odid-ble-uuid, odid-wifi-oui)
-    ExprNode::Sig(SIG_ODID_BLE_UUID), // [27]
-    ExprNode::Sig(SIG_ODID_WIFI_OUI), // [28]
-    ExprNode::AnyOf { count: 2 },     // [29]
+    ExprNode::Sig(SIG_FLOCK_SAFETY_OUI),
+    ExprNode::Sig(SIG_FLOCK_SSID_PREFIX),
+    ExprNode::AllOf { count: 2 },
+    ExprNode::Sig(SIG_FLOCK_SAFETY_OUI),
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_SSID),
+    ExprNode::AllOf { count: 2 },
+    ExprNode::Sig(SIG_XUNTONG_MFR),
+    ExprNode::Sig(SIG_FLOCK_BLE_NAME),
+    ExprNode::AllOf { count: 2 },
+    ExprNode::Sig(SIG_XUNTONG_MFR),
+    ExprNode::Sig(SIG_FS_EXT_BATTERY_BLE),
+    ExprNode::AllOf { count: 2 },
+    ExprNode::AnyOf { count: 4 },
+    ExprNode::Sig(SIG_RAVEN_GPS_UUID),
+    ExprNode::Sig(SIG_RAVEN_POWER_UUID),
+    ExprNode::Sig(SIG_RAVEN_NETWORK_UUID),
+    ExprNode::Sig(SIG_RAVEN_UPLOAD_UUID),
+    ExprNode::Sig(SIG_RAVEN_ERROR_UUID),
+    ExprNode::AnyOf { count: 5 },
+    ExprNode::Sig(SIG_AIRTAG_FINDMY_AD),
+    ExprNode::Sig(SIG_FLIPPER_ZERO_WHITE),
+    ExprNode::Sig(SIG_FLIPPER_ZERO_BLACK),
+    ExprNode::AnyOf { count: 2 },
+    ExprNode::Sig(SIG_SKIMMER_HC03),
+    ExprNode::Sig(SIG_SKIMMER_HC05),
+    ExprNode::Sig(SIG_SKIMMER_HC06),
+    ExprNode::AnyOf { count: 3 },
+    ExprNode::Sig(SIG_PWNAGOTCHI_OUI),
+    ExprNode::Sig(SIG_ODID_BLE_UUID),
 ];
 
 static DEFAULT_RULES: &[Rule] = &[
     Rule {
-        name: "Flock Safety Camera",
+        name: "Flock-like candidate",
         expr_start: 0,
-        expr_len: 12,
+        expr_len: 13,
         category: MatchCategory::Surveillance,
         active: true,
+        alert: true,
     },
     Rule {
-        name: "Raven Acoustic Sensor",
-        expr_start: 12,
+        name: "Raven UUID candidate",
+        expr_start: 13,
         expr_len: 6,
         category: MatchCategory::Surveillance,
         active: true,
+        alert: false,
     },
     Rule {
-        name: "Apple AirTag",
-        expr_start: 18,
+        name: "Find My framing candidate",
+        expr_start: 19,
         expr_len: 1,
         category: MatchCategory::Surveillance,
         active: true,
+        alert: false,
     },
     Rule {
-        name: "Flipper Zero",
-        expr_start: 19,
+        name: "Unverified byte pattern",
+        expr_start: 20,
         expr_len: 3,
         category: MatchCategory::Surveillance,
-        active: true,
+        active: false,
+        alert: false,
     },
     Rule {
-        name: "Card Skimmer",
-        expr_start: 22,
+        name: "HC-series module",
+        expr_start: 23,
         expr_len: 4,
-        category: MatchCategory::Surveillance,
-        active: true,
-    },
-    Rule {
-        name: "Pwnagotchi",
-        expr_start: 26,
-        expr_len: 1,
         category: MatchCategory::Network,
         active: true,
+        alert: false,
     },
     Rule {
-        name: "Open Drone ID",
+        name: "Address-prefix candidate",
         expr_start: 27,
-        expr_len: 3,
+        expr_len: 1,
+        category: MatchCategory::Network,
+        active: false,
+        alert: false,
+    },
+    Rule {
+        name: "Remote ID service candidate",
+        expr_start: 28,
+        expr_len: 1,
         category: MatchCategory::Drone,
         active: true,
+        alert: false,
     },
 ];
 
-/// The default compiled-in rule database.
 pub static DEFAULT_RULE_DB: RuleDb = RuleDb {
+    id: "builtin-rules-2",
     nodes: DEFAULT_RULE_NODES,
     rules: DEFAULT_RULES,
 };
@@ -512,3 +492,6 @@ impl SsidPattern {
         }
     }
 }
+
+/// Numeric predicate IDs are scoped to this immutable pack revision.
+pub const SIGNATURE_PACK_ID: &str = "builtin-2";

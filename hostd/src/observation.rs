@@ -41,6 +41,7 @@ pub enum ScanEvent {
 pub struct BleObservation<'a> {
     #[serde(rename = "type")]
     pub kind: &'static str,
+    pub detection: airhound::evidence::Detection<'a>,
     pub peripheral_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<&'a str>,
@@ -92,6 +93,9 @@ pub fn write_external(
     value["type"] = serde_json::json!("external_wifi_observation");
     value["match"] = serde_json::to_value(&result.matches).map_err(std::io::Error::other)?;
     value["rules"] = serde_json::to_value(&result.rule_names).map_err(std::io::Error::other)?;
+    value["detection"] =
+        serde_json::to_value(result.detection(airhound::evidence::AlertPolicy::Silent))
+            .map_err(std::io::Error::other)?;
     value["filter_policy"] = serde_json::json!("identity_only_unvalidated");
     value["ssid_text_valid"] = serde_json::json!(event
         .ssid_bytes

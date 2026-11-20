@@ -31,3 +31,5 @@ pub mod proximity;
 pub mod rules;
 pub mod scanner;
 pub mod watchlist;
+
+pub mod evidence;

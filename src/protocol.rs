@@ -33,6 +33,14 @@ pub struct MatchReason {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum DeviceMessage<'a> {
+    /// Bounded evidence companion, linked to a scan by source, identity and timestamp.
+    #[serde(rename = "detection")]
+    Detection {
+        id: &'a str,
+        scope: &'static str,
+        ts: u32,
+        detection: crate::evidence::Detection<'a>,
+    },
     /// Cumulative best-effort transport losses since boot (wrapping u32).
     #[serde(rename = "stream_stats")]
     StreamStats {
