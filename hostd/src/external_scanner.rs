@@ -645,9 +645,15 @@ exit 3
         let (tx, mut rx) = mpsc::channel(1);
         let control = ScanControl::new(true);
         let task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        // Keep the initial status queued while the burst is emitted.
-        timeout(Duration::from_secs(3), async {
+        // Keep the initial status queued while the burst is emitted. Process
+        // startup on a loaded runner is not part of the pause/stop latency
+        // assertion below; allow the production handshake budget plus burst I/O.
+        timeout(Duration::from_secs(15), async {
             while !fake.directory.join("burst-complete").exists() {
+                assert!(
+                    !task.is_finished(),
+                    "supervisor exited before the burst completed"
+                );
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
