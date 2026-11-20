@@ -87,6 +87,16 @@ provenance, receiver/session identifiers, event/report sequence numbers, optiona
 address and RSSI, raw report data, raw PHY codes and controller data status. It
 never invents a capture timestamp or claims live reception validation. Raw PHY
 codes are preserved without assuming optional host coding-selection features.
+Extended reports explicitly carry `phy_interpretation: unvalidated_raw_codes`;
+reserved/future codes are retained for inspection, not treated as PHY capability
+or validated reception evidence. Legacy reports carry `legacy_1m`.
+
+The RSSI and TX_Power report fields both use -127 through +20 dBm, with 0x7F
+meaning unavailable, per [Core 6.2, Vol 4, Part E, section 7.7.65.13](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-62/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+The replay parser rejects +21, +126, and -128 for either field. These are the HCI
+report bounds, not a generic signed-byte or advertising-data Tx Power range.
+Regression tests cover both fields independently, their bounds and unavailable
+sentinel, legacy RSSI, and explicitly unknown PHY codes.
 
 Bounds: each H4 event is at most 258 bytes, a hex input line at most 518 bytes,
 and a decoded batch at most 25 legacy or 10 extended reports. Length, event-count,
