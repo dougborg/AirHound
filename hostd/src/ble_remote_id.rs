@@ -12,7 +12,7 @@ pub struct Context<'a> {
     pub address: Option<&'a str>,
     pub address_type: &'a str,
     pub receiver_id: Option<&'a str>,
-    pub rssi: i8,
+    pub rssi: Option<i8>,
     pub ts: u32,
 }
 
@@ -33,7 +33,8 @@ struct Observation<'a> {
     freshness: &'static str,
     packet_completeness: &'static str,
     message_counter: u8,
-    rssi: i8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rssi: Option<i8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     uas_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,7 +108,7 @@ mod tests {
             address: None,
             address_type: "unknown",
             receiver_id: Some("test-receiver"),
-            rssi: -45,
+            rssi: Some(-45),
             ts: 123,
         }
     }
@@ -148,6 +149,16 @@ mod tests {
         assert_eq!(values[0]["packet_completeness"], "unknown");
         assert_eq!(values[0]["freshness"], "possibly_cached");
     }
+    #[test]
+    fn unavailable_signal_is_not_fabricated_as_zero_dbm() {
+        let mut context = context();
+        context.rssi = None;
+        let mut out = Vec::new();
+        assert!(emit(&mut out, &context, &REMOTE_ID_UUID, &basic_id(1), false).unwrap());
+        let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert!(value.get("rssi").is_none());
+    }
+
     #[test]
     fn wrong_context_and_truncation_do_not_decode() {
         let mut out = Vec::new();

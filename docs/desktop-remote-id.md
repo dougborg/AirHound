@@ -4,7 +4,9 @@ The desktop receiver decodes normalized service-data records for the full
 Bluetooth-base service UUID `0000fffa-0000-1000-8000-00805f9b34fb`. Its payload
 starts with Remote ID application code `0x0D`, a message counter, then a message
 or pack. No generic signature hit, hardware MAC, or reconstructed AD packet is
-required. BLE enable/RSSI policy still applies before decoding.
+required. BLE enable policy applies before decoding; the RSSI threshold applies
+when a measured RSSI is available. Update-only records without a measurement
+omit RSSI rather than inventing a signal value.
 
 Output uses the separate `ble_remote_id` record described by
 [desktop-remote-id.v1.schema.json](../schemas/desktop-remote-id.v1.schema.json).

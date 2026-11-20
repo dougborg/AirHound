@@ -16,7 +16,6 @@
     "freshness",
     "packet_completeness",
     "message_counter",
-    "rssi",
     "ts"
   ],
   "properties": {
