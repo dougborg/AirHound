@@ -17,6 +17,8 @@ class Monitor:
     def __init__(self, board, version, require_psram=False):
         self.board, self.version = board, version
         self.require_psram = require_psram
+        self.stream_stats = []
+        self.observation_counts = Counter()
         self.memory_stats = []
         self.psram_ready = False
         self.statuses = []
@@ -40,10 +42,19 @@ class Monitor:
             kind = value.get('type')
             if isinstance(kind, str):
                 # Only protocol type names, never arbitrary identifiers, in summaries.
-                if kind in ('status', 'wifi', 'ble', 'drone', 'error', 'command_result'):
+                if kind in ('status', 'wifi', 'ble', 'drone', 'error', 'command_result', 'stream_stats'):
                     self.types[kind] += 1
                 else:
                     self.types['other'] += 1
+            if kind in ('wifi', 'ble') and isinstance(value.get('match'), list):
+                suffix = 'matched' if value['match'] else 'ordinary'
+                self.observation_counts[f'{kind}_{suffix}'] += 1
+            if kind == 'stream_stats':
+                keys = ('scan_drops', 'output_drops', 'ble_output_drops', 'serialize_errors')
+                if any(type(value.get(k)) is not int or not 0 <= value[k] <= 0xffffffff for k in keys):
+                    self.failures.add('invalid stream loss metrics')
+                else:
+                    self.stream_stats.append({k: value[k] for k in keys})
             if kind != 'status':
                 return
             if value.get('board') != self.board or value.get('version') != self.version:
@@ -102,7 +113,9 @@ class Monitor:
         return {'schema_version': 1, 'passed': not failures, 'failures': sorted(failures),
                 'board': self.board, 'version': self.version, 'observed_seconds': elapsed,
                 'boot_count': self.boots, 'initialized': sorted(self.initialized),
-                'message_counts': dict(self.types), 'status_samples': self.statuses,
+                'message_counts': dict(self.types),
+                'observation_counts': dict(self.observation_counts),
+                'stream_stats': self.stream_stats, 'status_samples': self.statuses,
                 'wifi_stats': self.wifi_stats,
                 'observed_addresses': self.observed_addresses,
                 'memory_stats': self.memory_stats, 'psram_ready': self.psram_ready,
