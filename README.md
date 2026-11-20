@@ -80,14 +80,25 @@ An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demon
 | Board | Chip | Target | Feature Flag | Extras |
 |-------|------|--------|-------------|--------|
 | Seeed XIAO ESP32-S3 | ESP32-S3 | `xtensa-esp32s3-none-elf` | `xiao` | PSRAM, GPS header |
-| M5StickC Plus2 | ESP32 (PICO-V3) | `xtensa-esp32-none-elf` | `m5stickc` | TFT display, buzzer |
+| M5StickC Plus2 | ESP32 (PICO-V3-02) | `xtensa-esp32-none-elf` | `m5stickc` | TFT display, buzzer, 2 MB PSRAM |
 
 #### M5StickC Plus2 Features
 
 - **135x240 TFT display** (ST7789V2) — status screen with match counts, uptime, and last detection
 - **Passive buzzer** (GPIO2) — short alert beep on surveillance device match, togglable via BLE command
 
+See [M5StickC Plus2 bring-up and backup procedure](docs/m5stickc-bringup.md)
+for the local hardware validation and serial-monitor workflow.
+
 #### Remote ID support and memory
+
+The Plus2 has 8 MB flash and 2 MB PSRAM, per the
+[M5Stack specification](https://docs.m5stack.com/en/core/StickC-Plus2). Our current
+M5StickC `no_std` firmware tests and initializes PSRAM, then uses a separate
+external-memory allocator for 4,096 observed addresses. WiFi/BLE, the RTOS,
+and the scan queue retain internal RAM; the internal heap remains 64 KiB. Status
+`heap_free` continues to mean internal free bytes, with external free memory
+reported separately in the display and periodic memory diagnostics.
 
 The `no_std` M5StickC firmware excludes WiFi Remote ID events to limit static
 RAM use; legacy BLE Remote ID decoding remains available. The XIAO `no_std`
@@ -288,36 +299,27 @@ The schema supports boolean rule composition (`anyOf`/`allOf`/`not`) for complex
 
 ## Roadmap
 
-Directions, not promises. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+See the [prioritized roadmap](docs/roadmap.md) and its published
+[tracking issue #160](https://github.com/dougborg/AirHound/issues/160) for the
+complete open-issue inventory, dependencies, evidence and release gates.
 
-### Layer 2 Library Modules
+1. Integrate the locally validated firmware/receiver work and open PRs (#152).
+2. Address firmware memory/stack/drop limits (#153), signature confidence (#154),
+   and macOS live capture/permission failures (#159).
+3. Validate receiver endurance/recovery (#155), channel/RF performance (#156),
+   and distribution (#157).
+4. Improve typed observations/health (#71) and sensor UI (#8), then evaluate a
+   native desktop GUI (#158) before expanding storage and integrations.
 
-| Module | Feature Gate | Description | Issue |
-|--------|-------------|-------------|-------|
-| `gps.rs` | `gps` | NMEA parsing, position types, geofence helpers | [#28](https://github.com/dougborg/AirHound/issues/28) |
-| `tracker.rs` | `tracker` | Device history, re-identification, follow detection | [#29](https://github.com/dougborg/AirHound/issues/29) |
-| `channel.rs` | `channel` | WiFi channel scheduling, dwell optimization | [#30](https://github.com/dougborg/AirHound/issues/30) |
-| `export.rs` | `std` | WiGLE CSV, KML, pcapng export | [#31](https://github.com/dougborg/AirHound/issues/31) |
-| `wids.rs` | `wids` | Rogue AP detection, deauth monitoring | [#32](https://github.com/dougborg/AirHound/issues/32) |
+Desktop CLI, Linux monitor-interface WiFi and command outcomes are already
+merged, along with macOS lifecycle/address enrichment (#150) and the
+experimental external receiver (#151). M5Stick WiFi startup, PSRAM/counting
+fixes and a startup-stack CI guard are in PR #162 for final validation. Hardware release
+validation remains [#141](https://github.com/dougborg/AirHound/issues/141).
 
-### Platform Targets
-
-| Platform | Status | Issue |
-|----------|--------|-------|
-| ESP32 firmware (XIAO, M5StickC) | Implemented | — |
-| Flipper Zero companion app | Planned | [#34](https://github.com/dougborg/AirHound/issues/34) |
-| Linux daemon (Raspberry Pi / laptop) | Planned | [#13](https://github.com/dougborg/AirHound/issues/13) |
-| Kismet companion process | Planned | [#12](https://github.com/dougborg/AirHound/issues/12) |
-
-### Other Directions
-
-- Cargo workspace extraction for multi-platform library reuse ([#33](https://github.com/dougborg/AirHound/issues/33))
-- Flipper Zero BLE serial relay (upstream `flipperzero-rs` contribution)
-- Runtime signature loading and updates ([#14](https://github.com/dougborg/AirHound/issues/14))
-- GPS enrichment for boards with GPS modules ([#15](https://github.com/dougborg/AirHound/issues/15))
-- Protocol v2 — versioning and expanded command set ([#9](https://github.com/dougborg/AirHound/issues/9))
-- Cross-tool interoperability with OUI-Spy, FlockSquawk, Flock-You, and others ([#16](https://github.com/dougborg/AirHound/issues/16))
-- More ESP32 variants (C3, C6 RISC-V) and other MCU families
+Directions are not delivery promises. The roadmap distinguishes implemented,
+locally validated, open-review and future work; the architecture umbrella
+remains [#17](https://github.com/dougborg/AirHound/issues/17).
 
 ## Contributing
 
