@@ -18,6 +18,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod board;
+pub mod buttons;
 pub mod comm;
 pub mod defaults;
 pub mod filter;

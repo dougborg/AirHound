@@ -130,7 +130,11 @@ static WIFI_HOP_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
     Mutex::new(RefCell::new(heapless::String::new()));
 
-/// Whether the buzzer is enabled
+/// Local display page; independent of scanning and companion connections.
+#[cfg(feature = "m5stickc")]
+pub(crate) static UI_DETAILS: AtomicBool = AtomicBool::new(false);
+
+/// Whether the buzzer is enabled (also controlled by companion commands).
 pub(crate) static BUZZER_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Signal channel for buzzer beeps
@@ -308,6 +312,9 @@ async fn main(spawner: embassy_executor::Spawner) {
             ))
             .unwrap();
         log::info!("Display task spawned");
+        spawner
+            .spawn(button_task(peripherals.GPIO37, peripherals.GPIO39))
+            .unwrap();
     }
 
     // Buzzer task
@@ -974,5 +981,36 @@ async fn command_task() {
                 let _ = output_tx.try_send(buf);
             }
         }
+    }
+}
+
+/// GPIO37/39 are input-only; the Plus2 supplies external pull-ups.
+#[cfg(feature = "m5stickc")]
+#[embassy_executor::task]
+async fn button_task(
+    a: esp_hal::peripherals::GPIO37<'static>,
+    b: esp_hal::peripherals::GPIO39<'static>,
+) {
+    use esp_hal::gpio::{Input, InputConfig};
+    let a = Input::new(a, InputConfig::default());
+    let b = Input::new(b, InputConfig::default());
+    let now = embassy_time::Instant::now().as_millis();
+    let mut front = airhound::buttons::Button::new(a.is_low(), now);
+    let mut side = airhound::buttons::Button::new(b.is_low(), now);
+    log::info!("Buttons ready: A=overview/details B=sound");
+    loop {
+        let now = embassy_time::Instant::now().as_millis();
+        if front.update(a.is_low(), now) {
+            let details = !UI_DETAILS.fetch_xor(true, Ordering::Relaxed);
+            log::info!(
+                "Button A: page={}",
+                if details { "details" } else { "overview" }
+            );
+        }
+        if side.update(b.is_low(), now) {
+            let sound = !BUZZER_ENABLED.fetch_xor(true, Ordering::Relaxed);
+            log::info!("Button B: sound={}", sound);
+        }
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
     }
 }

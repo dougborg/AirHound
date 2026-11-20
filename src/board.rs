@@ -51,6 +51,8 @@ mod hw {
 
     /// GPIO4 must be held HIGH to keep the device powered on
     pub const POWER_HOLD_PIN: u8 = 4;
+    pub const BUTTON_A_PIN: u8 = 37;
+    pub const BUTTON_B_PIN: u8 = 39;
 
     // Display SPI pins (ST7789V2) — peripherals are passed by type
     pub const DISPLAY_MOSI: u8 = 15;
