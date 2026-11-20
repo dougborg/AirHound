@@ -50,7 +50,7 @@ jobs:
           RUSTUP_TOOLCHAIN: nightly-2026-11-18
           SUITE: ${{ matrix.suite }}
         run: bash .github/scripts/coverage.sh "$SUITE"
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: coverage-${{ matrix.suite }}-${{ matrix.os }}
@@ -82,7 +82,7 @@ jobs:
           cargo fetch --manifest-path fuzz/Cargo.toml --locked
           CARGO_NET_OFFLINE=true cargo fuzz run "$TARGET" -- -max_total_time="$SECONDS_LIMIT" -max_len=4096 -rss_limit_mb=2048 -timeout=10
           git diff --exit-code -- fuzz/Cargo.lock
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: fuzz-failures-${{ matrix.target }}
