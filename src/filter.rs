@@ -225,9 +225,20 @@ pub fn filter_ble(
     }
 
     // BLE service UUID check (16-bit)
-    for &uuid in input.service_uuids_16 {
+    let raw_services = crate::ble_data::AdStructures::new(input.raw_ad)
+        .flat_map(|field| {
+            field
+                .uuids()
+                .chain(field.service().map(|record| record.uuid))
+        })
+        .filter_map(crate::ble_data::Uuid::as_u16);
+    for uuid in input.service_uuids_16.iter().copied().chain(raw_services) {
         for (i, &known) in BLE_SERVICE_UUIDS_16.iter().enumerate() {
-            if uuid == known {
+            if uuid == known
+                && !result
+                    .sig_matches
+                    .get(defaults::SIG_IDX_BLE_UUID_START + i as u16)
+            {
                 result
                     .sig_matches
                     .set(defaults::SIG_IDX_BLE_UUID_START + i as u16);
@@ -237,7 +248,11 @@ pub fn filter_ble(
             }
         }
         for (i, &known) in defaults::BLE_STANDARD_UUIDS_16.iter().enumerate() {
-            if uuid == known {
+            if uuid == known
+                && !result
+                    .sig_matches
+                    .get(defaults::SIG_IDX_BLE_STD_UUID_START + i as u16)
+            {
                 result
                     .sig_matches
                     .set(defaults::SIG_IDX_BLE_STD_UUID_START + i as u16);
@@ -266,6 +281,75 @@ pub fn filter_ble(
         check_ble_ad_bytes(input.raw_ad, &mut result);
     }
 
+    result
+}
+
+/// Match normalized fields without inventing a raw advertisement. Composite rules
+/// are deliberately not evaluated: platform snapshots may contain cached fields.
+/// Only explicitly migrated contextual payload patterns apply here; legacy raw
+/// offsets and search-anywhere patterns are not evaluated on property maps.
+pub fn filter_ble_snapshot(
+    input: &BleScanInput,
+    data: &crate::ble_data::Advertisement<'_>,
+    config: &FilterConfig,
+    mac_index: &MacIndex,
+) -> FilterResult {
+    let base = BleScanInput {
+        service_uuids_16: &[],
+        manufacturer_id: 0,
+        raw_ad: &[],
+        ..*input
+    };
+    let mut result = filter_ble(&base, config, mac_index);
+    if !config.ble_enabled || input.rssi < config.min_rssi {
+        return result;
+    }
+    for (values, start, kind) in [
+        (
+            BLE_SERVICE_UUIDS_16,
+            defaults::SIG_IDX_BLE_UUID_START,
+            "ble_uuid",
+        ),
+        (
+            defaults::BLE_STANDARD_UUIDS_16,
+            defaults::SIG_IDX_BLE_STD_UUID_START,
+            "ble_uuid_std",
+        ),
+    ] {
+        for (i, &uuid) in values.iter().enumerate() {
+            if data.has_service(crate::ble_data::Uuid::from_u16(uuid)) {
+                result.sig_matches.set(start + i as u16);
+                let mut detail = crate::protocol::MatchDetail::new();
+                let _ = write!(detail, "Service UUID 0x{:04X}", uuid);
+                result.add_match(kind, &detail);
+            }
+        }
+    }
+    for (i, &company_id) in BLE_MANUFACTURER_IDS.iter().enumerate() {
+        if data
+            .manufacturer_data
+            .iter()
+            .any(|r| r.company_id == company_id)
+        {
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_BLE_MFR_START + i as u16);
+            result.add_match("ble_mfr", "Known manufacturer ID");
+        }
+    }
+    // Explicit migration for the known Find My frame. Legacy v1 raw offsets
+    // remain unchanged in filter_ble; do not promote an incomplete header here.
+    let find_my = crate::ble_data::BytePattern {
+        bytes: &[0x12, 0x19],
+        mask: None,
+        offset: 0,
+        min_len: 27,
+        max_len: Some(27),
+    };
+    if data.matches_manufacturer(0x004c, &find_my) {
+        result.sig_matches.set(defaults::SIG_IDX_BLE_AD_BYTES_START);
+        result.add_match("ble_ad_bytes", "Find My framing candidate");
+    }
     result
 }
 
@@ -410,6 +494,70 @@ mod tests {
 
     fn test_mac_index() -> MacIndex {
         MacIndex::from_defaults()
+    }
+
+    #[test]
+    fn snapshot_context_requires_full_frame_and_preserves_uuid_identity() {
+        use crate::ble_data::{Advertisement, ManufacturerData, Uuid};
+        let input = BleScanInput {
+            mac: &[0; 6],
+            name: "",
+            rssi: -40,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let mut bytes = [0u8; 27];
+        bytes[..2].copy_from_slice(&[0x12, 0x19]);
+        let records = [
+            ManufacturerData {
+                company_id: 0,
+                payload: &[],
+            },
+            ManufacturerData {
+                company_id: 0x4c,
+                payload: &bytes,
+            },
+        ];
+        let full = Uuid::from_u16(0xfffa);
+        let mut custom = full;
+        custom.0[15] ^= 1;
+        let uuids = [custom];
+        let mut data = Advertisement {
+            service_uuids: &uuids,
+            manufacturer_data: &records,
+            service_data: &[],
+        };
+        let result = filter_ble_snapshot(&input, &data, &default_config(), &test_mac_index());
+        assert!(result
+            .matches
+            .iter()
+            .any(|m| m.detail == "Find My framing candidate"));
+        assert!(!result.matches.iter().any(|m| m.filter_type == "ble_uuid"));
+        assert!(result.rule_names.is_empty());
+        let short = [ManufacturerData {
+            company_id: 0x4c,
+            payload: &bytes[..3],
+        }];
+        data.manufacturer_data = &short;
+        assert!(!filter_ble_snapshot(&input, &data, &default_config(), &test_mac_index()).matched);
+        let wrong = [ManufacturerData {
+            company_id: 0x4d,
+            payload: &bytes,
+        }];
+        data.manufacturer_data = &wrong;
+        assert!(!filter_ble_snapshot(&input, &data, &default_config(), &test_mac_index()).matched);
+        let uuids = [full];
+        data.service_uuids = &uuids;
+        assert!(
+            filter_ble_snapshot(&input, &data, &default_config(), &test_mac_index())
+                .matches
+                .iter()
+                .any(|m| m.filter_type == "ble_uuid")
+        );
+        let mut cfg = default_config();
+        cfg.ble_enabled = false;
+        assert!(!filter_ble_snapshot(&input, &data, &cfg, &test_mac_index()).matched);
     }
 
     // ── WiFi filter tests ───────────────────────────────────────────

@@ -47,14 +47,20 @@ async fn performance_event_pipeline() {
             // 20% matching BLE, 80% unmatched WiFi; CSV retains every observation.
             for index in 0..count {
                 let event = if index % 5 == 0 {
-                    if scenario == "platform_id" {
-                        ScanEvent::BlePeripheral {
-                            event: ble.clone(),
-                            id: "00112233-4455-6677-8899-aabbccddeeff".into(),
-                            address: None,
-                        }
-                    } else {
-                        ScanEvent::Ble(ble.clone())
+                    ScanEvent::BleSnapshot {
+                        event: ble.clone(),
+                        id: "00112233-4455-6677-8899-aabbccddeeff".into(),
+                        address: if scenario == "platform_id" {
+                            None
+                        } else {
+                            Some(ble.mac)
+                        },
+                        snapshot: Box::new(crate::ble_payload::Snapshot::from_properties(
+                            &btleplug::api::PeripheralProperties {
+                                rssi: Some(-45),
+                                ..Default::default()
+                            },
+                        )),
                     }
                 } else {
                     ScanEvent::WiFi(wifi.clone())
@@ -89,7 +95,12 @@ async fn performance_event_pipeline() {
                     count + 2
                 }
             );
-            assert_eq!(messages, count / 5);
+            let records_per_ble = if cfg!(target_os = "linux") && scenario == "hardware_mac" {
+                2
+            } else {
+                1
+            };
+            assert_eq!(messages, count / 5 * records_per_ble);
             println!("PERF scenario={scenario} run={run} events={count} matches={messages} elapsed_s={elapsed:.6} events_per_s={:.0} csv_bytes={} ndjson_bytes={}",
             count as f64 / elapsed, std::fs::metadata(&csv_path).unwrap().len(), std::fs::metadata(&json_path).unwrap().len());
         }

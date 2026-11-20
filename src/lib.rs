@@ -17,6 +17,7 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #![cfg_attr(not(test), no_std)]
 
+pub mod ble_data;
 pub mod board;
 pub mod buttons;
 pub mod comm;

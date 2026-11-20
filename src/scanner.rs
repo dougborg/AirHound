@@ -77,6 +77,17 @@ pub struct BleEvent {
     pub raw_ad: Vec<u8, 62>,
 }
 
+impl BleEvent {
+    /// Borrow full UUID identities from retained AD; no extra queued storage.
+    /// Capacity remains the raw_ad bound. This does not reconstruct omitted bytes.
+    pub fn advertised_service_uuids(&self) -> impl Iterator<Item = crate::ble_data::Uuid> + '_ {
+        crate::ble_data::AdStructures::new(&self.raw_ad).flat_map(|field| field.uuids())
+    }
+    pub fn service_data(&self) -> impl Iterator<Item = crate::ble_data::ServiceData<'_>> + '_ {
+        crate::ble_data::AdStructures::new(&self.raw_ad).filter_map(|field| field.service())
+    }
+}
+
 /// Source transport for an Open Drone ID message
 #[cfg(not(feature = "esp32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +288,7 @@ impl BleAdvParser {
         };
 
         let mut pos = 0;
+        let mut name_is_complete = false;
         while pos < ad_data.len() {
             let len = ad_data[pos] as usize;
             if len == 0 || pos + 1 + len > ad_data.len() {
@@ -306,8 +318,16 @@ impl BleAdvParser {
                 }
                 // Shortened or Complete local name
                 0x08 | 0x09 => {
-                    if let Ok(name) = core::str::from_utf8(data) {
-                        let _ = event.name.push_str(name);
+                    if !name_is_complete && (ad_type == 0x09 || event.name.is_empty()) {
+                        if let Ok(name) = core::str::from_utf8(data) {
+                            event.name.clear();
+                            for ch in name.chars() {
+                                if event.name.push(ch).is_err() {
+                                    break;
+                                }
+                            }
+                            name_is_complete = ad_type == 0x09;
+                        }
                     }
                 }
                 // Manufacturer specific data
@@ -328,6 +348,31 @@ impl BleAdvParser {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_uuid_views_and_names_preserve_section_boundaries() {
+        let custom = crate::ble_data::Uuid([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        let mut raw = heapless::Vec::<u8, 62>::new();
+        raw.extend_from_slice(&[
+            4, 8, b'a', b'b', b'c', 4, 9, b'd', b'e', b'f', 3, 8, b'x', b'y',
+        ])
+        .unwrap();
+        raw.extend_from_slice(&[17, 7]).unwrap();
+        raw.extend(custom.0.iter().rev().copied());
+        raw.extend_from_slice(&[5, 0x20, 0xfa, 0xff, 0, 0]).unwrap();
+        let event = BleAdvParser::parse(&[0; 6], -40, &raw);
+        assert_eq!(event.name, "def");
+        assert_eq!(
+            event
+                .advertised_service_uuids()
+                .collect::<std::vec::Vec<_>>(),
+            [custom]
+        );
+        assert_eq!(
+            event.service_data().next().unwrap().uuid,
+            crate::ble_data::Uuid::from_u16(0xfffa)
+        );
+    }
 
     // ── FrameType tests ─────────────────────────────────────────────
 

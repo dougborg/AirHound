@@ -9,6 +9,7 @@
 #[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
 mod address_macos;
 mod ble;
+mod ble_payload;
 mod ble_remote_id;
 mod control;
 mod health;
@@ -554,6 +555,82 @@ async fn filter_task<W: Write, O: Write>(
                 // Run filter and emit NDJSON if matched
                 handle_ble_event(ble_event, &cfg, &mac_index, start_time, &mut output)?;
             }
+            ScanEvent::BleSnapshot {
+                ref event,
+                ref id,
+                address,
+                ref snapshot,
+            } => {
+                let observed_mac = address.map(|mac| {
+                    let mut text = protocol::MacString::new();
+                    protocol::format_mac(&mac, &mut text);
+                    text
+                });
+                if let Some(mac) = observed_mac.as_ref().filter(|_| snapshot.rssi_available) {
+                    wigle.write_ble(
+                        mac,
+                        event.name.as_str(),
+                        &now,
+                        event.rssi,
+                        event.manufacturer_id,
+                        location.as_ref(),
+                    )?;
+                }
+                let input = BleScanInput {
+                    mac: if snapshot.address_type == "public" {
+                        &event.mac
+                    } else {
+                        &[0; 6]
+                    },
+                    name: event.name.as_str(),
+                    rssi: event.rssi,
+                    service_uuids_16: &[],
+                    manufacturer_id: 0,
+                    raw_ad: &[],
+                };
+                let index = if snapshot.address_type == "public" {
+                    &mac_index
+                } else {
+                    &anonymous_mac_index
+                };
+                let mut snapshot_cfg = cfg;
+                snapshot_cfg.ble_enabled &= snapshot.rssi_available;
+                let result = snapshot.with_view(|data| {
+                    airhound::filter::filter_ble_snapshot(&input, data, &snapshot_cfg, index)
+                });
+                // Linux consumers keep the legacy matched-record stream during migration.
+                if !cfg!(target_os = "macos") && address.is_some() && snapshot.rssi_available {
+                    handle_ble_event(event, &cfg, index, start_time, &mut output)?;
+                }
+                observation::write(
+                    &mut output,
+                    &observation::BleObservation {
+                        kind: "ble_observation",
+                        peripheral_id: id,
+                        address: observed_mac.as_ref().map(|s| s.as_str()),
+                        address_source: observed_mac.as_ref().map(|_| {
+                            if cfg!(target_os = "macos") {
+                                "corebluetooth_private"
+                            } else {
+                                "btleplug"
+                            }
+                        }),
+                        address_type: snapshot.address_type,
+                        identity_scope: if cfg!(target_os = "macos") {
+                            "corebluetooth"
+                        } else {
+                            "btleplug"
+                        },
+                        name: event.name.as_str(),
+                        rssi: event.rssi,
+                        service_uuids: &event.service_uuids_16,
+                        manufacturer_id: event.manufacturer_id,
+                        matches: &result.matches,
+                        ts: start_time.elapsed().as_millis() as u32,
+                        advertisement: Some(snapshot),
+                    },
+                )?;
+            }
             ScanEvent::BlePeripheral {
                 ref event,
                 ref id,
@@ -593,6 +670,7 @@ async fn filter_task<W: Write, O: Write>(
                     &mut output,
                     &observation::BleObservation {
                         kind: "ble_observation",
+                        advertisement: None,
                         peripheral_id: id,
                         address: observed_mac.as_ref().map(|s| s.as_str()),
                         address_source: observed_mac.as_ref().map(|_| "corebluetooth_private"),
@@ -1633,6 +1711,72 @@ mod tests {
         assert!(!output.is_empty());
         assert!(!String::from_utf8(output).unwrap().contains("0x180A"));
     }
+    #[tokio::test]
+    async fn backend_payloads_survive_conversion_filtering_and_output() {
+        let mut props = btleplug::api::PeripheralProperties {
+            rssi: Some(-45),
+            ..Default::default()
+        };
+        let custom = uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
+        props.services = vec![custom];
+        props.manufacturer_data.insert(0, vec![]);
+        let mut find_my = vec![0; 27];
+        find_my[..2].copy_from_slice(&[0x12, 0x19]);
+        props.manufacturer_data.insert(0x4c, find_my);
+        props.service_data.insert(custom, vec![0x12, 0x19]);
+        let (tx, rx) = mpsc::channel(2);
+        tx.send(ble::observation("known-platform-id", &props, None))
+            .await
+            .unwrap();
+        props.manufacturer_data.remove(&0x4c);
+        // Identical bytes in the wrong service/company context must not match.
+        props.manufacturer_data.insert(1, vec![0x12, 0x19, 0xaa]);
+        tx.send(ble::observation("negative-platform-id", &props, None))
+            .await
+            .unwrap();
+        drop(tx);
+        let csv = RecordingWriter::default();
+        let output = RecordingWriter::default();
+        filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            WigleWriter::new(csv.clone()).unwrap(),
+            output.clone(),
+            ScanControl::new(true),
+        )
+        .await
+        .unwrap();
+        let messages: Vec<serde_json::Value> = data_output(&output)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["peripheral_id"], "known-platform-id");
+        assert!(messages[0]["address"].is_null());
+        assert_eq!(
+            messages[0]["advertisement"]["advertised_services"][0],
+            custom.to_string()
+        );
+        assert_eq!(
+            messages[0]["advertisement"]["manufacturer_data"][0]["company_id"],
+            0
+        );
+        assert_eq!(
+            messages[0]["advertisement"]["service_data"][0]["payload"],
+            serde_json::json!([0x12, 0x19])
+        );
+        assert_eq!(messages[0]["advertisement"]["freshness"], "possibly_cached");
+        assert!(messages[0]["match"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["type"] == "ble_ad_bytes"));
+        assert!(messages[1]["match"].as_array().unwrap().is_empty());
+        assert_eq!(recorded(&csv).lines().count(), 2);
+    }
+
     #[tokio::test]
     async fn peripheral_ids_are_preserved_without_fake_mac_exports() {
         let (tx, rx) = mpsc::channel(3);
