@@ -49,7 +49,11 @@ impl AlertPolicy {
         if self == Self::AllMatches {
             return AlertDecision::Match;
         }
-        if self == Self::RulesAndWatchlist && rules.iter().any(|r| r.alert_eligible && !r.more) {
+        if self == Self::RulesAndWatchlist
+            && rules
+                .iter()
+                .any(|r| r.alert_eligible && !r.more && !r.sig.is_empty())
+        {
             return AlertDecision::Rule;
         }
         AlertDecision::Suppressed
@@ -352,7 +356,7 @@ mod tests {
     fn watchlist_is_user_intent_not_rule_corroboration() {
         let e = RuleEvidence {
             id: 0,
-            sig: Vec::new(),
+            sig: Vec::from_slice(&[1]).unwrap(),
             more: false,
             alert_eligible: true,
         };

@@ -706,12 +706,8 @@ async fn filter_task<W: Write, O: Write>(
                     raw_ad: &event.raw_ad,
                 };
                 // Address type is unknown; do not treat rotating addresses as hardware identity.
-                let result = filter_ble_with_rules(
-                    &input,
-                    &cfg,
-                    &defaults::DEFAULT_RULE_DB,
-                    &anonymous_mac_index,
-                );
+                let mut result = airhound::filter::filter_ble(&input, &cfg, &anonymous_mac_index);
+                result.basis = "possibly_cached";
                 let observed_mac = address.map(|mac| {
                     let mut text = protocol::MacString::new();
                     protocol::format_mac(&mac, &mut text);
