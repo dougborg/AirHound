@@ -21,9 +21,10 @@ def legacy(payload=b'\x02\x01\x06', kind=0, address_type=1, rssi=211):
     return bytes([kind, address_type]) + bytes.fromhex('665544332211') + bytes([len(payload)]) + payload + bytes([rssi])
 
 
-def extended(payload=b'abc', status=0, address_type=0, sid=3):
+def extended(payload=b'abc', status=0, address_type=0, sid=3, tx_power=127,
+             rssi=127, primary_phy=3, secondary_phy=3):
     return ((status << 5).to_bytes(2, 'little') + bytes([address_type])
-            + bytes.fromhex('665544332211') + bytes([3, 3, sid, 127, 127])
+            + bytes.fromhex('665544332211') + bytes([primary_phy, secondary_phy, sid, tx_power, rssi])
             + bytes(2) + bytes([255]) + bytes(6) + bytes([len(payload)]) + payload)
 
 
@@ -51,6 +52,31 @@ class HciReplayTests(unittest.TestCase):
         self.assertIsNone(report['address'])
         self.assertEqual(report['address_type'], 'anonymous')
         self.assertIsNone(report['advertising_sid'])
+
+    def test_report_dbm_boundaries_match_hci_spec_for_each_field(self):
+        for field in ('tx_power', 'rssi'):
+            for raw, expected in ((129, -127), (255, -1), (0, 0), (20, 20), (127, None)):
+                with self.subTest(field=field, raw=raw):
+                    report = hci.parse_event(event([extended(**{field: raw})], True))[0]
+                    self.assertEqual(report[field], expected)
+            # +21 and +126 are outside the HCI report table, as is -128.
+            for raw in (21, 126, 128):
+                with self.subTest(field=field, raw=raw), self.assertRaises(hci.InvalidEvent):
+                    hci.parse_event(event([extended(**{field: raw})], True))
+        for raw in (21, 126, 128):
+            with self.subTest(legacy_rssi=raw), self.assertRaises(hci.InvalidEvent):
+                hci.parse_event(event([legacy(rssi=raw)]))
+
+    def test_extended_phy_codes_are_explicitly_unvalidated(self):
+        # Even reserved/future codes survive replay without being called valid.
+        for primary, secondary in ((3, 4), (0, 255), (255, 255)):
+            report = hci.parse_event(event([extended(primary_phy=primary,
+                                                    secondary_phy=secondary)], True))[0]
+            self.assertEqual(report['primary_phy_code'], primary)
+            self.assertEqual(report['secondary_phy_code'], secondary)
+            self.assertEqual(report['phy_interpretation'], 'unvalidated_raw_codes')
+        report = hci.parse_event(event([legacy()]))[0]
+        self.assertEqual(report['phy_interpretation'], 'legacy_1m')
 
     def test_malformed_event_is_atomic_and_never_emits_partial_reports(self):
         good = event([legacy(), legacy()])

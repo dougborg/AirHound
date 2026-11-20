@@ -18,7 +18,8 @@ class InvalidEvent(ValueError):
     pass
 
 
-def signal(value):
+def report_dbm(value):
+    """Core 6.2 Vol 4 Part E 7.7.65.13: both RSSI and TX_Power use -127..20."""
     if value == 127:
         return None
     result = value if value < 128 else value - 256
@@ -80,8 +81,9 @@ def parse_event(packet):
                       'scan_response': bool(event_type & 8),
                       'legacy_pdu': bool(event_type & 16),
                       'primary_phy_code': header[9], 'secondary_phy_code': header[10],
+                      'phy_interpretation': 'unvalidated_raw_codes',
                       'advertising_sid': None if sid == 255 else sid,
-                      'tx_power': signal(header[12]), 'rssi': signal(header[13]),
+                      'tx_power': report_dbm(header[12]), 'rssi': report_dbm(header[13]),
                       'periodic_interval_units': int.from_bytes(header[14:16], 'little'),
                       'controller_data_status': ('complete', 'more', 'truncated')[status]}
         else:
@@ -91,8 +93,9 @@ def parse_event(packet):
             report = {**identity(header[1], header[2:8], False),
                       'event_type': event_type, 'scan_response': event_type == 4,
                       'legacy_pdu': True, 'primary_phy_code': 1, 'secondary_phy_code': 0,
+                      'phy_interpretation': 'legacy_1m',
                       'advertising_sid': None, 'tx_power': None,
-                      'rssi': signal(data[pos]), 'controller_data_status': 'complete'}
+                      'rssi': report_dbm(data[pos]), 'controller_data_status': 'complete'}
             pos += 1
         reports.append({**report, 'report_kind': 'extended' if extended else 'legacy',
                         'data_hex': payload.hex(), 'data_bytes': len(payload),
