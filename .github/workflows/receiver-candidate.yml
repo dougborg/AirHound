@@ -1,0 +1,38 @@
+name: Receiver release candidate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'drivers/mt7610u/**'
+      - 'scripts/package-receiver.py'
+      - 'scripts/tests/test_package_receiver.py'
+      - '.github/workflows/receiver-candidate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.13'
+      - name: Test packaging checks
+        run: python3 -m unittest discover -s scripts/tests -p 'test_package_receiver.py'
+      - name: Build unsigned candidate from bundled source
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: python3 scripts/package-receiver.py --output-dir "${RUNNER_TEMP}/receiver-candidate"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: experimental-receiver-candidate-${{ runner.arch }}
+          path: ${{ runner.temp }}/receiver-candidate/
+          if-no-files-found: error
+          retention-days: 14

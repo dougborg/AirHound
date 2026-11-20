@@ -41,3 +41,7 @@ service-account*.json
 !/fuzz/corpus/frames/nan-capture
 !/fuzz/corpus/frames/beacon
 /coverage/
+
+# Python development caches
+__pycache__/
+*.pyc
