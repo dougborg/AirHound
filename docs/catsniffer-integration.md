@@ -1,6 +1,29 @@
 # CatSniffer 3.2: AirHound integration assessment
 
-Research date: 2026-11-20. Research only: no hardware validation or firmware changes. Tracking: [#180](https://github.com/dougborg/AirHound/issues/180). Repo context: AirHound README, detection-evidence.md, signature-research.md, and issues #42/#44 reviewed.
+Research and hardware validation date: 2026-11-20. USB identity, firmware migration and passive legacy BLE capture have now been validated on the connected board; AirHound ingestion remains unimplemented. Tracking: [#180](https://github.com/dougborg/AirHound/issues/180). Repo context: AirHound README, detection-evidence.md, signature-research.md, and issues #42/#44 reviewed.
+
+## Local hardware result
+
+The unplug/replug comparison identifies this unit as the generic
+`RaspberryPi Pico` USB device (`2e8a:00c0`), using the legacy single-port bridge.
+The original radio reported `TI Packet Sniffer ver.1.10.0`. Its complete 704 KiB
+flash was backed up and CRC-verified before installing official Sniffle 1.11.0
+`sniffle_cc1352p7_1M.hex`; the new image's flash CRC and Sniffle API version were
+verified. The RP2040 bridge was not reflashed. The working serial baud is 921600.
+Private backups and captures remain local.
+
+Three passive 15-second captures on advertising channels 37, 38 and 39 yielded
+1,793, 1,185 and 953 packets respectively (3,931 total), with zero decode
+exceptions. All observed packets used 1M PHY. Counts include scan requests and
+responses transmitted by other devices; our receiver used passive scan mode
+with connection following disabled. Address counts overlap between channels
+and are not counts of unique physical devices.
+
+This establishes basic BLE RF reception, not simultaneous three-channel
+coverage, extended/Coded-PHY reception, loss-free operation or endurance.
+AirHound's DLT 256 capture importer and live backend are still pending under
+[#180](https://github.com/dougborg/AirHound/issues/180). The USB firmware descriptor
+does not independently verify the PCB's exact 3.2 revision.
 
 ## Recommendation
 

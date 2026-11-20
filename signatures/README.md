@@ -1,5 +1,7 @@
 # Signature packs, research and admission
 
+[Project home](../README.md) · [Documentation index](../docs/README.md) · [Contribution workflow](../CONTRIBUTING.md#adding-device-signatures)
+
 The production source of truth is [builtin.v2.json](builtin.v2.json). Its compiler
 generates the shared Rust tables and CI rejects drift. See [pack authoring and
 revision rules](../docs/signature-packs.md). The initial compiled profile preserves

@@ -1,5 +1,7 @@
 # MT7610U userspace receiver experiment
 
+[Project home](../../README.md) · [Receiver overview](../README.md) · [Test procedure](TESTING.md)
+
 A standalone Rust/libusb driver for passive Wi-Fi reception with USB
 `0e8d:7610` (MediaTek MT7610U). It runs directly on macOS without a kernel
 extension or a replacement system network driver. It is an independent Cargo
