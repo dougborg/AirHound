@@ -263,7 +263,99 @@
       }
     },
     "detection": {
-      "$ref": "device-message.v1.schema.json#/$defs/detection_evidence"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "policy",
+        "pack",
+        "ruleset",
+        "sig",
+        "rules",
+        "more",
+        "basis",
+        "alert"
+      ],
+      "properties": {
+        "engine": {
+          "const": "evidence-1"
+        },
+        "policy": {
+          "enum": [
+            "rules_and_watchlist",
+            "watchlist_only",
+            "all_matches",
+            "silent"
+          ]
+        },
+        "pack": {
+          "type": "string"
+        },
+        "ruleset": {
+          "type": "string"
+        },
+        "sig": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "rules": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "sig",
+              "more"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "sig": {
+                "type": "array",
+                "maxItems": 4,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "more": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "more": {
+          "type": "boolean"
+        },
+        "basis": {
+          "enum": [
+            "observed_fields",
+            "possibly_cached"
+          ]
+        },
+        "alert": {
+          "enum": [
+            "none",
+            "suppressed",
+            "watchlist",
+            "rule",
+            "match"
+          ]
+        }
+      }
     }
   }
 }
