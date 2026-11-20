@@ -30,7 +30,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         run: python3 scripts/package-receiver.py --output-dir "${RUNNER_TEMP}/receiver-candidate"
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: experimental-receiver-candidate-${{ runner.arch }}
           path: ${{ runner.temp }}/receiver-candidate/
