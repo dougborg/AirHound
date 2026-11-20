@@ -1,0 +1,246 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v1.schema.json",
+  "version": 1,
+  "signatures": [
+    {
+      "id": "meta-company",
+      "type": "ble_manufacturer_id",
+      "company_id": 427,
+      "description": "Meta Platforms company identifier; not a product identifier."
+    },
+    {
+      "id": "meta-technologies-company",
+      "type": "ble_manufacturer_id",
+      "company_id": 1422,
+      "description": "Meta Platforms Technologies company identifier; not a product identifier."
+    },
+    {
+      "id": "luxottica-company",
+      "type": "ble_manufacturer_id",
+      "company_id": 3411,
+      "description": "Luxottica company identifier; not a product identifier."
+    },
+    {
+      "id": "snap-company",
+      "type": "ble_manufacturer_id",
+      "company_id": 962,
+      "description": "Snapchat company identifier; not a product identifier."
+    },
+    {
+      "id": "taser-company",
+      "type": "ble_manufacturer_id",
+      "company_id": 845,
+      "description": "TASER International company identifier; not a product identifier."
+    },
+    {
+      "id": "rayban-name",
+      "type": "ble_name",
+      "match": "regex",
+      "value": "^Ray[ -]?Ban([ _-].*)?$",
+      "case_sensitive": false,
+      "description": "Ray-Ban name heuristic; user-editable, spoofable, and not guaranteed to be advertised."
+    },
+    {
+      "id": "oakley-meta-name",
+      "type": "ble_name",
+      "match": "regex",
+      "value": "^Oakley[ _-]Meta([ _-].*)?$",
+      "case_sensitive": false,
+      "description": "Oakley Meta name heuristic; user-editable, spoofable, and not guaranteed to be advertised."
+    },
+    {
+      "id": "spectacles-name",
+      "type": "ble_name",
+      "match": "regex",
+      "value": "^Spectacles([ _-].*)?$",
+      "case_sensitive": false,
+      "description": "Spectacles name heuristic; user-editable, spoofable, and not guaranteed to be advertised."
+    },
+    {
+      "id": "heycyan-name",
+      "type": "ble_name",
+      "match": "regex",
+      "value": "^HeyCyan([ _-].*)?$",
+      "case_sensitive": false,
+      "description": "HeyCyan name heuristic; user-editable, spoofable, and not guaranteed to be advertised."
+    },
+    {
+      "id": "axon-fc81",
+      "type": "ble_service_uuid",
+      "uuid": "fc81",
+      "description": "Axon assigned service; ecosystem evidence only when advertised, not model or ownership."
+    },
+    {
+      "id": "taser-fe6b",
+      "type": "ble_service_uuid",
+      "uuid": "fe6b",
+      "description": "TASER assigned service; ecosystem evidence only when advertised, not model or ownership."
+    },
+    {
+      "id": "taser-fe6c",
+      "type": "ble_service_uuid",
+      "uuid": "fe6c",
+      "description": "TASER assigned service; ecosystem evidence only when advertised, not model or ownership."
+    },
+    {
+      "id": "tile-feed",
+      "type": "ble_service_uuid",
+      "uuid": "feed",
+      "description": "Tile assigned service; ecosystem evidence only when advertised, not model or ownership."
+    },
+    {
+      "id": "tile-feec",
+      "type": "ble_service_uuid",
+      "uuid": "feec",
+      "description": "Tile assigned service; ecosystem evidence only when advertised, not model or ownership."
+    },
+    {
+      "id": "heycyan-service",
+      "type": "ble_service_uuid",
+      "uuid": "7905fff0-b5ce-4e99-a40f-4b1e122d00d0",
+      "description": "Reported HeyCyan primary service; SDK presence does not establish passive advertisement visibility."
+    },
+    {
+      "id": "meshtastic-service",
+      "type": "ble_service_uuid",
+      "uuid": "6ba1b218-15a8-461f-9fa8-5dcae273eafd",
+      "description": "Meshtastic client API service, if advertised; does not decode or imply active LoRa traffic."
+    }
+  ],
+  "rules": [
+    {
+      "id": "meta-glasses-candidate",
+      "name": "Possible Meta-family glasses",
+      "description": "Brand-name and vendor clues in the same observation. Does not establish model, recording, or wearer. Shared Meta company IDs alone do not match.",
+      "tags": [
+        "research",
+        "glasses"
+      ],
+      "detect": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "sig": "meta-company"
+              },
+              {
+                "sig": "meta-technologies-company"
+              },
+              {
+                "sig": "luxottica-company"
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "sig": "rayban-name"
+              },
+              {
+                "sig": "oakley-meta-name"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "snap-glasses-candidate",
+      "name": "Possible Snap Spectacles",
+      "description": "Name plus vendor clues; not proof of recording.",
+      "tags": [
+        "research",
+        "glasses"
+      ],
+      "detect": {
+        "allOf": [
+          {
+            "sig": "snap-company"
+          },
+          {
+            "sig": "spectacles-name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "heycyan-glasses-candidate",
+      "name": "Possible HeyCyan-family device",
+      "description": "Complete custom UUID plus name. Passive visibility and hardware specificity need validation.",
+      "tags": [
+        "research",
+        "glasses"
+      ],
+      "detect": {
+        "allOf": [
+          {
+            "sig": "heycyan-service"
+          },
+          {
+            "sig": "heycyan-name"
+          }
+        ]
+      }
+    },
+    {
+      "id": "axon-equipment-candidate",
+      "name": "Axon/TASER ecosystem candidate",
+      "description": "Company plus assigned service in one observation. Not proof of a body camera, law-enforcement ownership, or recording.",
+      "tags": [
+        "research",
+        "equipment"
+      ],
+      "detect": {
+        "allOf": [
+          {
+            "sig": "taser-company"
+          },
+          {
+            "anyOf": [
+              {
+                "sig": "axon-fc81"
+              },
+              {
+                "sig": "taser-fe6b"
+              },
+              {
+                "sig": "taser-fe6c"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tile-service-candidate",
+      "name": "Tile service candidate",
+      "description": "Assigned Tile service only; does not establish tracker model, following, or unwanted tracking.",
+      "tags": [
+        "research",
+        "tracker"
+      ],
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "tile-feed"
+          },
+          {
+            "sig": "tile-feec"
+          }
+        ]
+      }
+    },
+    {
+      "id": "meshtastic-service-candidate",
+      "name": "Meshtastic interface candidate",
+      "description": "Full advertised API UUID. No LoRa interception, network identity, or activity inference.",
+      "tags": [
+        "research",
+        "mesh"
+      ],
+      "detect": {
+        "sig": "meshtastic-service"
+      }
+    }
+  ]
+}

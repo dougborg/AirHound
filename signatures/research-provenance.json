@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-11-20",
+  "pack": "schemas/examples/research-devices.sigs.json",
+  "default_enabled": false,
+  "scope": "Offline research candidates; not loaded by AirHound firmware/hostd. Synthetic fixtures are not field validation.",
+  "authorship": "Original AirHound rule composition, descriptions and fixtures under the repository MIT license; referenced upstream works retain their own licenses.",
+  "sources": {
+    "bluetooth-companies": {
+      "url": "https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/company_identifiers/company_identifiers.yaml",
+      "kind": "primary_registry",
+      "reuse": "Selected factual assignments only; registry text/data collection not vendored.",
+      "retrieved_sha256": "3f80f99505cd8cf09ef027fab350a0e002dd391cdc578322222dd9b671be91dc"
+    },
+    "bluetooth-services": {
+      "url": "https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/uuids/member_uuids.yaml",
+      "kind": "primary_registry",
+      "reuse": "Selected factual assignments only; registry text/data collection not vendored.",
+      "retrieved_sha256": "c43c4eba913299b0c982b8436574cfbd6da39eabff7f1734be021f8c44de6ba4"
+    },
+    "nearby-glasses": {
+      "url": "https://github.com/yjeanrenaud/yj_nearbyglasses/blob/main/README.md",
+      "blob_sha": "8f393067348d0f214b17bf639b969c70fe9c173d",
+      "kind": "detector_research",
+      "license": "AGPL-3.0",
+      "reuse": "Research lead only; no source code or dataset copied. AirHound-authored conservative name patterns."
+    },
+    "heycyan-sdk": {
+      "url": "https://github.com/ebowwa/HeyCyanSmartGlassesSDK#ble-service--characteristic-uuids-found-in-binary",
+      "kind": "sdk_research",
+      "license": "not_verified",
+      "reuse": "One factual UUID and source link; no SDK binaries, code or documentation copied."
+    },
+    "meshtastic-api": {
+      "url": "https://meshtastic.org/docs/development/device/client-api/#bluetooth-meshbluetoothservice",
+      "kind": "primary_protocol",
+      "reuse": "One protocol UUID, independently authored description; no upstream implementation copied."
+    }
+  },
+  "signatures": {
+    "meta-company": {
+      "sources": [
+        "bluetooth-companies"
+      ],
+      "scope": "Meta Platforms company identifier; not a product identifier.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "meta-technologies-company": {
+      "sources": [
+        "bluetooth-companies"
+      ],
+      "scope": "Meta Platforms Technologies company identifier; not a product identifier.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "luxottica-company": {
+      "sources": [
+        "bluetooth-companies"
+      ],
+      "scope": "Luxottica company identifier; not a product identifier.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "snap-company": {
+      "sources": [
+        "bluetooth-companies"
+      ],
+      "scope": "Snapchat company identifier; not a product identifier.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "taser-company": {
+      "sources": [
+        "bluetooth-companies"
+      ],
+      "scope": "TASER International company identifier; not a product identifier.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "rayban-name": {
+      "sources": [
+        "nearby-glasses"
+      ],
+      "scope": "Ray-Ban name heuristic; user-editable, spoofable, and not guaranteed to be advertised.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "oakley-meta-name": {
+      "sources": [
+        "nearby-glasses"
+      ],
+      "scope": "Oakley Meta name heuristic; user-editable, spoofable, and not guaranteed to be advertised.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "spectacles-name": {
+      "sources": [
+        "nearby-glasses"
+      ],
+      "scope": "Spectacles name heuristic; user-editable, spoofable, and not guaranteed to be advertised.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "heycyan-name": {
+      "sources": [
+        "nearby-glasses"
+      ],
+      "scope": "HeyCyan name heuristic; user-editable, spoofable, and not guaranteed to be advertised.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "axon-fc81": {
+      "sources": [
+        "bluetooth-services"
+      ],
+      "scope": "Axon assigned service; ecosystem evidence only when advertised, not model or ownership.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "taser-fe6b": {
+      "sources": [
+        "bluetooth-services"
+      ],
+      "scope": "TASER assigned service; ecosystem evidence only when advertised, not model or ownership.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "taser-fe6c": {
+      "sources": [
+        "bluetooth-services"
+      ],
+      "scope": "TASER assigned service; ecosystem evidence only when advertised, not model or ownership.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "tile-feed": {
+      "sources": [
+        "bluetooth-services"
+      ],
+      "scope": "Tile assigned service; ecosystem evidence only when advertised, not model or ownership.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "tile-feec": {
+      "sources": [
+        "bluetooth-services"
+      ],
+      "scope": "Tile assigned service; ecosystem evidence only when advertised, not model or ownership.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "heycyan-service": {
+      "sources": [
+        "heycyan-sdk"
+      ],
+      "scope": "Reported HeyCyan primary service; SDK presence does not establish passive advertisement visibility.",
+      "status": "research_candidate",
+      "field_validated": false
+    },
+    "meshtastic-service": {
+      "sources": [
+        "meshtastic-api"
+      ],
+      "scope": "Meshtastic client API service, if advertised; does not decode or imply active LoRa traffic.",
+      "status": "research_candidate",
+      "field_validated": false
+    }
+  }
+}
