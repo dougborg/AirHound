@@ -124,6 +124,7 @@ impl<'a, D: DrawTarget<Color = Rgb565>> Screen<'a, D> {
     ) {
         self.buf.clear();
         let _ = core::fmt::write(&mut self.buf, title_args);
+        self.pad();
         self.emit(FG, HEADER_BG, 0);
 
         let x = W - indicator.len() as i32 * 6 - 2;
@@ -206,36 +207,64 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         if scanning { Rgb565::GREEN } else { Rgb565::RED },
     );
 
+    let details = crate::UI_DETAILS.load(Ordering::Relaxed);
     let counts = crate::memory::counts();
-    row!(
-        s,
-        DIM,
-        " Addresses since boot{}",
-        if counts.limited { " (limit)" } else { "" }
-    );
-    row!(
-        s,
-        FG,
-        " APs: {}  Other WiFi: {}",
-        counts.aps,
-        counts.wifi_other
-    );
-    row!(s, FG, " BLE devices: {}", counts.ble);
-    row!(
-        s,
-        ACCENT,
-        " Signature hits: WiFi {}  BLE {}",
-        counts.wifi_hits,
-        counts.ble_hits
-    );
-
-    let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
-    if !last.is_empty() {
-        row!(s, Rgb565::GREEN, " Last: {}", last);
+    if details {
+        row!(s, FG, " DEVICE DETAILS");
+        row!(
+            s,
+            FG,
+            " Internal RAM free: {} bytes",
+            crate::memory::internal_free()
+        );
+        row!(
+            s,
+            FG,
+            " PSRAM free: {} bytes",
+            crate::memory::external_free()
+        );
+        row!(
+            s,
+            FG,
+            " WiFi packets: {}",
+            crate::WIFI_RX_COUNT.load(Ordering::Relaxed)
+        );
+        row!(
+            s,
+            FG,
+            " WiFi queue drops: {}",
+            crate::WIFI_QUEUE_DROPS.load(Ordering::Relaxed)
+        );
     } else {
-        row!(s, DIM, " Last: ---");
-    }
+        row!(
+            s,
+            DIM,
+            " Addresses since boot{}",
+            if counts.limited { " (limit)" } else { "" }
+        );
+        row!(
+            s,
+            FG,
+            " APs: {}  Other WiFi: {}",
+            counts.aps,
+            counts.wifi_other
+        );
+        row!(s, FG, " BLE devices: {}", counts.ble);
+        row!(
+            s,
+            ACCENT,
+            " Signature hits: WiFi {}  BLE {}",
+            counts.wifi_hits,
+            counts.ble_hits
+        );
 
+        let last = critical_section::with(|cs| crate::LAST_MATCH.borrow(cs).borrow().clone());
+        if !last.is_empty() {
+            row!(s, Rgb565::GREEN, " Last: {}", last);
+        } else {
+            row!(s, DIM, " Last: ---");
+        }
+    }
     s.divider();
 
     let clients = crate::BLE_CLIENTS.load(Ordering::Relaxed);
@@ -251,18 +280,26 @@ fn draw_status(display: &mut impl DrawTarget<Color = Rgb565>) {
         up % 60
     );
 
-    let buzzer = if crate::BUZZER_ENABLED.load(Ordering::Relaxed) {
-        "ON"
-    } else {
-        "OFF"
-    };
     row!(
         s,
-        DIM,
-        " Free RAM: {}K + PSRAM {}K  Bz:{}",
-        crate::memory::internal_free() / 1024,
-        crate::memory::external_free() / 1024,
-        buzzer
+        FG,
+        " Sound: {}",
+        if crate::BUZZER_ENABLED.load(Ordering::Relaxed) {
+            "ON"
+        } else {
+            "MUTED"
+        }
+    );
+    row!(
+        s,
+        FG,
+        " A: {}  B: {}",
+        if details { "Overview" } else { "Details" },
+        if crate::BUZZER_ENABLED.load(Ordering::Relaxed) {
+            "Mute"
+        } else {
+            "Sound on"
+        }
     );
 }
 
