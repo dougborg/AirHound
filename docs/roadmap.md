@@ -152,8 +152,9 @@ Every open implementation/research issue at this grooming snapshot appears once 
 
 - #162: M5Stick WiFi startup, observation counts, PSRAM and stack-budget guard; final combined-tree validation running.
 - #150/#151 are merged; live/production acceptance remains #159/#155–#157.
-- #149: btleplug update rebased locally; default/public-only host tests and strict Clippy pass. Live and final remote checks remain before merge.
+- #149: btleplug update rebased locally; default/public-only host tests and strict Clippy pass. A 45-second live run acknowledged commands but captured zero observations and cancelled a stalled scanner at shutdown (#159); final remote checks remain.
 - #161: grouped dependency update (supersedes #148); rebase and test.
+- #163: receiver SHA-2 dependency update; candidate workflow failure needs review before merge.
 - #136–#140: release/upload/checkout/install/simulator Actions updates; review compatibility and final workflows.
 - #123: release automation PR; gated by evidence, assets and the documented support matrix.
 
