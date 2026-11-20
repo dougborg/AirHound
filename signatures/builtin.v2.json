@@ -1,0 +1,2779 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v2.schema.json",
+  "version": 2,
+  "profile": "airhound-compiled-v1",
+  "pack_id": "builtin-2",
+  "ruleset_id": "builtin-rules-2",
+  "engine": "evidence-1",
+  "sources": {
+    "airhound-migration": {
+      "url": "https://github.com/dougborg/AirHound/blob/d4cb2540ee1c6c5f0b4a878fa6c7349151f5e0d2/src/defaults.rs",
+      "revision": "d4cb2540ee1c6c5f0b4a878fa6c7349151f5e0d2",
+      "reuse": "Existing AirHound data migration; upstream per-entry provenance/license audit remains open.",
+      "verification": "migration_only"
+    }
+  },
+  "signatures": [
+    {
+      "id": "oui-b41e52",
+      "index": 0,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B4:1E:52",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Flock Safety"
+    },
+    {
+      "id": "oui-588e81",
+      "index": 1,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "58:8E:81",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-cccccc",
+      "index": 2,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "CC:CC:CC",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-ec1bbd",
+      "index": 3,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "EC:1B:BD",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-9035ea",
+      "index": 4,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "90:35:EA",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-040d84",
+      "index": 5,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "04:0D:84",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-f082c0",
+      "index": 6,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "F0:82:C0",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-1c34f1",
+      "index": 7,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "1C:34:F1",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-385b44",
+      "index": 8,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "38:5B:44",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-943469",
+      "index": 9,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "94:34:69",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-b4e3f9",
+      "index": 10,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B4:E3:F9",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-70c94e",
+      "index": 11,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "70:C9:4E",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-3c9180",
+      "index": 12,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "3C:91:80",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-d8f3bc",
+      "index": 13,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "D8:F3:BC",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-803049",
+      "index": 14,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "80:30:49",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-145afc",
+      "index": 15,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "14:5A:FC",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-744ca1",
+      "index": 16,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "74:4C:A1",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-083a88",
+      "index": 17,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "08:3A:88",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-9c2f9d",
+      "index": 18,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "9C:2F:9D",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-940853",
+      "index": 19,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "94:08:53",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-e4aaea",
+      "index": 20,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E4:AA:EA",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Silicon Labs"
+    },
+    {
+      "id": "oui-701ad5",
+      "index": 21,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "70:1A:D5",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Avigilon Alta"
+    },
+    {
+      "id": "oui-00408c",
+      "index": 22,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:40:8C",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Axis Communications"
+    },
+    {
+      "id": "oui-accc8e",
+      "index": 23,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "AC:CC:8E",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Axis Communications"
+    },
+    {
+      "id": "oui-b8a44f",
+      "index": 24,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B8:A4:4F",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Axis Communications"
+    },
+    {
+      "id": "oui-e82725",
+      "index": 25,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E8:27:25",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Axis Communications"
+    },
+    {
+      "id": "oui-1c792d",
+      "index": 26,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "1C:79:2D",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-3c3bad",
+      "index": 27,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "3C:3B:AD",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-409ca7",
+      "index": 28,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "40:9C:A7",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-54aebc",
+      "index": 29,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "54:AE:BC",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-5c8aae",
+      "index": 30,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "5C:8A:AE",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-6c05d3",
+      "index": 31,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "6C:05:D3",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a46b40",
+      "index": 32,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A4:6B:40",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a84fa4",
+      "index": 33,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A8:4F:A4",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a8a092",
+      "index": 34,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A8:A0:92",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-b0ac82",
+      "index": 35,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B0:AC:82",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-bc2b02",
+      "index": 36,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "BC:2B:02",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-c0e350",
+      "index": 37,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C0:E3:50",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-c826e2",
+      "index": 38,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C8:26:E2",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-c88ad8",
+      "index": 39,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C8:8A:D8",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-007e56",
+      "index": 40,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:7E:56",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-043926",
+      "index": 41,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "04:39:26",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-24b72a",
+      "index": 42,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "24:B7:2A",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-3c7aaa",
+      "index": 43,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "3C:7A:AA",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-40aa56",
+      "index": 44,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "40:AA:56",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-44efbf",
+      "index": 45,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "44:EF:BF",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-788a86",
+      "index": 46,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "78:8A:86",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-94e0d6",
+      "index": 47,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "94:E0:D6",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a06720",
+      "index": 48,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A0:67:20",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a09dc1",
+      "index": 49,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A0:9D:C1",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-a843a4",
+      "index": 50,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A8:43:A4",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-d0a46f",
+      "index": 51,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "D0:A4:6F",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-e051d8",
+      "index": 52,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E0:51:D8",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-e07526",
+      "index": 53,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E0:75:26",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "China Dragon Technology"
+    },
+    {
+      "id": "oui-001356",
+      "index": 54,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:13:56",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "FLIR Radiation"
+    },
+    {
+      "id": "oui-00407f",
+      "index": 55,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:40:7F",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "FLIR Systems"
+    },
+    {
+      "id": "oui-001bd8",
+      "index": 56,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:1B:D8",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "FLIR Systems"
+    },
+    {
+      "id": "oui-0013e2",
+      "index": 57,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:13:E2",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "GeoVision"
+    },
+    {
+      "id": "oui-44b423",
+      "index": 58,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "44:B4:23",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Hanwha Vision"
+    },
+    {
+      "id": "oui-8c1d55",
+      "index": 59,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "8C:1D:55",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Hanwha Vision"
+    },
+    {
+      "id": "oui-e43022",
+      "index": 60,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E4:30:22",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Hanwha Vision"
+    },
+    {
+      "id": "oui-0010be",
+      "index": 61,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:10:BE",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "March Networks"
+    },
+    {
+      "id": "oui-001281",
+      "index": 62,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:12:81",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "March Networks"
+    },
+    {
+      "id": "oui-480560",
+      "index": 63,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "48:05:60",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-509903",
+      "index": 64,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "50:99:03",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-78c4fa",
+      "index": 65,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "78:C4:FA",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-80f3ef",
+      "index": 66,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "80:F3:EF",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-8457f7",
+      "index": 67,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "84:57:F7",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-882508",
+      "index": 68,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "88:25:08",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-94f929",
+      "index": 69,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "94:F9:29",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-b417a8",
+      "index": 70,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B4:17:A8",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-c0dd8a",
+      "index": 71,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C0:DD:8A",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-cca174",
+      "index": 72,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "CC:A1:74",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-d0b3c2",
+      "index": 73,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "D0:B3:C2",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-d4d659",
+      "index": 74,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "D4:D6:59",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Meta Platforms"
+    },
+    {
+      "id": "oui-0003c5",
+      "index": 75,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:03:C5",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Mobotix"
+    },
+    {
+      "id": "oui-08ea40",
+      "index": 76,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "08:EA:40",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-0c8c24",
+      "index": 77,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "0C:8C:24",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-0ccf89",
+      "index": 78,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "0C:CF:89",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-10a4be",
+      "index": 79,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "10:A4:BE",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-145d34",
+      "index": 80,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "14:5D:34",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-146b9c",
+      "index": 81,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "14:6B:9C",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-203233",
+      "index": 82,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "20:32:33",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-2cc3e6",
+      "index": 83,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "2C:C3:E6",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-307bc9",
+      "index": 84,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "30:7B:C9",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-347de4",
+      "index": 85,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "34:7D:E4",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-380146",
+      "index": 86,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "38:01:46",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-387acc",
+      "index": 87,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "38:7A:CC",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-4401bb",
+      "index": 88,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "44:01:BB",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-54ef33",
+      "index": 89,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "54:EF:33",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-60fb00",
+      "index": 90,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "60:FB:00",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-6cd552",
+      "index": 91,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "6C:D5:52",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-74ee2a",
+      "index": 92,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "74:EE:2A",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-782288",
+      "index": 93,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "78:22:88",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-7ca7b0",
+      "index": 94,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "7C:A7:B0",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-84fc14",
+      "index": 95,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "84:FC:14",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-88492d",
+      "index": 96,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "88:49:2D",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-94ba06",
+      "index": 97,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "94:BA:06",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-9803cf",
+      "index": 98,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "98:03:CF",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-a09f10",
+      "index": 99,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A0:9F:10",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-a8b58e",
+      "index": 100,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "A8:B5:8E",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-b46dc2",
+      "index": 101,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "B4:6D:C2",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-c43cb0",
+      "index": 102,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C4:3C:B0",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-c8fe0f",
+      "index": 103,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "C8:FE:0F",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-cc641a",
+      "index": 104,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "CC:64:1A",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-e0b94d",
+      "index": 105,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "E0:B9:4D",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-ec3dfd",
+      "index": 106,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "EC:3D:FD",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-f0c814",
+      "index": 107,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "F0:C8:14",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-fc23cd",
+      "index": 108,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "FC:23:CD",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-20f41b",
+      "index": 109,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "20:F4:1B",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-28f366",
+      "index": 110,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "28:F3:66",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-3c3300",
+      "index": 111,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "3C:33:00",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-44334c",
+      "index": 112,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "44:33:4C",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-aca213",
+      "index": 113,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "AC:A2:13",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Shenzhen Bilian"
+    },
+    {
+      "id": "oui-001c27",
+      "index": 114,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "00:1C:27",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Sunell Electronics"
+    },
+    {
+      "id": "oui-deadbe",
+      "index": 115,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "DE:AD:BE",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Locally administered prefix"
+    },
+    {
+      "id": "oui-903ae6",
+      "index": 116,
+      "enabled": true,
+      "match": {
+        "kind": "mac_oui",
+        "oui": "90:3A:E6",
+        "address_scope": "wifi_universal_or_ble_public"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Unverified address prefix"
+    },
+    {
+      "id": "ssid-pattern-flock",
+      "index": 117,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_pattern",
+        "prefix": "Flock-",
+        "suffix_length": 6,
+        "suffix_kind": "hex"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Flock-like SSID pattern"
+    },
+    {
+      "id": "ssid-pattern-penguin",
+      "index": 118,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_pattern",
+        "prefix": "Penguin-",
+        "suffix_length": 10,
+        "suffix_kind": "decimal"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Penguin device WiFi"
+    },
+    {
+      "id": "wifi-ssid-exact-fs-ext-battery",
+      "index": 119,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_exact",
+        "value": "FS Ext Battery"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "wifi-ssid-contains-flock",
+      "index": 120,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_contains",
+        "value": "flock"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "wifi-ssid-contains-penguin",
+      "index": 121,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_contains",
+        "value": "penguin"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "wifi-ssid-contains-pigvision",
+      "index": 122,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_ssid_contains",
+        "value": "pigvision"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "wifi-name-contains-flock",
+      "index": 123,
+      "enabled": true,
+      "match": {
+        "kind": "wifi_name_contains",
+        "value": "flock"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-flock",
+      "index": 124,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "flock"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-penguin",
+      "index": 125,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "penguin"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-fs-ext-battery",
+      "index": 126,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "fs ext battery"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-pigvision",
+      "index": 127,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "pigvision"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-hc-03",
+      "index": 128,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "hc-03"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-hc-05",
+      "index": 129,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "hc-05"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-name-contains-hc-06",
+      "index": 130,
+      "enabled": true,
+      "match": {
+        "kind": "ble_name_contains",
+        "value": "hc-06"
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-3100",
+      "index": 131,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 12544
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-3200",
+      "index": 132,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 12800
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-3300",
+      "index": 133,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 13056
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-3400",
+      "index": 134,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 13312
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-3500",
+      "index": 135,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 13568
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-service-uuid16-fffa",
+      "index": 136,
+      "enabled": true,
+      "match": {
+        "kind": "ble_service_uuid16",
+        "value": 65530
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-standard-uuid16-180a",
+      "index": 137,
+      "enabled": true,
+      "match": {
+        "kind": "ble_standard_uuid16",
+        "value": 6154
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-standard-uuid16-1809",
+      "index": 138,
+      "enabled": true,
+      "match": {
+        "kind": "ble_standard_uuid16",
+        "value": 6153
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-standard-uuid16-1819",
+      "index": 139,
+      "enabled": true,
+      "match": {
+        "kind": "ble_standard_uuid16",
+        "value": 6169
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "ble-manufacturer-id-09c8",
+      "index": 140,
+      "enabled": true,
+      "match": {
+        "kind": "ble_manufacturer_id",
+        "value": 2504
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      }
+    },
+    {
+      "id": "find-my-framing",
+      "index": 141,
+      "enabled": true,
+      "match": {
+        "kind": "ble_manufacturer_data",
+        "company_id": 76,
+        "offset": 0,
+        "bytes": [
+          18,
+          25
+        ],
+        "exact_length": 27
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Find My framing candidate"
+    },
+    {
+      "id": "inactive-raw-128",
+      "index": 142,
+      "enabled": false,
+      "match": {
+        "kind": "legacy_ble_ad_bytes",
+        "bytes": [
+          128,
+          48
+        ]
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Unverified byte pattern"
+    },
+    {
+      "id": "inactive-raw-129",
+      "index": 143,
+      "enabled": false,
+      "match": {
+        "kind": "legacy_ble_ad_bytes",
+        "bytes": [
+          129,
+          48
+        ]
+      },
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Migrated behavior; not independently validated product identity."
+      },
+      "label": "Unverified byte pattern"
+    }
+  ],
+  "rules": [
+    {
+      "id": "flock-like",
+      "index": 0,
+      "name": "Flock-like candidate",
+      "detect": {
+        "anyOf": [
+          {
+            "allOf": [
+              {
+                "sig": "oui-b41e52"
+              },
+              {
+                "sig": "ssid-pattern-flock"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "sig": "oui-b41e52"
+              },
+              {
+                "sig": "wifi-ssid-exact-fs-ext-battery"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "sig": "ble-manufacturer-id-09c8"
+              },
+              {
+                "sig": "ble-name-contains-flock"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "sig": "ble-manufacturer-id-09c8"
+              },
+              {
+                "sig": "ble-name-contains-fs-ext-battery"
+              }
+            ]
+          }
+        ]
+      },
+      "category": "surveillance",
+      "enabled": true,
+      "alert": true,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "raven-uuid",
+      "index": 1,
+      "name": "Raven UUID candidate",
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "ble-service-uuid16-3100"
+          },
+          {
+            "sig": "ble-service-uuid16-3200"
+          },
+          {
+            "sig": "ble-service-uuid16-3300"
+          },
+          {
+            "sig": "ble-service-uuid16-3400"
+          },
+          {
+            "sig": "ble-service-uuid16-3500"
+          }
+        ]
+      },
+      "category": "surveillance",
+      "enabled": true,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "find-my",
+      "index": 2,
+      "name": "Find My framing candidate",
+      "detect": {
+        "sig": "find-my-framing"
+      },
+      "category": "surveillance",
+      "enabled": true,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "inactive-raw",
+      "index": 3,
+      "name": "Unverified byte pattern",
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "inactive-raw-128"
+          },
+          {
+            "sig": "inactive-raw-129"
+          }
+        ]
+      },
+      "category": "surveillance",
+      "enabled": false,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "hc-module",
+      "index": 4,
+      "name": "HC-series module",
+      "detect": {
+        "anyOf": [
+          {
+            "sig": "ble-name-contains-hc-03"
+          },
+          {
+            "sig": "ble-name-contains-hc-05"
+          },
+          {
+            "sig": "ble-name-contains-hc-06"
+          }
+        ]
+      },
+      "category": "network",
+      "enabled": true,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "inactive-address",
+      "index": 5,
+      "name": "Address-prefix candidate",
+      "detect": {
+        "sig": "oui-deadbe"
+      },
+      "category": "network",
+      "enabled": false,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    },
+    {
+      "id": "remote-id-service",
+      "index": 6,
+      "name": "Remote ID service candidate",
+      "detect": {
+        "sig": "ble-service-uuid16-fffa"
+      },
+      "category": "drone",
+      "enabled": true,
+      "alert": false,
+      "review": {
+        "status": "legacy_unvalidated",
+        "sources": [
+          "airhound-migration"
+        ],
+        "limitations": "Heuristic candidate; no calibrated confidence or verified product identity."
+      }
+    }
+  ]
+}

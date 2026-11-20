@@ -1,0 +1,540 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/signatures.v2.schema.json",
+  "title": "AirHound signature pack v2, compiled profile",
+  "description": "Canonical compiled profile. Explicit predicate context, stable pack-scoped indices, rule enable/alert policy and review provenance. Not a runtime loader; unsupported predicates (including absence, regex, arbitrary UUIDs or masked payloads) are rejected rather than approximated.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "version": {
+      "const": 2
+    },
+    "profile": {
+      "const": "airhound-compiled-v1"
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "maxLength": 64
+    },
+    "ruleset_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "maxLength": 64
+    },
+    "engine": {
+      "const": "evidence-1"
+    },
+    "sources": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+        "maxLength": 64
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "reuse": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "verification": {
+            "enum": [
+              "migration_only",
+              "primary_specification",
+              "device_capture"
+            ]
+          }
+        },
+        "required": [
+          "url",
+          "revision",
+          "reuse",
+          "verification"
+        ]
+      }
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+            "maxLength": 64
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "match": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "mac_oui"
+                  },
+                  "oui": {
+                    "type": "string",
+                    "pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){2}$"
+                  },
+                  "address_scope": {
+                    "const": "wifi_universal_or_ble_public"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "oui",
+                  "address_scope"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "wifi_ssid_pattern"
+                  },
+                  "prefix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  },
+                  "suffix_length": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  },
+                  "suffix_kind": {
+                    "enum": [
+                      "hex",
+                      "decimal"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "prefix",
+                  "suffix_length",
+                  "suffix_kind"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "wifi_ssid_exact"
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "wifi_ssid_contains"
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "wifi_name_contains"
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ble_name_contains"
+                  },
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ble_service_uuid16"
+                  },
+                  "value": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ble_standard_uuid16"
+                  },
+                  "value": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ble_manufacturer_id"
+                  },
+                  "value": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  }
+                },
+                "required": [
+                  "kind",
+                  "value"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "ble_manufacturer_data"
+                  },
+                  "company_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "offset": {
+                    "const": 0
+                  },
+                  "bytes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 60,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  },
+                  "exact_length": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 60
+                  }
+                },
+                "required": [
+                  "kind",
+                  "company_id",
+                  "offset",
+                  "bytes",
+                  "exact_length"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "legacy_ble_ad_bytes"
+                  },
+                  "bytes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 62,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "bytes"
+                ]
+              }
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "review": {
+            "$ref": "#/$defs/review"
+          }
+        },
+        "required": [
+          "id",
+          "index",
+          "enabled",
+          "match",
+          "review"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "match": {
+                  "properties": {
+                    "kind": {
+                      "const": "legacy_ble_ad_bytes"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "enabled": {
+                  "const": false
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "enabled": {
+                  "const": true
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+            "maxLength": 64
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "detect": {
+            "$ref": "#/$defs/expr"
+          },
+          "category": {
+            "enum": [
+              "surveillance",
+              "drone",
+              "network",
+              "watchlist"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "alert": {
+            "type": "boolean"
+          },
+          "review": {
+            "$ref": "#/$defs/review"
+          }
+        },
+        "required": [
+          "id",
+          "index",
+          "name",
+          "detect",
+          "category",
+          "enabled",
+          "alert",
+          "review"
+        ]
+      }
+    }
+  },
+  "required": [
+    "$schema",
+    "version",
+    "profile",
+    "pack_id",
+    "ruleset_id",
+    "engine",
+    "sources",
+    "signatures",
+    "rules"
+  ],
+  "$defs": {
+    "expr": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sig": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "sig"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "anyOf": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
+            }
+          },
+          "required": [
+            "anyOf"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allOf": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
+            }
+          },
+          "required": [
+            "allOf"
+          ]
+        }
+      ]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "legacy_unvalidated",
+            "synthetic_tested",
+            "device_validated"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+            "maxLength": 64
+          }
+        },
+        "limitations": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "status",
+        "sources",
+        "limitations"
+      ]
+    }
+  }
+}

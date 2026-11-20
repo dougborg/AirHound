@@ -367,3 +367,15 @@ build-hostd-public-api:
 [macos]
 profile-hostd: bundle-hostd
     python3 scripts/profile-macos.py
+
+
+# Regenerate compiled defaults from the canonical JSON pack (requires jsonschema).
+[group('schemas')]
+generate-signatures:
+    python3 scripts/compile-signatures.py
+
+# Validate schema, stable IDs/revisions, compiler rejection tests and generated drift.
+[group('schemas')]
+check-signatures:
+    python3 scripts/compile-signatures.py --check
+    python3 -m unittest discover -s signatures/tests -v

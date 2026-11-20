@@ -143,7 +143,7 @@ AirHound defines JSON Schemas ([draft 2020-12](https://json-schema.org/draft/202
 | [`desktop-ble.v1.schema.json`](schemas/desktop-ble.v1.schema.json) | Desktop BLE observations with platform UUIDs and optional addresses | Desktop consumers |
 | [`desktop-remote-id.v1.schema.json`](schemas/desktop-remote-id.v1.schema.json) | Decoded BLE Remote ID with optional hardware address and explicit snapshot provenance |
 
-An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates conservative Flock-like and Raven UUID candidate rules. These examples are not yet the compiled source of truth.
+An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates conservative Flock-like and Raven UUID candidate rules. The production source of truth is now the [canonical v2 pack](signatures/builtin.v2.json), which generates the shared Rust defaults. See [pack authoring, validation and revision rules](docs/signature-packs.md).
 
 The [shared evidence pipeline](docs/detection-evidence.md) records which signatures support each rule and applies alert policy separately. Weak clues remain visible; generic vendor/name matches do not automatically sound the buzzer.
 
@@ -554,3 +554,8 @@ filter and WiGLE writer; Remote ID NAN/beacon/probe-response payloads also emit
 `drone` messages. Linux currently leaves CSV security and GPS fields unknown.
 Hardware reception, driver compatibility and packet loss require live validation
 tracked in [#141](https://github.com/dougborg/AirHound/issues/141).
+
+Hardware receiver investigations: [CatSniffer v3.x](docs/catsniffer-integration.md)
+and [AWOK Dual ESP32 v3](docs/awok-integration.md). These are integration plans,
+not validated device support. Both should feed the shared observation/evidence
+pipeline.
