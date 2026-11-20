@@ -165,6 +165,11 @@ pub async fn scan(
                     "pcap_replay_finished"
                 },
             );
+            control.set_receiver_availability(if result.is_err() {
+                "unavailable"
+            } else {
+                "stopped"
+            });
             let _ = tx
                 .send(status(
                     &stats,
@@ -224,11 +229,14 @@ pub async fn scan(
                 let _ = child.start_kill();
                 let _ = child.wait().await;
                 if state.borrow().shutdown || tx.is_closed() {
+                    control.set_health(Scanner::Ble, Phase::Stopped, "sniffle_source_stopped");
+                    control.set_receiver_availability("stopped");
                     let _ = tx.send(status(&stats, "stopped")).await;
                     return Ok(());
                 }
                 if !state.borrow().enabled {
                     control.set_health(Scanner::Ble, Phase::Paused, "sniffle_ingestion_paused");
+                    control.set_receiver_availability("paused");
                     let _ = tx.send(status(&stats, "paused")).await;
                     continue;
                 }
