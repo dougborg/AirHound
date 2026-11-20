@@ -420,6 +420,9 @@ async fn main(spawner: embassy_executor::Spawner) {
         .set_promiscuous_mode(true)
         .expect("Promiscuous mode failed");
 
+    // Give consumers a turn as soon as capture starts, before BLE/GATT setup.
+    embassy_futures::yield_now().await;
+
     spawner.spawn(wifi_channel_hop_task()).unwrap();
 
     log::info!("WiFi sniffer initialized in promiscuous mode");
