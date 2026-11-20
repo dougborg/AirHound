@@ -9,6 +9,7 @@
 #[cfg(all(target_os = "macos", feature = "macos-private-addresses"))]
 mod address_macos;
 mod ble;
+mod ble_remote_id;
 mod control;
 mod health;
 use health::{Phase, Scanner};

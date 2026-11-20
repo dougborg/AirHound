@@ -1,0 +1,17 @@
+{
+  "type": "ble_remote_id",
+  "schema_version": 1,
+  "peripheral_id": "example-peripheral",
+  "identity_scope": "corebluetooth",
+  "address_type": "unknown",
+  "receiver_id": "system",
+  "source": "ble_service_data",
+  "provenance": "os_property_snapshot",
+  "freshness": "possibly_cached",
+  "packet_completeness": "unknown",
+  "message_counter": 1,
+  "rssi": -45,
+  "uas_id": "TEST",
+  "ua_type": 2,
+  "ts": 123
+}
