@@ -61,6 +61,14 @@ AirHound does not configure monitor mode or hop the Linux interface's channel.
 See the [desktop guide](hostd/README.md) for output semantics, permissions,
 scan cadence, external receivers, benchmarks and live profiling.
 
+Desktop BLE now retains bounded manufacturer/service payloads and full UUIDs.
+Use `airhound-hostd --list-ble-adapters` for receiver diagnostics, and
+`--ble-adapter hciN` for explicit Linux selection. See
+[receiver capabilities](docs/ble-receivers.md), the
+[observation contract](docs/ble-observation-contract.md), and
+[desktop Remote ID](docs/desktop-remote-id.md). Decoding a software fixture does
+not establish extended-advertisement or Coded-PHY reception.
+
 ## Why AirHound
 
 Surveillance cameras, ALPR systems, and related RF devices are proliferating in public spaces. Community projects have developed several approaches to detecting and documenting them (see [Related Projects](#related-projects)).
@@ -133,6 +141,7 @@ AirHound defines JSON Schemas ([draft 2020-12](https://json-schema.org/draft/202
 | [`device-message.v1.schema.json`](schemas/device-message.v1.schema.json) | Firmware observations, match metadata, drone data, status, command results and stream counters | Companion apps, log analysis, data pipelines |
 | [`host-command.v1.schema.json`](schemas/host-command.v1.schema.json) | Commands sent to sensors: start/stop scanning, set RSSI threshold, configure buzzer | Companion apps, CLI tools |
 | [`desktop-ble.v1.schema.json`](schemas/desktop-ble.v1.schema.json) | Desktop BLE observations with platform UUIDs and optional addresses | Desktop consumers |
+| [`desktop-remote-id.v1.schema.json`](schemas/desktop-remote-id.v1.schema.json) | Decoded BLE Remote ID with optional hardware address and explicit snapshot provenance |
 
 An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates the format with Flock Safety, Raven, and AirTag signatures.
 

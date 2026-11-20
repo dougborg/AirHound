@@ -87,6 +87,28 @@ just bundle-hostd-public-api
 That build keeps UUID-based BLE records and WiFi scanning. It omits the resolver
 dependency; this switch alone does not establish App Store readiness.
 
+## Structured BLE observations and receiver selection
+
+`--list-ble-adapters` lists receiver diagnostics without scanning or creating a
+CSV. On Linux, `--ble-adapter hciN` selects a listed controller and fails if it is
+absent; CoreBluetooth selection is system-managed. See the
+[receiver guide](../docs/ble-receivers.md) for capability evidence and limits.
+
+Every production BLE snapshot now carries bounded full service UUIDs and
+company/service-keyed payload records in the additive `advertisement` object.
+Records expose capacity truncation, `possibly_cached` freshness and unknown
+packet completeness. Existing numeric `service_uuids` and legacy Linux matched
+`ble` messages remain compatible. When an update arrives without available
+RSSI, `advertisement.rssi_available` is false; the legacy outer zero is a
+placeholder, not a measured signal, and no CSV or signature hit is generated.
+
+Available Remote ID service data is independently decoded into `ble_remote_id`,
+including UUID-only peripherals and update-only records without measured RSSI.
+These records omit unavailable addresses/RSSI. See the
+[Remote ID guide](../docs/desktop-remote-id.md) and
+[shared contract](../docs/ble-observation-contract.md). These software paths do
+not enable extended or Coded-PHY reception on unsupported hardware/APIs.
+
 ## Scan cadence and lifecycle
 
 BLE discovery is continuous, with duplicate advertisements delivered by the OS.
