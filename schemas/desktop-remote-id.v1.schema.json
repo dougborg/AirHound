@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-remote-id.v1.schema.json",
   "title": "AirHound desktop BLE Remote ID v1",
-  "description": "Decoded service data from an OS property snapshot. No claim of fresh RF reception, identity authentication, extended advertising or PHY support. Hardware address is optional.",
+  "description": "Decoded Remote ID service data with explicit OS-snapshot or complete raw-packet provenance. Decoding does not authenticate identity or prove reception of every PHY.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,13 +29,22 @@
       "const": "ble_service_data"
     },
     "provenance": {
-      "const": "os_property_snapshot"
+      "enum": [
+        "os_property_snapshot",
+        "raw_ble_packet"
+      ]
     },
     "freshness": {
-      "const": "possibly_cached"
+      "enum": [
+        "possibly_cached",
+        "single_packet"
+      ]
     },
     "packet_completeness": {
-      "const": "unknown"
+      "enum": [
+        "unknown",
+        "complete_advertisement"
+      ]
     },
     "peripheral_id": {
       "type": "string",
@@ -109,5 +118,36 @@
     "speed": {
       "type": "number"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provenance": {
+            "const": "raw_ble_packet"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "freshness": {
+            "const": "single_packet"
+          },
+          "packet_completeness": {
+            "const": "complete_advertisement"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "freshness": {
+            "const": "possibly_cached"
+          },
+          "packet_completeness": {
+            "const": "unknown"
+          }
+        }
+      }
+    }
+  ]
 }

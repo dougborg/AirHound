@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble-packet.v1.schema.json",
+  "title": "AirHound raw BLE packet observation v1",
+  "description": "One DLT256 captured packet with optional typed advertiser fields and same-packet evidence. Replay retains original capture time; incomplete or anonymous chains do not become complete advertiser evidence. CRC is the capture producer report, not independent authentication.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "type": {
+      "const": "ble_packet_observation"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "replay": {
+      "type": "boolean"
+    },
+    "captured_at_us": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "captured_len": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4096
+    },
+    "original_len": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "rf_channel": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 39
+    },
+    "channel": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 39
+    },
+    "phy": {
+      "enum": [
+        "1m",
+        "2m",
+        "coded_s2",
+        "coded_s8"
+      ]
+    },
+    "rssi": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": -128,
+      "maximum": 127
+    },
+    "crc": {
+      "enum": [
+        "valid",
+        "invalid",
+        "unknown"
+      ]
+    },
+    "packet_completeness": {
+      "enum": [
+        "complete_packet",
+        "incomplete_or_not_dewhitened",
+        "malformed_extended_header",
+        "anonymous_or_unassociated_fragment",
+        "extended_chain_incomplete",
+        "malformed_advertisement",
+        "complete_advertisement",
+        "invalid_advertiser_address"
+      ]
+    },
+    "access_address": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "pdu_type": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 15
+    },
+    "pdu": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      },
+      "maxItems": 4096
+    },
+    "address": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9A-F]{2}(:[0-9A-F]{2}){5}$"
+    },
+    "address_type": {
+      "enum": [
+        "public",
+        "random",
+        "unknown"
+      ]
+    },
+    "identity_scope": {
+      "const": "ble_air_address"
+    },
+    "name": {
+      "type": "string"
+    },
+    "advertisement": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provenance",
+            "freshness",
+            "completeness",
+            "address_type",
+            "rssi_available",
+            "advertised_services",
+            "manufacturer_data",
+            "service_data",
+            "capacity"
+          ],
+          "properties": {
+            "provenance": {
+              "const": "raw_ble_packet"
+            },
+            "freshness": {
+              "const": "single_packet"
+            },
+            "completeness": {
+              "enum": [
+                "complete",
+                "incomplete"
+              ]
+            },
+            "address_type": {
+              "enum": [
+                "public",
+                "random",
+                "unknown"
+              ]
+            },
+            "rssi_available": {
+              "type": "boolean",
+              "description": "When false the legacy outer rssi=0 is an unavailable-value placeholder, never a measured signal."
+            },
+            "receiver_id": {
+              "type": "string"
+            },
+            "advertised_services": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              }
+            },
+            "manufacturer_data": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "company_id",
+                  "payload",
+                  "original_len",
+                  "truncated"
+                ],
+                "properties": {
+                  "company_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "payload": {
+                    "type": "array",
+                    "maxItems": 1024,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  },
+                  "original_len": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "service_data": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "uuid",
+                  "payload",
+                  "original_len",
+                  "truncated"
+                ],
+                "properties": {
+                  "uuid": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "payload": {
+                    "type": "array",
+                    "maxItems": 1024,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  },
+                  "original_len": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "capacity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "omitted_uuids",
+                "omitted_manufacturer_records",
+                "omitted_service_records",
+                "truncated_payloads"
+              ],
+              "properties": {
+                "omitted_uuids": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "omitted_manufacturer_records": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "omitted_service_records": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "truncated_payloads": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "detection": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engine",
+            "policy",
+            "pack",
+            "ruleset",
+            "sig",
+            "rules",
+            "more",
+            "basis",
+            "alert"
+          ],
+          "properties": {
+            "engine": {
+              "const": "evidence-1"
+            },
+            "policy": {
+              "enum": [
+                "rules_and_watchlist",
+                "watchlist_only",
+                "all_matches",
+                "silent"
+              ]
+            },
+            "pack": {
+              "type": "string"
+            },
+            "ruleset": {
+              "type": "string"
+            },
+            "sig": {
+              "type": "array",
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            },
+            "rules": {
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "sig",
+                  "more"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  },
+                  "sig": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  },
+                  "more": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "more": {
+              "type": "boolean"
+            },
+            "basis": {
+              "enum": [
+                "observed_fields",
+                "possibly_cached"
+              ]
+            },
+            "alert": {
+              "enum": [
+                "none",
+                "suppressed",
+                "watchlist",
+                "rule",
+                "match"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "schema_version",
+    "source_id",
+    "generation",
+    "sequence",
+    "replay",
+    "captured_at_us",
+    "captured_len",
+    "original_len",
+    "rf_channel",
+    "channel",
+    "phy",
+    "rssi",
+    "crc",
+    "packet_completeness",
+    "access_address",
+    "pdu_type",
+    "pdu",
+    "address",
+    "address_type",
+    "identity_scope",
+    "name",
+    "advertisement",
+    "detection"
+  ]
+}

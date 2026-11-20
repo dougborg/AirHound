@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble-source-status.v1.schema.json",
+  "title": "BLE packet source lifecycle and pressure counters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "schema_version",
+    "state",
+    "radio_loss",
+    "packets",
+    "host_dropped_packets",
+    "generation",
+    "reconnect_attempts"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "type": {
+      "const": "ble_source_status"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "state": {
+      "enum": [
+        "running",
+        "finished",
+        "failed",
+        "paused",
+        "reconnecting",
+        "stopped"
+      ]
+    },
+    "radio_loss": {
+      "const": "unknown"
+    },
+    "packets": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "host_dropped_packets": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reconnect_attempts": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

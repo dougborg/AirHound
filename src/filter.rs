@@ -422,6 +422,21 @@ pub fn filter_ble_snapshot(
     result
 }
 
+/// Evaluate normalized fields from one complete, uncached advertisement.
+/// Callers must not combine scan responses, cached properties or unfinished chains.
+pub fn filter_ble_packet_with_rules(
+    input: &BleScanInput,
+    data: &crate::ble_data::Advertisement<'_>,
+    config: &FilterConfig,
+    db: &RuleDb,
+    mac_index: &MacIndex,
+) -> FilterResult {
+    let mut result = filter_ble_snapshot(input, data, config, mac_index);
+    result.basis = "observed_fields";
+    apply_rules(&mut result, db);
+    result
+}
+
 /// Evaluate a WiFi scan event against signatures and then against rules.
 pub fn filter_wifi_with_rules(
     input: &WiFiScanInput,
@@ -548,6 +563,40 @@ mod tests {
 
     fn test_mac_index() -> MacIndex {
         MacIndex::from_defaults()
+    }
+
+    #[test]
+    fn complete_packet_can_corroborate_fields_but_cached_snapshot_cannot() {
+        let input = BleScanInput {
+            address_type: BleAddressType::Random,
+            mac: &[0x12; 6],
+            name: "Flock",
+            rssi: -40,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[],
+        };
+        let records = [crate::ble_data::ManufacturerData {
+            company_id: 0x09c8,
+            payload: &[],
+        }];
+        let data = crate::ble_data::Advertisement {
+            service_uuids: &[],
+            manufacturer_data: &records,
+            service_data: &[],
+        };
+        let cached = filter_ble_snapshot(&input, &data, &default_config(), &test_mac_index());
+        assert!(cached.evidence.is_empty());
+        let packet = filter_ble_packet_with_rules(
+            &input,
+            &data,
+            &default_config(),
+            &defaults::DEFAULT_RULE_DB,
+            &test_mac_index(),
+        );
+        assert!(!packet.evidence.is_empty());
+        assert_eq!(packet.basis, "observed_fields");
+        assert_eq!(cached.basis, "possibly_cached");
     }
 
     #[test]

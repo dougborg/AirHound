@@ -63,6 +63,26 @@ pub fn emit(
     payload: &[u8],
     truncated: bool,
 ) -> io::Result<bool> {
+    emit_inner(output, context, service_uuid, payload, truncated, false)
+}
+
+pub fn emit_packet(
+    output: &mut impl Write,
+    context: &Context<'_>,
+    service_uuid: &[u8; 16],
+    payload: &[u8],
+) -> io::Result<bool> {
+    emit_inner(output, context, service_uuid, payload, false, true)
+}
+
+fn emit_inner(
+    output: &mut impl Write,
+    context: &Context<'_>,
+    service_uuid: &[u8; 16],
+    payload: &[u8],
+    truncated: bool,
+    packet: bool,
+) -> io::Result<bool> {
     if truncated || service_uuid != &REMOTE_ID_UUID || payload.first() != Some(&0x0d) {
         return Ok(false);
     }
@@ -78,9 +98,21 @@ pub fn emit(
         address_type: context.address_type,
         receiver_id: context.receiver_id,
         source: "ble_service_data",
-        provenance: "os_property_snapshot",
-        freshness: "possibly_cached",
-        packet_completeness: "unknown",
+        provenance: if packet {
+            "raw_ble_packet"
+        } else {
+            "os_property_snapshot"
+        },
+        freshness: if packet {
+            "single_packet"
+        } else {
+            "possibly_cached"
+        },
+        packet_completeness: if packet {
+            "complete_advertisement"
+        } else {
+            "unknown"
+        },
         message_counter: payload[1],
         rssi: context.rssi,
         uas_id: frame.basic_id.as_ref().map(|id| id.uas_id.as_str()),

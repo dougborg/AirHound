@@ -16,6 +16,8 @@ mod gpsd;
 mod health;
 mod receiver;
 use health::{Phase, Scanner};
+mod ble_packet;
+mod ble_source;
 mod external_scanner;
 use airhound_hostd::external_wifi;
 mod observation;
@@ -71,6 +73,26 @@ struct Args {
     /// Select a listed Linux BlueZ adapter (e.g. hci0); CoreBluetooth is system-managed
     #[arg(long, conflicts_with = "no_ble")]
     ble_adapter: Option<String>,
+    /// Replay classic DLT256 BLE PCAP through the shared observation pipeline
+    #[arg(long, conflicts_with_all = ["sniffle_port", "ble_adapter", "no_ble", "list_ble_adapters"])]
+    ble_pcap: Option<PathBuf>,
+    /// Explicit serial port for a Sniffle 1.11.0 receiver (no automatic flashing)
+    #[arg(long, requires = "sniffle_helper", conflicts_with_all = ["ble_adapter", "no_ble", "list_ble_adapters"])]
+    sniffle_port: Option<String>,
+    /// Path to scripts/sniffle-source.py, executed as a separate process
+    #[arg(long, requires = "sniffle_port")]
+    sniffle_helper: Option<PathBuf>,
+    #[arg(long, default_value = "python3")]
+    sniffle_python: PathBuf,
+    /// Directory containing the user-installed Sniffle Python package
+    #[arg(long, requires = "sniffle_port")]
+    sniffle_module_path: Option<PathBuf>,
+    /// Fixed primary advertising channel; extended secondary following is enabled
+    #[arg(long, default_value_t = 37, value_parser = clap::value_parser!(u8).range(37..=39))]
+    sniffle_channel: u8,
+    /// Listen for Coded PHY primary advertisements instead of 1M
+    #[arg(long, requires = "sniffle_port")]
+    sniffle_coded: bool,
     /// Output WiGLE CSV file path [default: airhound-YYYYMMDD-HHMMSS.csv]
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -251,6 +273,21 @@ async fn main() -> io::Result<()> {
     } else {
         None
     };
+    let packet_source = if let Some(path) = args.ble_pcap.clone() {
+        Some(ble_source::Source::Pcap(path))
+    } else {
+        args.sniffle_port
+            .clone()
+            .map(|port| ble_source::Source::Sniffle {
+                port,
+                python: args.sniffle_python.clone(),
+                helper: args.sniffle_helper.clone().expect("required by clap"),
+                module_path: args.sniffle_module_path.clone(),
+                channel: args.sniffle_channel,
+                coded: args.sniffle_coded,
+            })
+    };
+    let fatal_ble_errors = packet_source.is_some();
     #[cfg(target_os = "macos")]
     location_macos::start();
     run_session(
@@ -259,6 +296,7 @@ async fn main() -> io::Result<()> {
         } else {
             SessionPolicy::native()
         }
+        .with_fatal_ble(fatal_ble_errors)
         .with_gpsd(args.gpsd.clone().map(|endpoint| gpsd::Options {
             endpoint,
             device: args.gpsd_device.clone(),
@@ -268,6 +306,9 @@ async fn main() -> io::Result<()> {
         io::stdout(),
         Scanners {
             ble: |tx, control| async move {
+                if let Some(source) = packet_source {
+                    return ble_source::scan(source, tx, control).await;
+                }
                 let selected = match selected_ble {
                     Some(selected) => Some(selected),
                     None => ble::initialize(receiver::selected(None), &control, &tx).await?,
@@ -344,9 +385,14 @@ async fn shutdown_signal() -> io::Result<()> {
 struct SessionPolicy {
     shutdown_budget: std::time::Duration,
     fatal_wifi_errors: bool,
+    fatal_ble_errors: bool,
     gpsd: Option<gpsd::Options>,
 }
 impl SessionPolicy {
+    fn with_fatal_ble(mut self, fatal: bool) -> Self {
+        self.fatal_ble_errors = fatal;
+        self
+    }
     fn with_gpsd(mut self, options: Option<gpsd::Options>) -> Self {
         self.gpsd = options;
         self
@@ -355,6 +401,7 @@ impl SessionPolicy {
         Self {
             shutdown_budget: std::time::Duration::from_secs(1),
             fatal_wifi_errors: false,
+            fatal_ble_errors: false,
             gpsd: None,
         }
     }
@@ -362,6 +409,7 @@ impl SessionPolicy {
         Self {
             shutdown_budget: std::time::Duration::from_secs(40),
             fatal_wifi_errors: true,
+            fatal_ble_errors: false,
             gpsd: None,
         }
     }
@@ -411,6 +459,7 @@ where
     let (tx, rx) = mpsc::channel(32);
     let ble_tx = tx.clone();
     let (failure_tx, mut failures) = mpsc::channel(2);
+    let ble_failure_tx = failure_tx.clone();
     let ble_control = control.clone();
     let ble = tokio::spawn(async move {
         if cfg.ble_enabled {
@@ -423,6 +472,9 @@ where
                     "adapter_failed_check_permission_or_power",
                 );
                 log::error!("BLE scan error: {e}");
+                if policy.fatal_ble_errors {
+                    let _ = ble_failure_tx.send(e).await;
+                }
             }
         } else {
             ble_control.set_health(Scanner::Ble, Phase::Disabled, "disabled_by_configuration");
@@ -559,6 +611,10 @@ async fn filter_task<W: Write, O: Write>(
             observation::write_json(&mut output, &value)?;
             continue;
         }
+        if let ScanEvent::BleSourceStatus(ref value) = event {
+            observation::write_json(&mut output, value)?;
+            continue;
+        }
         if !control.load(Ordering::Relaxed) {
             continue;
         }
@@ -568,6 +624,102 @@ async fn filter_task<W: Write, O: Write>(
         let location = get_location(&control);
 
         match event {
+            ScanEvent::BleSourceStatus(_) => unreachable!(),
+            ScanEvent::BlePacket(ref packet) => {
+                if packet.ingestion_generation != control.subscribe().borrow().generation {
+                    continue;
+                }
+                let result = packet
+                    .advertisement
+                    .as_ref()
+                    .filter(|_| packet.matchable())
+                    .map(|snapshot| {
+                        let input = BleScanInput {
+                            address_type: if packet.address_type == "public" {
+                                airhound::filter::BleAddressType::Public
+                            } else {
+                                airhound::filter::BleAddressType::Random
+                            },
+                            mac: packet.mac.as_ref().expect("addressed advertisement"),
+                            name: &packet.name,
+                            rssi: packet.rssi.expect("matchable RSSI"),
+                            service_uuids_16: &[],
+                            manufacturer_id: 0,
+                            raw_ad: &[],
+                        };
+                        snapshot.with_view(|data| {
+                            airhound::filter::filter_ble_packet_with_rules(
+                                &input,
+                                data,
+                                &cfg,
+                                &airhound::defaults::DEFAULT_RULE_DB,
+                                &mac_index,
+                            )
+                        })
+                    });
+                let mut value = serde_json::to_value(packet).map_err(io::Error::other)?;
+                value["type"] = serde_json::json!("ble_packet_observation");
+                value["schema_version"] = serde_json::json!(1);
+                value["identity_scope"] = serde_json::json!("ble_air_address");
+                value["detection"] = serde_json::to_value(
+                    result
+                        .as_ref()
+                        .map(|r| r.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist)),
+                )
+                .map_err(io::Error::other)?;
+                observation::write_json(&mut output, &value)?;
+                if packet.matchable()
+                    && cfg.ble_enabled
+                    && packet.rssi.is_some_and(|rssi| rssi >= cfg.min_rssi)
+                {
+                    let context = ble_remote_id::Context {
+                        peripheral_id: packet.address.as_deref().expect("address"),
+                        identity_scope: "ble_air_address",
+                        address: packet.address.as_deref(),
+                        address_type: packet.address_type,
+                        receiver_id: Some(&packet.source_id),
+                        rssi: packet.rssi,
+                        ts: start_time.elapsed().as_millis() as u32,
+                    };
+                    for record in &packet
+                        .advertisement
+                        .as_ref()
+                        .expect("advertisement")
+                        .service_data
+                    {
+                        ble_remote_id::emit_packet(
+                            &mut output,
+                            &context,
+                            &record.uuid.0,
+                            &record.payload,
+                        )?;
+                    }
+                }
+                if packet.matchable() {
+                    let stamp =
+                        chrono::DateTime::from_timestamp_micros(packet.captured_at_us as i64)
+                            .ok_or_else(|| io::Error::other("invalid capture timestamp"))?
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string();
+                    let manufacturer = packet
+                        .advertisement
+                        .as_ref()
+                        .and_then(|s| s.manufacturer_data.first())
+                        .map_or(0, |m| m.company_id);
+                    wigle.write_ble(
+                        packet.address.as_deref().expect("addressed advertisement"),
+                        &packet.name,
+                        &stamp,
+                        packet.rssi.expect("matchable RSSI"),
+                        manufacturer,
+                        if packet.replay {
+                            None
+                        } else {
+                            location.as_ref()
+                        },
+                    )?;
+                }
+            }
             ScanEvent::Ble(ref ble_event) => {
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
@@ -2137,5 +2289,104 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("companion cleanup unverified"));
+    }
+    #[test]
+    fn packet_source_cli_constraints() {
+        assert!(
+            Args::try_parse_from(["airhound", "--ble-pcap", "capture.pcap", "--no-wifi"]).is_ok()
+        );
+        for flags in [
+            vec!["--ble-pcap", "x", "--no-ble"],
+            vec!["--sniffle-port", "x"],
+            vec![
+                "--sniffle-port",
+                "x",
+                "--sniffle-helper",
+                "helper",
+                "--ble-adapter",
+                "hci0",
+            ],
+            vec!["--sniffle-helper", "helper"],
+            vec!["--sniffle-channel", "40"],
+        ] {
+            let mut args = vec!["airhound"];
+            args.extend(flags);
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
+    #[tokio::test]
+    async fn raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context() {
+        let (tx, rx) = mpsc::channel(8);
+        let ad = [6, 9, b'F', b'l', b'o', b'c', b'k', 3, 0xff, 0xc8, 0x09];
+        let mut packet = ble_packet::tests::packet(&ad);
+        packet.replay = true;
+        packet.source_id = "fixture".into();
+        packet.generation = 2;
+        packet.sequence = 7;
+        tx.send(ScanEvent::BlePacket(Box::new(packet.clone())))
+            .await
+            .unwrap();
+        let mut incomplete = packet.clone();
+        incomplete.packet_completeness = "extended_chain_incomplete";
+        tx.send(ScanEvent::BlePacket(Box::new(incomplete)))
+            .await
+            .unwrap();
+        let mut unknown = packet.clone();
+        unknown.rssi = None;
+        tx.send(ScanEvent::BlePacket(Box::new(unknown)))
+            .await
+            .unwrap();
+        drop(tx);
+        let csv = RecordingWriter::default();
+        let output = RecordingWriter::default();
+        filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            WigleWriter::new(csv.clone()).unwrap(),
+            output.clone(),
+            ScanControl::new(true),
+        )
+        .await
+        .unwrap();
+        let messages: Vec<serde_json::Value> = data_output(&output)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(messages.len(), 3);
+        let m = &messages[0];
+        assert_eq!(m["type"], "ble_packet_observation");
+        assert_eq!(m["source_id"], "fixture");
+        assert_eq!(m["captured_at_us"], 1_700_000_000_123_456u64);
+        assert_eq!(m["generation"], 2);
+        assert_eq!(m["sequence"], 7);
+        assert_eq!(m["detection"]["basis"], "observed_fields");
+        assert!(!m["detection"]["rules"].as_array().unwrap().is_empty());
+        assert!(messages[1]["detection"].is_null());
+        assert!(messages[2]["detection"].is_null());
+        let rows = recorded(&csv);
+        assert_eq!(rows.lines().count(), 3);
+        assert!(rows.contains("2023-11-14 22:13:20"));
+    }
+    #[tokio::test]
+    async fn explicit_ble_source_failure_is_fatal() {
+        let result = run_session(
+            SessionPolicy::native().with_fatal_ble(true),
+            FilterConfig::new(),
+            WigleWriter::new(Vec::new()).unwrap(),
+            Vec::new(),
+            Scanners {
+                ble: |_tx, _control| async { Err(io::Error::other("fixture source failure")) },
+                wifi: |_tx, _control| async { std::future::pending::<io::Result<()>>().await },
+            },
+            |_, _, _| async {},
+            std::future::pending(),
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("fixture source failure"));
     }
 }

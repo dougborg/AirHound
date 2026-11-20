@@ -1,6 +1,9 @@
 # CatSniffer 3.2: AirHound integration assessment
 
-Research and hardware validation date: 2026-11-20. USB identity, firmware migration and passive legacy BLE capture have now been validated on the connected board; AirHound ingestion remains unimplemented. Tracking: [#180](https://github.com/dougborg/AirHound/issues/180). Repo context: AirHound README, detection-evidence.md, signature-research.md, and issues #42/#44 reviewed.
+Live Sniffle and classic-PCAP ingestion are implemented; see the
+[AirHound source guide](sniffle-source.md) for commands, validation and limits.
+
+Research and hardware validation date: 2026-11-20. USB identity, firmware migration and passive legacy BLE capture have now been validated on the connected board; AirHound live and replay ingestion now pass local functional tests. Tracking: [#180](https://github.com/dougborg/AirHound/issues/180). Repo context: AirHound README, detection-evidence.md, signature-research.md, and issues #42/#44 reviewed.
 
 ## Local hardware result
 
@@ -21,9 +24,10 @@ and are not counts of unique physical devices.
 
 This establishes basic BLE RF reception, not simultaneous three-channel
 coverage, extended/Coded-PHY reception, loss-free operation or endurance.
-AirHound's DLT 256 capture importer and live backend are still pending under
-[#180](https://github.com/dougborg/AirHound/issues/180). The USB firmware descriptor
+AirHound now ingests DLT256 files and live Sniffle USB capture; extended-chain
+reassembly and the broader receiver matrix remain under [#180](https://github.com/dougborg/AirHound/issues/180). The USB firmware descriptor
 does not independently verify the PCB's exact 3.2 revision.
+
 
 ## Recommendation
 
