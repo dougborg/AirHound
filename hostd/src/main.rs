@@ -12,6 +12,7 @@ mod ble;
 mod ble_remote_id;
 mod control;
 mod health;
+mod receiver;
 use health::{Phase, Scanner};
 mod external_scanner;
 use airhound_hostd::external_wifi;
@@ -62,6 +63,12 @@ use wigle::{Location, WigleWriter};
 )]
 #[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner"]))))]
 struct Args {
+    /// List BLE receivers and capability evidence as JSON, without starting a scan
+    #[arg(long, conflicts_with_all = ["output", "overwrite", "no_ble", "ble_adapter"])]
+    list_ble_adapters: bool,
+    /// Select a listed Linux BlueZ adapter (e.g. hci0); CoreBluetooth is system-managed
+    #[arg(long, conflicts_with = "no_ble")]
+    ble_adapter: Option<String>,
     /// Output WiGLE CSV file path [default: airhound-YYYYMMDD-HHMMSS.csv]
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -163,6 +170,28 @@ async fn main() -> io::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
         .format_timestamp_millis()
         .init();
+    receiver::validate_selection(args.ble_adapter.as_deref(), cfg!(target_os = "macos"))
+        .map_err(io::Error::other)?;
+    if args.list_ble_adapters {
+        let receivers =
+            tokio::time::timeout(std::time::Duration::from_secs(10), receiver::discover())
+                .await
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "BLE adapter enumeration timed out; check permission and power",
+                    )
+                })?
+                .map_err(io::Error::other)?;
+        let mut descriptions: Vec<_> = receivers.into_iter().map(|(_, info)| info).collect();
+        descriptions.sort_by(|a, b| a.adapter_id.cmp(&b.adapter_id));
+        return observation::write_json(
+            &mut io::stdout(),
+            &serde_json::json!({
+                "type":"ble_adapters", "schema_version":1, "backend":receiver::backend(), "adapters":descriptions
+            }),
+        );
+    }
     if args.external_scanner.is_some() {
         let channels = &args.external_channels;
         if channels.is_empty()
@@ -195,6 +224,22 @@ async fn main() -> io::Result<()> {
             dwell_ms: args.external_dwell_ms,
         });
     let writer = prepare_output(&args)?;
+    // An explicit missing selection is a startup error, not a fallback or a half-running session.
+    let selected_ble = if let Some(id) = args.ble_adapter.as_deref() {
+        Some(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                receiver::selected(Some(id)),
+            )
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "BLE adapter selection timed out")
+            })?
+            .map_err(io::Error::other)?,
+        )
+    } else {
+        None
+    };
     #[cfg(target_os = "macos")]
     location_macos::start();
     run_session(
@@ -208,10 +253,18 @@ async fn main() -> io::Result<()> {
         io::stdout(),
         Scanners {
             ble: |tx, control| async move {
-                let Some(adapter) = ble::initialize(ble::get_adapter(), &control, &tx).await?
-                else {
+                let selected = match selected_ble {
+                    Some(selected) => Some(selected),
+                    None => ble::initialize(receiver::selected(None), &control, &tx).await?,
+                };
+                let Some((adapter, receiver)) = selected else {
                     return Ok(());
                 };
+                control.set_receiver(receiver);
+                log::info!(
+                    "BLE receiver: {}",
+                    control.receiver_id().as_deref().unwrap_or("unknown")
+                );
                 ble::scan_loop(adapter, tx, control)
                     .await
                     .map_err(io::Error::other)
@@ -336,6 +389,7 @@ where
         if cfg.ble_enabled {
             ble_control.set_health(Scanner::Ble, Phase::Initializing, "adapter_initializing");
             if let Err(e) = (scanners.ble)(ble_tx, ble_control.clone()).await {
+                ble_control.set_receiver_availability("unavailable");
                 ble_control.set_health(
                     Scanner::Ble,
                     Phase::Unavailable,

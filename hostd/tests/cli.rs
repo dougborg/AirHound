@@ -10,7 +10,15 @@ fn help_and_argument_errors_do_not_require_radios() {
         .unwrap();
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    for flag in ["--output", "--overwrite", "--rssi", "--no-ble", "--no-wifi"] {
+    for flag in [
+        "--output",
+        "--overwrite",
+        "--rssi",
+        "--no-ble",
+        "--no-wifi",
+        "--list-ble-adapters",
+        "--ble-adapter",
+    ] {
         assert!(help.contains(flag));
     }
     let invalid = std::process::Command::new(binary)
@@ -42,4 +50,32 @@ fn executable_preserves_existing_output_before_initializing_adapters() {
         assert_eq!(std::fs::read(&path).unwrap(), b"previous session");
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn invalid_adapter_selection_fails_before_radio_initialization() {
+    let binary = env!("CARGO_BIN_EXE_airhound-hostd");
+    for args in [
+        vec!["--ble-adapter", "not-an-adapter"],
+        vec!["--ble-adapter", "hci0", "--no-ble"],
+        vec!["--list-ble-adapters", "--output", "ignored.csv"],
+    ] {
+        let output = std::process::Command::new(binary)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new(binary)
+            .args(["--ble-adapter", "hci0"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("system-managed"));
+    }
 }

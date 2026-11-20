@@ -1,23 +1,13 @@
 //! BLE scanner using btleplug — converts peripheral discoveries into AirHound BleEvents.
 
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
-use btleplug::platform::{Adapter, Manager};
+use btleplug::api::{Central, Peripheral as _, ScanFilter};
+use btleplug::platform::Adapter;
 use futures_lite::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::health::{Phase, Scanner};
 use crate::ScanEvent;
 use airhound::scanner::BleEvent;
-
-/// Discover the first available BLE adapter.
-pub async fn get_adapter() -> Result<Adapter, btleplug::Error> {
-    let manager = Manager::new().await?;
-    let adapters = manager.adapters().await?;
-    adapters
-        .into_iter()
-        .next()
-        .ok_or(btleplug::Error::DeviceNotFound)
-}
 
 /// Bound adapter initialization and cancel it cooperatively at shutdown.
 /// A timeout is not proof of denial: the adapter may also be off/unavailable.
@@ -74,6 +64,10 @@ pub async fn scan_loop(
                         let id = id.to_string();
                         Some((id, props))
                     }
+                    CentralEvent::StateUpdate(state) => {
+                        crate::receiver::update_state(&control, state);
+                        None
+                    }
                     _ => None,
                 }
             },
@@ -96,7 +90,13 @@ pub async fn scan_loop(
         stopped?;
         control.set_health(Scanner::Ble, Phase::Paused, "scan_paused");
         if finished {
-            break;
+            crate::receiver::update_state(&control, btleplug::api::CentralState::Unknown);
+            control.set_health(
+                Scanner::Ble,
+                Phase::Unavailable,
+                "adapter_event_stream_closed",
+            );
+            return Ok(());
         }
     }
     control.set_health(Scanner::Ble, Phase::Stopped, "scan_stopped");
