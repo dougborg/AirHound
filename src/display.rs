@@ -334,6 +334,7 @@ pub async fn display_task(
         Ok(spi) => spi.with_sck(clk).with_mosi(mosi),
         Err(e) => {
             log::error!("SPI init failed: {:?}", e);
+            crate::DISPLAY_READY.signal(false);
             return;
         }
     };
@@ -363,6 +364,7 @@ pub async fn display_task(
         Ok(d) => d,
         Err(e) => {
             log::error!("Display init failed: {:?}", e);
+            crate::DISPLAY_READY.signal(false);
             return;
         }
     };
@@ -385,8 +387,11 @@ pub async fn display_task(
         s.fill_band(ROW_H, HEADER_BG);
     }
 
+    draw_status(&mut display);
+    crate::DISPLAY_READY.signal(true);
+
     loop {
-        draw_status(&mut display);
         Timer::after(Duration::from_millis(500)).await;
+        draw_status(&mut display);
     }
 }
