@@ -1,0 +1,11 @@
+{
+  "generation": 0,
+  "host_dropped_packets": 0,
+  "packets": 1,
+  "radio_loss": "unknown",
+  "reconnect_attempts": 0,
+  "schema_version": 1,
+  "state": "finished",
+  "type": "ble_source_status",
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble-source-status.v1.schema.json"
+}

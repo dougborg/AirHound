@@ -46,6 +46,15 @@ or `scripts/monitor-firmware.py` for bounded serial validation. That script writ
 private captures and aggregate diagnostics; it does not feed hostd or export WiGLE.
 For no_std M5 firmware select `--baud 460800`; other firmware builds use 115200.
 
+## CatSniffer / Sniffle packet source
+
+Use `--sniffle-port` with the separate `scripts/sniffle-source.py` helper for live
+passive BLE capture, or `--ble-pcap` to replay classic DLT256 captures. These
+sources replace native BLE in the session and feed typed observations and the
+shared signature/evidence engine. See [setup, output and limits](../docs/sniffle-source.md).
+Complete advertiser packets enter CSV; all captured packets remain in NDJSON.
+Extended-chain reassembly and live Coded-PHY validation remain follow-ups.
+
 ## External GNSS location
 
 Use `--gpsd 127.0.0.1:2947` to geotag WiGLE rows from an external receiver on

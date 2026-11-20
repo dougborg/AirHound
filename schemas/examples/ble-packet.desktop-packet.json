@@ -1,0 +1,92 @@
+{
+  "access_address": 2391391958,
+  "address": "00:02:03:04:05:06",
+  "address_type": "public",
+  "advertisement": {
+    "address_type": "public",
+    "advertised_services": [],
+    "capacity": {
+      "omitted_manufacturer_records": 0,
+      "omitted_service_records": 0,
+      "omitted_uuids": 0,
+      "truncated_payloads": 0
+    },
+    "completeness": "complete",
+    "freshness": "single_packet",
+    "manufacturer_data": [
+      {
+        "company_id": 2504,
+        "original_len": 0,
+        "payload": [],
+        "truncated": false
+      }
+    ],
+    "provenance": "raw_ble_packet",
+    "receiver_id": "ble-pcap",
+    "rssi_available": true,
+    "service_data": []
+  },
+  "captured_at_us": 1700000000123456,
+  "captured_len": 36,
+  "channel": 37,
+  "crc": "valid",
+  "detection": {
+    "alert": "rule",
+    "basis": "observed_fields",
+    "engine": "evidence-1",
+    "more": false,
+    "pack": "builtin-2",
+    "policy": "rules_and_watchlist",
+    "rules": [
+      {
+        "id": 0,
+        "more": false,
+        "sig": [
+          140,
+          124
+        ]
+      }
+    ],
+    "ruleset": "builtin-rules-2",
+    "sig": [
+      124,
+      140
+    ]
+  },
+  "generation": 0,
+  "identity_scope": "ble_air_address",
+  "name": "Flock",
+  "original_len": 36,
+  "packet_completeness": "complete_advertisement",
+  "pdu": [
+    0,
+    17,
+    6,
+    5,
+    4,
+    3,
+    2,
+    0,
+    6,
+    9,
+    70,
+    108,
+    111,
+    99,
+    107,
+    3,
+    255,
+    200,
+    9
+  ],
+  "pdu_type": 0,
+  "phy": "1m",
+  "replay": true,
+  "rf_channel": 0,
+  "rssi": -45,
+  "schema_version": 1,
+  "sequence": 1,
+  "source_id": "ble-pcap",
+  "type": "ble_packet_observation",
+  "$schema": "https://raw.githubusercontent.com/dougborg/AirHound/main/schemas/desktop-ble-packet.v1.schema.json"
+}
