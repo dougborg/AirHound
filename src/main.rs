@@ -133,6 +133,17 @@ static WIFI_QUEUE_DROPS: AtomicU32 = AtomicU32::new(0);
 static WIFI_HOP_ERRORS: AtomicU32 = AtomicU32::new(0);
 
 static SCAN_DROPS: AtomicU32 = AtomicU32::new(0);
+// Diagnostic milliseconds since boot, wrapping after ~49 days. No callback logging.
+static FIRST_SCAN_DROP_MS: AtomicU32 = AtomicU32::new(u32::MAX);
+static LAST_SCAN_DROP_MS: AtomicU32 = AtomicU32::new(0);
+
+fn record_scan_drop() {
+    let now = Instant::now().as_millis() as u32;
+    let _ =
+        FIRST_SCAN_DROP_MS.compare_exchange(u32::MAX, now, Ordering::Relaxed, Ordering::Relaxed);
+    LAST_SCAN_DROP_MS.store(now, Ordering::Relaxed);
+    SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+}
 static OUTPUT_DROPS: AtomicU32 = AtomicU32::new(0);
 static BLE_OUTPUT_DROPS: AtomicU32 = AtomicU32::new(0);
 static SERIALIZE_ERRORS: AtomicU32 = AtomicU32::new(0);
@@ -184,7 +195,7 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     {
         if let Some(odid_event) = scanner::try_parse_odid_wifi(pkt.data, rssi, channel) {
             if SCAN_CHANNEL.try_send(ScanEvent::Odid(odid_event)).is_err() {
-                SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+                record_scan_drop();
             }
             return;
         }
@@ -194,7 +205,7 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
         WIFI_PARSED_COUNT.fetch_add(1, Ordering::Relaxed);
         if SCAN_CHANNEL.try_send(ScanEvent::WiFi(event)).is_err() {
             WIFI_QUEUE_DROPS.fetch_add(1, Ordering::Relaxed);
-            SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+            record_scan_drop();
         }
     }
 }
@@ -239,7 +250,7 @@ impl EventHandler for ScanEventHandler {
             let addr_bytes: &[u8; 6] = report.addr.raw().try_into().unwrap();
             let event = scanner::BleAdvParser::parse(addr_bytes, report.rssi, report.data);
             if SCAN_CHANNEL.try_send(ScanEvent::Ble(event)).is_err() {
-                SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+                record_scan_drop();
             }
         }
     }
@@ -969,6 +980,14 @@ async fn status_task() {
             WIFI_HOP_ERRORS.load(Ordering::Relaxed),
             WIFI_MATCH_COUNT.load(Ordering::Relaxed),
         );
+
+        if SCAN_DROPS.load(Ordering::Relaxed) != 0 {
+            log::info!(
+                "Scan loss timing: first_ms={} last_ms={}",
+                FIRST_SCAN_DROP_MS.load(Ordering::Relaxed),
+                LAST_SCAN_DROP_MS.load(Ordering::Relaxed),
+            );
+        }
 
         let msg = DeviceMessage::Status {
             scanning: SCANNING.load(Ordering::Relaxed),

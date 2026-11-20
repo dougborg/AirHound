@@ -21,6 +21,22 @@ XIAO and ESP-IDF console rates remain unchanged. Flash/boot-ROM traffic remains
 115200; only the no_std M5 application console changes rate. Cargo/just M5 flash
 recipes select the correct monitor rate.
 
+## What the loss counters mean
+
+`scan_drops` counts parsed observations that could not enter the input queue
+because it was full. The radio received these observations, but detection
+processing and streaming never saw them. This is an event count, not a count of
+unique devices: repeated advertisements from one device can each be dropped.
+A subsequent advertisement may still identify the device; a brief observation
+may be lost entirely.
+
+`output_drops` counts records that could not enter the serialized-output queue.
+`ble_output_drops` counts records rejected by the BLE notification queue when a
+subscriber is connected. These counters identify different stages and should not
+be added to estimate the number of unique devices missed. None counts packets
+that the radio never received, including traffic on a different WiFi channel.
+Counters are cumulative since boot; compare consecutive samples to locate loss.
+
 ## Reproduce
 
 Use a compatible data cable, release the device from any VM USB forwarding,
@@ -68,6 +84,19 @@ then stayed on until the known-working image was restored. This candidate was
 not retained; the static gate is now 7 KiB. Other candidates below that gate were
 built but not flashed. Static reservation cannot replace runtime validation.
 
-The final startup-order trial and its longer-run result are recorded below once
-complete. Neither serial validation nor zero queue-drop counters establish
-lossless RF reception or BLE notification throughput.
+The final startup-order trial captured 2,454 WiFi and 743 BLE records over 300
+seconds. All nine snapshots (uptime 32 through 272 seconds) reported 55 scan
+drops, all attributed to WiFi, with zero output drops or serialization errors.
+Internal free heap stayed at 3,672 bytes; there were no channel-hop errors or
+reboots, and the PSRAM startup check passed. Thus no additional input-queue loss
+was reported across that 240-second interval, but 55 events were lost before the
+first snapshot. Moving display startup alone did not eliminate early loss.
+All 3,215 complete protocol records passed the device-message schema.
+
+The diagnostic follow-up logs first/last scan-drop times in milliseconds since
+boot (wrapping after about 49 days), without logging from radio callbacks. These
+aggregate timestamps help distinguish initialization stalls from later bursts.
+They do not change the wire protocol's cumulative loss counters.
+
+Neither serial validation nor zero queue-drop counters establish lossless RF
+reception or BLE notification throughput.
