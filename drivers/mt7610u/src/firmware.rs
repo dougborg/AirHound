@@ -54,7 +54,10 @@ impl<'a> Firmware<'a> {
             build_version: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
             version: u16::from_le_bytes(bytes[10..12].try_into().unwrap()),
             build_time: String::from_utf8_lossy(&bytes[16..32]).into_owned(),
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
         })
     }
 
@@ -241,6 +244,11 @@ mod tests {
         }
         let image = sample();
         let fw = Firmware::parse(&image).unwrap();
+        // Fixed synthetic-image digest independently checked with Python hashlib.
+        assert_eq!(
+            fw.sha256,
+            "1c7624604149eacd63d5d8c06429127e57c0b9e176a5932f3b1ce08e408ecc4b"
+        );
         assert_eq!(fw.ivb, &[0x11; 64]);
         assert_eq!(fw.ilm, &[0x22; 4]);
         assert_eq!(fw.dlm, &[0x33; 4]);
