@@ -219,3 +219,14 @@ The display reports internal RAM and PSRAM separately. Internal heap pressure
 has not been solved by adding external memory: the next memory improvements
 must reduce internal allocations or explicitly move additional compatible
 application data, while retaining sufficient startup stack space.
+
+
+### Startup stack regression gate
+
+The M5Stick no_std CI build runs `scripts/check-firmware-memory.py` against the
+linked ELF and rejects a CPU0 startup-stack reservation below 6 KiB. The floor
+is below the previously working 6,708-byte image and above the observed failed
+3,324-byte trial. Missing, duplicate or reversed linker boundaries fail closed.
+It does not measure task-stack high-water marks or prove worst-case stack use;
+those runtime checks remain #153. The regression tests use the actual working
+and failed image boundaries rather than mirroring the threshold calculation.
