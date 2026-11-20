@@ -69,3 +69,10 @@ captures locally; publish aggregate counts and configuration.
 Track acceptance in [#172](https://github.com/dougborg/AirHound/issues/172), with
 [#171](https://github.com/dougborg/AirHound/issues/171) for receiver diagnostics and
 [#132](https://github.com/dougborg/AirHound/issues/132) for cross-platform reception.
+
+## Raw capture input
+
+[Sniffle and DLT256 replay](sniffle-source.md) use this decoder for complete
+addressed advertisements, reporting `raw_ble_packet` / `single_packet` provenance.
+Incomplete extended chains are retained as packet records but are not decoded as
+complete Remote ID messages. This does not change cached OS-snapshot semantics.

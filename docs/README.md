@@ -27,6 +27,7 @@ are labeled separately.
 - [Signature research and prior art](signature-research.md)
 - [Observation/command protocol and GATT UUIDs](protocol.md)
 - [Firmware streaming, framing and loss counters](firmware-streaming.md)
+- [CatSniffer/Sniffle live capture and PCAP replay](sniffle-source.md)
 - [Typed BLE observation contract](ble-observation-contract.md)
 - [Desktop Remote ID decoding and reception limits](desktop-remote-id.md)
 - [External WiFi file format](external-wifi-v1.md) and [live process protocol](external-scanner-stream-v1.md)

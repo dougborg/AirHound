@@ -13,7 +13,9 @@ runtime support for every parsed command.
 | [device-message.v1](device-message.v1.schema.json) | Firmware observations, detection companions, status, command results and counters | [Firmware streaming](../docs/firmware-streaming.md), [evidence](../docs/detection-evidence.md) |
 | [host-command.v1](host-command.v1.schema.json) | Commands received by supported runtimes | [Command matrix](../docs/protocol.md#command-results-and-runtime-support) |
 | [desktop-ble.v1](desktop-ble.v1.schema.json) | Desktop BLE identity, bounded payloads and evidence | [BLE observation contract](../docs/ble-observation-contract.md) |
-| [desktop-remote-id.v1](desktop-remote-id.v1.schema.json) | Decoded BLE Remote ID and snapshot provenance | [Desktop Remote ID](../docs/desktop-remote-id.md) |
+| [desktop-ble-packet.v1](desktop-ble-packet.v1.schema.json) | Raw BLE packet and same-packet evidence | [Sniffle/PCAP source](../docs/sniffle-source.md) |
+| [desktop-ble-source-status.v1](desktop-ble-source-status.v1.schema.json) | Source lifecycle and queue-drop counters | [Sniffle/PCAP source](../docs/sniffle-source.md) |
+| [desktop-remote-id.v1](desktop-remote-id.v1.schema.json) | Decoded BLE Remote ID with snapshot/raw-packet provenance | [Desktop Remote ID](../docs/desktop-remote-id.md) |
 
 [Examples](examples/) illustrate these formats. External receiver formats have
 separate contracts: [observation files](../docs/external-wifi-v1.md) and

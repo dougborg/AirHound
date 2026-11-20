@@ -15,6 +15,7 @@ out of commits and CI artifacts.
 | Profile live macOS capture | `just profile-hostd` | [Permissions and measurement limits](../hostd/README.md#tests-and-performance) |
 | Monitor firmware serial output | [monitor-firmware.py](monitor-firmware.py) | [Bring-up](../docs/m5stickc-bringup.md), [streaming](../docs/firmware-streaming.md) |
 | Check linked firmware memory layout | [check-firmware-memory.py](check-firmware-memory.py) | [Firmware memory/stack limits](../docs/m5-stream-performance.md) |
+| Capture passive Sniffle BLE packets | [sniffle-source.py](sniffle-source.py), separate GPL-3.0-only helper | [Live and replay source](../docs/sniffle-source.md) |
 | Replay saved BLE HCI data | [replay-hci-ble.py](replay-hci-ble.py) | [USB HCI investigation](../docs/usb-hci-receiver-investigation.md) |
 | Run receiver soak / compare captures | [receiver-soak.py](receiver-soak.py), [receiver-compare.py](receiver-compare.py) | [Receiver testing](../drivers/mt7610u/TESTING.md) |
 | Package an independent receiver candidate | [package-receiver.py](package-receiver.py) | [Release gates](../docs/receiver-release-gates.md) |
