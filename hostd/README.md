@@ -30,7 +30,7 @@ addresses are redacted. Location fields are empty when no valid recent fix exist
 Linux needs BlueZ, D-Bus development headers and libpcap headers (Ubuntu:
 `libdbus-1-dev libpcap-dev`). WiFi is opt-in with `--wifi-interface wlan0mon` on an
 externally configured monitor-mode interface with capture permission. Linux
-location is not implemented. The default Linux configuration scans BLE only.
+location is available through the optional gpsd provider. The default Linux configuration scans BLE only.
 
 ## Receiving detector-device data
 
@@ -43,6 +43,13 @@ Use a separate consumer following the [firmware streaming contract](../docs/firm
 or `scripts/monitor-firmware.py` for bounded serial validation. That script writes
 private captures and aggregate diagnostics; it does not feed hostd or export WiGLE.
 For no_std M5 firmware select `--baud 460800`; other firmware builds use 115200.
+
+## External GNSS location
+
+Use `--gpsd 127.0.0.1:2947` to geotag WiGLE rows from an external receiver on
+macOS or Linux. Optional `--gpsd-device` selects one gpsd device. Fresh valid fixes
+are required; unavailable positions remain blank without CoreLocation fallback.
+See [GNSS setup, validity, and wardriving limits](../docs/gnss-wardriving.md).
 
 ## Observation identity and export
 

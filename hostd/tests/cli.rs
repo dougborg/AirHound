@@ -18,9 +18,19 @@ fn help_and_argument_errors_do_not_require_radios() {
         "--no-wifi",
         "--list-ble-adapters",
         "--ble-adapter",
+        "--gpsd",
+        "--gpsd-device",
     ] {
         assert!(help.contains(flag));
     }
+    let missing_provider = std::process::Command::new(binary)
+        .args(["--gpsd-device", "synthetic"])
+        .output()
+        .unwrap();
+    assert!(!missing_provider.status.success());
+    assert!(String::from_utf8(missing_provider.stderr)
+        .unwrap()
+        .contains("--gpsd"));
     let invalid = std::process::Command::new(binary)
         .args(["--rssi", "1"])
         .output()

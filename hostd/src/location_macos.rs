@@ -130,8 +130,8 @@ fn read_location(loc: &objc2_core_location::CLLocation) -> Option<Location> {
     Some(Location {
         latitude: coord.latitude,
         longitude: coord.longitude,
-        accuracy,
-        altitude: unsafe { loc.altitude() },
+        accuracy: Some(accuracy),
+        altitude: (unsafe { loc.verticalAccuracy() } >= 0.0).then(|| unsafe { loc.altitude() }),
     })
 }
 
@@ -174,8 +174,8 @@ mod tests {
             if let Some(location) = result {
                 assert_eq!(location.latitude, 40.);
                 assert_eq!(location.longitude, -105.);
-                assert_eq!(location.altitude, 1600.);
-                assert_eq!(location.accuracy, 5.);
+                assert_eq!(location.altitude, Some(1600.));
+                assert_eq!(location.accuracy, Some(5.));
             }
         }
     }
