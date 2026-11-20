@@ -44,6 +44,8 @@ while running:
         elif cmd['cmd'] == 'resume':
             state = 'running'
         emit(dict(counters, type='status', state=state, request_id=cmd['request_id'], cleanup_verified=True))
+if mode == 'mcu_timeout':
+    counters['mcu_timeouts'] = 1
 if mode == 'final_drop':
     counters['dropped_observations'] = 1
 emit(dict(counters, type='stopped', cleanup_verified=mode != 'bad_cleanup'))
@@ -104,6 +106,11 @@ class SoakTests(unittest.TestCase):
         self.assertEqual(report['counters']['dropped_observations'], 1)
         self.assertIn('observation_drop_limit_exceeded', report['failures'])
         self.assertIn('forced_kill', self.invoke('ignore_term', shutdown_timeout=.1)['failures'])
+
+    def test_recovered_mcu_timeout_still_fails_acceptance(self):
+        report = self.invoke('mcu_timeout')
+        self.assertIn('mcu_command_timeouts_observed', report['failures'])
+        self.assertFalse(report['passed'])
 
     def test_large_stderr_rotates_without_blocking(self):
         self.assertTrue(self.invoke('noisy')['passed'])

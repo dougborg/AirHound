@@ -48,6 +48,14 @@ session; exhausted attempts or an unverified stop fail. This state machine has
 simulated tests; physical disconnect/reconnect and sleep/wake remain separate
 hardware release gates.
 
+MCU command timeouts also enter recovery, but only after verified radio shutdown.
+At most two such recoveries are permitted over the whole process lifetime; a
+third timeout terminates the receiver. Status and stopped records include the
+cumulative `mcu_timeouts` counter. Recovery does not establish firmware health:
+the soak harness fails acceptance if this counter is nonzero, even when the
+receiver resumes. Persistent startup timeouts require operator investigation
+and may require an unplug/replug; the process does not retry indefinitely.
+
 ## Host observations and export policy
 
 The host emits `external_wifi_observation`, retaining the original nullable RSSI,
