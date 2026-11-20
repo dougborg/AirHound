@@ -21,7 +21,7 @@ import sys
 import time
 
 COUNTERS = ('dropped_observations', 'transfers', 'frames', 'beacons',
-            'malformed_transfers', 'reconnect_attempts')
+            'malformed_transfers', 'reconnect_attempts', 'mcu_timeouts')
 MAX_LINE = 16 * 1024
 
 
@@ -383,6 +383,8 @@ def run(args, command):
         protocol.fail('rss_growth_limit_exceeded')
     if resources.get('fds_growth', 0) > args.max_fd_growth:
         protocol.fail('fd_growth_limit_exceeded')
+    if protocol.counters['mcu_timeouts']:
+        protocol.fail('mcu_command_timeouts_observed')
     if protocol.counters['dropped_observations'] > args.max_drops:
         protocol.fail('observation_drop_limit_exceeded')
     report = {

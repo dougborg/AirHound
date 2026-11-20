@@ -20,6 +20,23 @@ fn retry_control<T>(mut operation: impl FnMut() -> rusb::Result<T>) -> rusb::Res
     unreachable!("last attempt always returns")
 }
 
+/// A command was sent, but no matching MCU acknowledgment arrived in time.
+#[derive(Debug)]
+pub struct McuTimeout {
+    pub command: u8,
+    pub sequence: u8,
+}
+impl std::fmt::Display for McuTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MCU command {} sequence {} timed out",
+            self.command, self.sequence
+        )
+    }
+}
+impl std::error::Error for McuTimeout {}
+
 pub trait RegisterIo {
     fn read32(&mut self, reg: u32) -> Result<u32>;
     fn write32(&mut self, reg: u32, value: u32) -> Result<()>;
@@ -270,7 +287,11 @@ impl<T: UsbIo> UsbDevice<T> {
             );
             return Ok(reply[4..n - 4].to_vec());
         }
-        bail!("MCU command {command} sequence {seq} timed out")
+        Err(McuTimeout {
+            command,
+            sequence: seq,
+        }
+        .into())
     }
 }
 
