@@ -100,3 +100,12 @@ They do not change the wire protocol's cumulative loss counters.
 
 Neither serial validation nor zero queue-drop counters establish lossless RF
 reception or BLE notification throughput.
+
+A subsequent 90-second diagnostic run located 59 losses between 2,016 and
+2,354 milliseconds after boot. Yielding immediately after enabling promiscuous
+capture was then tested for 90 seconds: 698 WiFi and 203 BLE records were
+captured, with 38 losses between 2,076 and 2,335 milliseconds, zero output losses,
+and stable free heap. RF traffic was uncontrolled; the lower count does not
+establish a causal improvement. The early startup loss remains unresolved.
+The explicit yield is retained to let consumers run before further BLE/GATT
+setup; it is not claimed to eliminate the initialization stall.
