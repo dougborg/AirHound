@@ -1,0 +1,295 @@
+{
+  "kind": "synthetic_decoded_observations",
+  "scope": "Rule policy checks; not RF captures, runtime loader tests, or field accuracy measurements.",
+  "cases": [
+    {
+      "id": "rayban-0x1ab",
+      "observation": {
+        "company_ids": [
+          427
+        ],
+        "name": "Ray-Ban TEST"
+      },
+      "expected_rules": [
+        "meta-glasses-candidate"
+      ]
+    },
+    {
+      "id": "vendor-only-0x1ab",
+      "observation": {
+        "company_ids": [
+          427
+        ],
+        "name": "Quest"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "rayban-0x58e",
+      "observation": {
+        "company_ids": [
+          1422
+        ],
+        "name": "Ray-Ban TEST"
+      },
+      "expected_rules": [
+        "meta-glasses-candidate"
+      ]
+    },
+    {
+      "id": "vendor-only-0x58e",
+      "observation": {
+        "company_ids": [
+          1422
+        ],
+        "name": "Quest"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "rayban-0xd53",
+      "observation": {
+        "company_ids": [
+          3411
+        ],
+        "name": "Ray-Ban TEST"
+      },
+      "expected_rules": [
+        "meta-glasses-candidate"
+      ]
+    },
+    {
+      "id": "vendor-only-0xd53",
+      "observation": {
+        "company_ids": [
+          3411
+        ],
+        "name": "Quest"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "oakley-meta",
+      "observation": {
+        "company_ids": [
+          1422
+        ],
+        "name": "oakley meta test"
+      },
+      "expected_rules": [
+        "meta-glasses-candidate"
+      ]
+    },
+    {
+      "id": "spectacles",
+      "observation": {
+        "company_ids": [
+          962
+        ],
+        "name": "Spectacles TEST"
+      },
+      "expected_rules": [
+        "snap-glasses-candidate"
+      ]
+    },
+    {
+      "id": "snap-vendor-alone",
+      "observation": {
+        "company_ids": [
+          962
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "brand-name-alone",
+      "observation": {
+        "name": "Ray-Ban TEST"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "brand-in-sentence",
+      "observation": {
+        "company_ids": [
+          1422
+        ],
+        "name": "Not Ray-Ban TEST"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "unrelated-vendor-with-brand",
+      "observation": {
+        "company_ids": [
+          76
+        ],
+        "name": "Ray-Ban TEST"
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "heycyan",
+      "observation": {
+        "name": "HeyCyan TEST",
+        "service_uuids": [
+          "7905fff0-b5ce-4e99-a40f-4b1e122d00d0"
+        ]
+      },
+      "expected_rules": [
+        "heycyan-glasses-candidate"
+      ]
+    },
+    {
+      "id": "heycyan-short-collision",
+      "observation": {
+        "name": "HeyCyan TEST",
+        "service_uuids": [
+          "fff0"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "heycyan-wrong-base",
+      "observation": {
+        "name": "HeyCyan TEST",
+        "service_uuids": [
+          "0000fff0-0000-1000-8000-00805f9b34fb"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "axon-fc81",
+      "observation": {
+        "company_ids": [
+          845
+        ],
+        "service_uuids": [
+          "fc81"
+        ]
+      },
+      "expected_rules": [
+        "axon-equipment-candidate"
+      ]
+    },
+    {
+      "id": "axon-service-alone-fc81",
+      "observation": {
+        "service_uuids": [
+          "fc81"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "axon-fe6b",
+      "observation": {
+        "company_ids": [
+          845
+        ],
+        "service_uuids": [
+          "fe6b"
+        ]
+      },
+      "expected_rules": [
+        "axon-equipment-candidate"
+      ]
+    },
+    {
+      "id": "axon-service-alone-fe6b",
+      "observation": {
+        "service_uuids": [
+          "fe6b"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "axon-fe6c",
+      "observation": {
+        "company_ids": [
+          845
+        ],
+        "service_uuids": [
+          "fe6c"
+        ]
+      },
+      "expected_rules": [
+        "axon-equipment-candidate"
+      ]
+    },
+    {
+      "id": "axon-service-alone-fe6c",
+      "observation": {
+        "service_uuids": [
+          "fe6c"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "taser-company-alone",
+      "observation": {
+        "company_ids": [
+          845
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "tile-feed",
+      "observation": {
+        "service_uuids": [
+          "feed"
+        ]
+      },
+      "expected_rules": [
+        "tile-service-candidate"
+      ]
+    },
+    {
+      "id": "tile-feec",
+      "observation": {
+        "service_uuids": [
+          "feec"
+        ]
+      },
+      "expected_rules": [
+        "tile-service-candidate"
+      ]
+    },
+    {
+      "id": "meshtastic",
+      "observation": {
+        "service_uuids": [
+          "6ba1b218-15a8-461f-9fa8-5dcae273eafd"
+        ]
+      },
+      "expected_rules": [
+        "meshtastic-service-candidate"
+      ]
+    },
+    {
+      "id": "generic-ble",
+      "observation": {
+        "company_ids": [
+          76
+        ],
+        "service_uuids": [
+          "180a",
+          "180f",
+          "feaa",
+          "fd5f"
+        ]
+      },
+      "expected_rules": []
+    },
+    {
+      "id": "empty",
+      "observation": {},
+      "expected_rules": []
+    }
+  ]
+}
