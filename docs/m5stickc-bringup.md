@@ -224,9 +224,11 @@ application data, while retaining sufficient startup stack space.
 ### Startup stack regression gate
 
 The M5Stick no_std CI build runs `scripts/check-firmware-memory.py` against the
-linked ELF and rejects a CPU0 startup-stack reservation below 6 KiB. The floor
-is below the previously working 6,708-byte image and above the observed failed
-3,324-byte trial. Missing, duplicate or reversed linker boundaries fail closed.
+linked ELF and rejects a CPU0 startup-stack reservation below 7 KiB. A later
+6,556-byte scheduling experiment hit the hardware stack guard during BLE
+startup despite passing the old 6 KiB gate. The known-working streaming image
+reserves 7,212 bytes. The older 6,708-byte image had a different task layout;
+its success did not establish enough margin for subsequent firmware. Missing, duplicate or reversed linker boundaries fail closed.
 It does not measure task-stack high-water marks or prove worst-case stack use;
 those runtime checks remain #153. The regression tests use the actual working
 and failed image boundaries rather than mirroring the threshold calculation.

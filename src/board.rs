@@ -8,7 +8,7 @@
 /// | | ESP32 (M5StickC) | ESP32-S3 (XIAO) |
 /// |---|---|---|
 /// | Internal heap | 64 KiB | 128 KiB |
-/// | Scan channel | 8 slots | 16 slots |
+/// | Scan channel | 20 slots | 16 slots |
 /// | PSRAM | 2 MB (observations) | Yes (unused) |
 /// | Display | ST7789V2 135×240 | None |
 /// | DRAM limit | ~180 KB total | ~512 KB total |

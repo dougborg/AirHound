@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Reject ESP32 firmware with less than the reviewed startup-stack reservation.
 
-This inspects linker symbols, not runtime stack high-water marks. The 6 KiB
-floor preserves the margin in the previously working 6,708-byte reservation;
-a 3,324-byte trial linked but stalled radio initialization on the Plus2.
+This inspects linker symbols, not runtime stack high-water marks. The 7 KiB
+floor rejects a 6,556-byte scheduling trial that hit the CPU0 stack guard during
+BLE startup. The validated streaming image reserves 7,212 bytes. Passing this
+static gate is necessary, but cannot replace boot and runtime testing.
 """
 import argparse
 import json
@@ -36,7 +37,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf', type=Path)
     parser.add_argument('--nm', default='xtensa-esp32-elf-nm')
-    parser.add_argument('--minimum-bytes', type=int, default=6 * 1024)
+    parser.add_argument('--minimum-bytes', type=int, default=7 * 1024)
     args = parser.parse_args()
     try:
         result = subprocess.run([args.nm, '--defined-only', str(args.elf)],

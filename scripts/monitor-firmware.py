@@ -127,6 +127,8 @@ class Monitor:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True)
+    parser.add_argument('--baud', type=int, default=115200, choices=(115200, 460800, 921600))
+    parser.add_argument('--reset', action='store_true', help='Reset ESP32 via RTS with GPIO0 released before observation')
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--seconds', type=float, default=120)
     parser.add_argument('--board', default='m5stickc_plus2')
@@ -140,7 +142,7 @@ def main():
     monitor = Monitor(args.board, args.version, args.require_psram)
     started = time.monotonic()
     total, pending = 0, bytearray()
-    port = serial.Serial(port=None, baudrate=115200, timeout=0.25)
+    port = serial.Serial(port=None, baudrate=args.baud, timeout=0.25)
     port.dtr = False
     port.rts = False
     port.port = args.port
@@ -148,6 +150,12 @@ def main():
     try:
         with os.fdopen(fd, 'wb') as log:
             port.open()
+            if args.reset:
+                port.dtr = False
+                port.rts = True
+                time.sleep(0.1)
+                port.rts = False
+                started = time.monotonic()
             while time.monotonic() - started < args.seconds:
                 data = port.read(4096)
                 total += len(data)
