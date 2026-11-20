@@ -173,3 +173,20 @@ normal hostd pipeline, run detection matching or export WiGLE CSV. The receiver'
 signal estimates remain unvalidated; live integration needs a host observation
 model that preserves this distinction. Ordinary `cargo run` still selects
 `airhound-hostd`.
+
+## Live external receiver
+
+Use `--external-scanner /absolute/path/to/mt7610u-lab` with
+`--external-firmware /absolute/path/to/mt7610e.bin` to replace native WiFi with
+the standalone receiver. `--external-channels 1,6,11,48` and
+`--external-dwell-ms 500` select its channel plan. The daemon supervises the
+child directly, validates its bounded stream, and propagates stop/start and
+shutdown through correlated acknowledgments and verified cleanup.
+
+External observations retain their capture timestamp, binary SSID, nullable
+RSSI and unvalidated estimate. They appear on stdout as
+`external_wifi_observation` with `filter_policy: identity_only_unvalidated`,
+MAC/SSID matches and explicit `wigle_exported: false`. The normal RSSI threshold
+does not apply to this labeled identity-only path. No estimates are silently
+inserted into WiGLE CSV or the firmware protocol. See the
+[stream protocol and example](../docs/external-scanner-stream-v1.md).

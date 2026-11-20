@@ -3,7 +3,7 @@
 // Copyright (C) 2018 Lorenzo Bianconi; chip power sequence from mt76x0/init.c
 // (GPL-2.0-only), Ralink Technology 2002-2010, Felix Fietkau 2014,
 // Jakub Kicinski 2015, Stanislaw Gruszka 2018. See THIRD_PARTY_NOTICES.
-use crate::transport::{RegisterIo, UsbDevice};
+use crate::transport::{RegisterIo, UsbDevice, UsbIo};
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::{
@@ -126,7 +126,7 @@ pub fn enable_chip(io: &mut impl RegisterIo) -> Result<()> {
 
 /// Returns true when this invocation uploaded the supplied image. A ready MCU
 /// is reused without making any claim about the identity of its running image.
-pub fn load(device: &mut UsbDevice, firmware: &Firmware<'_>) -> Result<bool> {
+pub fn load<T: UsbIo>(device: &mut UsbDevice<T>, firmware: &Firmware<'_>) -> Result<bool> {
     firmware.require_reference()?;
     enable_chip(device)?;
     device.write32(0x0238, 0x00c00000)?;
@@ -168,6 +168,7 @@ pub fn load(device: &mut UsbDevice, firmware: &Firmware<'_>) -> Result<bool> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     fn sample() -> Vec<u8> {
@@ -179,6 +180,60 @@ mod tests {
         image[100..].fill(0x33);
         image
     }
+    #[test]
+    fn firmware_upload_and_ready_reuse_preserve_receive_only_state() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut device = endpoint.device();
+        let image = crate::test_support::image();
+        let mut fw = Firmware::parse(&image).unwrap();
+        assert!(load(&mut device, &fw).is_err());
+        assert!(endpoint.0.lock().unwrap().writes.is_empty());
+        // The loader's wire sequence is tested with synthetic bytes, never bundled firmware.
+        fw.sha256 = REFERENCE_SHA256.into();
+        assert!(!load(&mut device, &fw).unwrap());
+        assert!(endpoint.0.lock().unwrap().bulk_writes.is_empty());
+        endpoint.0.lock().unwrap().registers.insert(0x730, 0);
+        assert!(load(&mut device, &fw).unwrap());
+        let m = endpoint.0.lock().unwrap();
+        assert_eq!(m.bulk_writes.len(), 2);
+        assert_eq!(m.bulk_writes[0], chunk_packet(fw.ilm).unwrap());
+        assert_eq!(m.bulk_writes[1], chunk_packet(fw.dlm).unwrap());
+        assert!(m
+            .writes
+            .iter()
+            .any(|w| w.1 == 1 && w.2 == 0x12 && w.4 == fw.ivb));
+        assert_eq!(m.registers[&0x1004] & 0xc, 0);
+        assert_eq!(m.registers[&0x9a8], 2);
+    }
+
+    #[test]
+    fn firmware_poll_failures_propagate_and_chunks_have_bounded_offsets() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut device = endpoint.device();
+        assert!(poll(&mut device, 0x730, 1, 0, Duration::ZERO).is_err());
+        endpoint.0.lock().unwrap().error = Some(rusb::Error::NoDevice);
+        assert!(enable_chip(&mut device).is_err());
+        assert!(poll(&mut device, 0, 1, 0, Duration::ZERO).is_err());
+        endpoint.0.lock().unwrap().error = None;
+        endpoint.0.lock().unwrap().registers.insert(0x730, 0);
+        let mut bytes = vec![0; 32 + 64 + MAX_CHUNK + 5];
+        bytes[..4].copy_from_slice(&((64 + MAX_CHUNK + 5) as u32).to_le_bytes());
+        let mut fw = Firmware::parse(&bytes).unwrap();
+        fw.sha256 = REFERENCE_SHA256.into();
+        assert!(load(&mut device, &fw).unwrap());
+        let m = endpoint.0.lock().unwrap();
+        assert_eq!(m.bulk_writes.len(), 2);
+        assert_eq!(m.bulk_writes[0].len(), MAX_CHUNK + 8);
+        assert!(m
+            .writes
+            .iter()
+            .any(|w| w.1 == 0x42 && w.3 == 0x230 && w.2 == 0x40 + MAX_CHUNK as u16));
+        drop(m);
+        endpoint.0.lock().unwrap().registers.insert(0x730, 0);
+        endpoint.0.lock().unwrap().short_write = true;
+        assert!(load(&mut device, &fw).is_err());
+    }
+
     #[test]
     fn rejects_bad_firmware_before_device_access() {
         for n in 0..32 {

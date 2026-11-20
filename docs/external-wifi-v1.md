@@ -24,7 +24,7 @@ Required record fields:
 | `elapsed_ms` | Monotonic milliseconds since the capture loop began |
 | `bssid` | Six colon-separated uppercase hexadecimal bytes, a nonzero unicast BSSID |
 | `ssid_bytes` | `null` when absent; array of up to 32 bytes otherwise. Empty means hidden/empty; non-UTF-8 bytes are preserved |
-| `receive_channel` | Configured channel: 1–11 or 36/40/44/48 |
+| `receive_channel` | Configured HT20 channel: 1–13; 36–64 or 100–144 in steps of 4; 149–165 in steps of 4 |
 | `advertised_channel` | Beacon's advertised primary channel, or `null` when unavailable |
 | `channel_epoch` | Zero initially; increments after each completed retune |
 | `dwell_elapsed_ms` | Time since the current channel became available for capture |

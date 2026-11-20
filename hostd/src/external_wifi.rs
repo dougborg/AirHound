@@ -16,32 +16,32 @@ fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Opti
     Option::deserialize(d)
 }
 
-#[derive(Deserialize)]
-struct Beacon {
-    schema_version: u32,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Beacon {
+    pub schema_version: u32,
     #[serde(rename = "type")]
-    kind: String,
-    source: String,
-    session_id: String,
-    sequence: u64,
-    bssid: String,
+    pub kind: String,
+    pub source: String,
+    pub session_id: String,
+    pub sequence: u64,
+    pub bssid: String,
     #[serde(deserialize_with = "nullable")]
-    ssid_bytes: Option<Vec<u8>>,
+    pub ssid_bytes: Option<Vec<u8>>,
     #[serde(deserialize_with = "nullable")]
-    advertised_channel: Option<u8>,
-    receive_channel: u8,
-    elapsed_ms: u64,
-    observed_at_unix_ms: u64,
-    dwell_elapsed_ms: u64,
-    channel_epoch: u64,
+    pub advertised_channel: Option<u8>,
+    pub receive_channel: u8,
+    pub elapsed_ms: u64,
+    pub observed_at_unix_ms: u64,
+    pub dwell_elapsed_ms: u64,
+    pub channel_epoch: u64,
     #[serde(deserialize_with = "nullable")]
-    rssi_dbm: Option<i8>,
+    pub rssi_dbm: Option<i8>,
     #[serde(deserialize_with = "nullable")]
-    estimated_rssi_dbm: Option<i8>,
-    rssi_validated: bool,
-    rssi_estimate_basis: String,
-    raw_rssi: [u8; 4],
-    full_calibration: bool,
+    pub estimated_rssi_dbm: Option<i8>,
+    pub rssi_validated: bool,
+    pub rssi_estimate_basis: String,
+    pub raw_rssi: [u8; 4],
+    pub full_calibration: bool,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
@@ -59,7 +59,7 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-fn bssid(text: &str) -> Option<[u8; 6]> {
+pub fn bssid(text: &str) -> Option<[u8; 6]> {
     if text.len() != 17 {
         return None;
     }
@@ -88,6 +88,124 @@ fn advertised_channel(channel: u8) -> bool {
         || ((149..=177).contains(&channel) && channel % 4 == 1)
 }
 
+/// Per-session validation used by both files and supervised streams. A new
+/// instance is required only after an explicit running/recovery boundary.
+#[derive(Default)]
+pub struct SessionValidator {
+    session: Option<String>,
+    next_sequence: u64,
+    last: Option<(u64, u64, u8, u64)>,
+}
+/// Passive HT20 channel set supported by the MT7610U companion.
+/// Channel numbers are protocol facts; no GPL implementation is linked here.
+pub fn supported_receive_channel(channel: u8) -> bool {
+    matches!(
+        channel,
+        1..=13
+            | 36
+            | 40
+            | 44
+            | 48
+            | 52
+            | 56
+            | 60
+            | 64
+            | 100
+            | 104
+            | 108
+            | 112
+            | 116
+            | 120
+            | 124
+            | 128
+            | 132
+            | 136
+            | 140
+            | 144
+            | 149
+            | 153
+            | 157
+            | 161
+            | 165
+    )
+}
+
+impl SessionValidator {
+    pub fn accept(&mut self, line: &[u8]) -> io::Result<Beacon> {
+        if line.len() >= MAX_LINE_BYTES {
+            return Err(invalid("capture record exceeds line byte limit"));
+        }
+        let record: Beacon = serde_json::from_slice(line)
+            .map_err(|_| invalid("invalid capture record fields or JSON"))?;
+        if record.schema_version != 1 || record.kind != "beacon" || record.source != "mt7610u-lab" {
+            return Err(invalid(
+                "unsupported capture schema, record type, or source",
+            ));
+        }
+        if record.session_id.is_empty()
+            || record.session_id.len() > 128
+            || record.session_id.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid capture session identifier"));
+        }
+        match &self.session {
+            None => self.session = Some(record.session_id.clone()),
+            Some(id) if id != &record.session_id => return Err(invalid("capture session changed")),
+            _ => {}
+        }
+        if record.sequence != self.next_sequence {
+            return Err(invalid("capture sequence is not consecutive from zero"));
+        }
+        bssid(&record.bssid).ok_or_else(|| invalid("invalid capture BSSID"))?;
+        if record.ssid_bytes.as_ref().is_some_and(|v| v.len() > 32) {
+            return Err(invalid("SSID exceeds 32 bytes"));
+        }
+        if !supported_receive_channel(record.receive_channel) {
+            return Err(invalid("unsupported receive channel"));
+        }
+        if record
+            .advertised_channel
+            .is_some_and(|c| !advertised_channel(c))
+        {
+            return Err(invalid("invalid advertised channel"));
+        }
+        if record.rssi_dbm.is_some()
+            || record.rssi_validated
+            || record.full_calibration
+            || record.rssi_estimate_basis != "mt76_eeprom_formula"
+        {
+            return Err(invalid(
+                "unsupported signal provenance or calibration claim",
+            ));
+        }
+        if let Some((elapsed, epoch, channel, dwell)) = self.last {
+            if record.elapsed_ms < elapsed
+                || record.channel_epoch < epoch
+                || (record.channel_epoch == epoch
+                    && (record.receive_channel != channel || record.dwell_elapsed_ms < dwell))
+            {
+                return Err(invalid(
+                    "capture time or channel epoch regressed or changed inconsistently",
+                ));
+            }
+        }
+        self.last = Some((
+            record.elapsed_ms,
+            record.channel_epoch,
+            record.receive_channel,
+            record.dwell_elapsed_ms,
+        ));
+        // Shape/type checking above preserves raw samples without treating
+        // them as measurements or recomputing absent EEPROM calibration.
+        let _ = (record.raw_rssi, record.observed_at_unix_ms);
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| invalid("capture sequence overflow"))?;
+        Ok(record)
+    }
+}
+
 /// Require complete newline-terminated records; never include captured data in
 /// diagnostics or summaries. The file limit includes delimiters and blank lines
 /// are invalid. Input reads and storage remain bounded even without a newline.
@@ -106,8 +224,7 @@ fn validate_with_limits(
     };
     let mut line = Vec::new();
     let mut buffer = [0; 4096];
-    let mut session: Option<String> = None;
-    let mut last: Option<(u64, u64, u8, u64)> = None;
+    let mut validator = SessionValidator::default();
     let mut identifiers = HashSet::new();
     let mut channels = HashSet::new();
     loop {
@@ -137,77 +254,9 @@ fn validate_with_limits(
                     "capture record including newline exceeds line byte limit",
                 ));
             }
-            let record: Beacon = serde_json::from_slice(&line)
-                .map_err(|_| invalid("invalid capture record fields or JSON"))?;
+            let record = validator.accept(&line)?;
             line.clear();
-            if record.schema_version != 1
-                || record.kind != "beacon"
-                || record.source != "mt7610u-lab"
-            {
-                return Err(invalid(
-                    "unsupported capture schema, record type, or source",
-                ));
-            }
-            if record.session_id.is_empty()
-                || record.session_id.len() > 128
-                || record.session_id.chars().any(char::is_control)
-            {
-                return Err(invalid("invalid capture session identifier"));
-            }
-            match &session {
-                None => session = Some(record.session_id),
-                Some(id) if id != &record.session_id => {
-                    return Err(invalid("capture session changed"))
-                }
-                _ => {}
-            }
-            if record.sequence != summary.records {
-                return Err(invalid("capture sequence is not consecutive from zero"));
-            }
-            let mac = bssid(&record.bssid).ok_or_else(|| invalid("invalid capture BSSID"))?;
-            if record.ssid_bytes.as_ref().is_some_and(|v| v.len() > 32) {
-                return Err(invalid("SSID exceeds 32 bytes"));
-            }
-            if !(1..=11).contains(&record.receive_channel)
-                && ![36, 40, 44, 48].contains(&record.receive_channel)
-            {
-                return Err(invalid("unsupported receive channel"));
-            }
-            if record
-                .advertised_channel
-                .is_some_and(|c| !advertised_channel(c))
-            {
-                return Err(invalid("invalid advertised channel"));
-            }
-            if record.rssi_dbm.is_some()
-                || record.rssi_validated
-                || record.full_calibration
-                || record.rssi_estimate_basis != "mt76_eeprom_formula"
-            {
-                return Err(invalid(
-                    "unsupported signal provenance or calibration claim",
-                ));
-            }
-            if let Some((elapsed, epoch, channel, dwell)) = last {
-                if record.elapsed_ms < elapsed
-                    || record.channel_epoch < epoch
-                    || (record.channel_epoch == epoch
-                        && (record.receive_channel != channel || record.dwell_elapsed_ms < dwell))
-                {
-                    return Err(invalid(
-                        "capture time or channel epoch regressed or changed inconsistently",
-                    ));
-                }
-            }
-            last = Some((
-                record.elapsed_ms,
-                record.channel_epoch,
-                record.receive_channel,
-                record.dwell_elapsed_ms,
-            ));
-            // Shape/type checking above preserves raw samples without treating
-            // them as measurements or recomputing absent EEPROM calibration.
-            let _ = (record.raw_rssi, record.observed_at_unix_ms);
+            let mac = bssid(&record.bssid).expect("validated BSSID");
             summary.records += 1;
             summary.estimated_signal_records += u64::from(record.estimated_rssi_dbm.is_some());
             summary.missing_signal_records += u64::from(record.estimated_rssi_dbm.is_none());
@@ -240,6 +289,25 @@ mod tests {
         format!("{value}\n").into_bytes()
     }
     #[test]
+    fn expanded_receive_channels_validate_end_to_end() {
+        for channel in [
+            12, 13, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
+            149, 153, 157, 161, 165,
+        ] {
+            let mut value = beacon();
+            value["receive_channel"] = json!(channel);
+            assert_eq!(validate(&line(&value)[..]).unwrap().records, 1);
+        }
+        for channel in [
+            14, 38, 42, 50, 68, 96, 102, 106, 138, 151, 155, 163, 169, 177, 183,
+        ] {
+            let mut value = beacon();
+            value["receive_channel"] = json!(channel);
+            assert!(validate(&line(&value)[..]).is_err());
+        }
+    }
+
+    #[test]
     fn binary_ssid_unknown_extensions_and_summary_privacy() {
         let mut value = beacon();
         value["future"] = json!({"anything":true});
@@ -267,7 +335,7 @@ mod tests {
             ("full_calibration", json!(true)),
             ("bssid", json!("01:00:00:00:00:01")),
             ("bssid", json!("00:00:00:00:00:00")),
-            ("receive_channel", json!(12)),
+            ("receive_channel", json!(14)),
             ("ssid_bytes", json!(vec![0; 33])),
         ] {
             let mut record = beacon();

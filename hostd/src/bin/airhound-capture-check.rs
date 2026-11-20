@@ -2,8 +2,7 @@
 //! Offline validation only: no scanner process, USB access, CSV, or location.
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
-#[path = "../external_wifi.rs"]
-mod external_wifi;
+use airhound_hostd::external_wifi;
 use clap::Parser;
 use std::{
     fs::File,
