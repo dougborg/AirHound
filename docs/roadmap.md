@@ -2,15 +2,53 @@
 
 Published tracking index: [#160](https://github.com/dougborg/AirHound/issues/160).
 
-Groomed 2026-11-19 from the project conversation, all open GitHub issues/PRs, current source, and local hardware reports. Priorities are sequencing, not delivery promises. Issue bodies own acceptance criteria; this index owns ordering and status. Integration follow-up: #150, #151 and firmware #162 are merged after final combined-tree checks. No release has been published.
+Updated 2026-11-20. Issue bodies own acceptance criteria; this index owns ordering.
+The original inventory below is retained, with current progress called out here.
+No release has been published by this work.
 
 ## Recommended order
 
-1. Integrate reviewable commits and refresh final-head evidence (#152), with #150, #151 and #162 merged; dependency follow-up remains.
-2. Fix firmware resource/stack/drop limits (#153), signature-confidence problems (#154), and macOS live capture regressions (#159). Keep #141 as the release gate.
-3. Complete receiver endurance/fault acceptance (#155) and controlled RF/channel/RSSI validation (#156), then distribution/signing/license evidence (#157).
-4. Deliver typed observations/health (#71), improve sensor UI (#8), evaluate the native desktop GUI (#158), then expand transport, storage and integrations as needed.
-5. Migrate ESP dependencies (#1) as a tested compatibility set; use the new hardware checks to catch startup/PSRAM/coexistence regressions. Routine dependency PRs remain review work, not automatic upgrades.
+1. Land the reviewed BLE/Remote ID (#173) and desktop gpsd (#177) integrations.
+   The scanner/UI/streaming/research batch #165–#170 and offline HCI tooling #174
+   are merged. Preserve desktop production coverage floors of 81% on both OSes.
+2. **Prioritize the signature system:** rule-scoped evidence and independent
+   alert/watchlist policy (#154), contextual manufacturer/service payload matching
+   (#35), full UUID and embedded parser/output parity (#36), and canonical
+   schema/default agreement (#11). Follow with versioned loading (#14) and sourced
+   candidate admission (#16). Research identifiers are not enabled detectors.
+3. Keep deeper GPS work deferred: capture-time position association, persistent
+   fix provenance, partial TPV handling, unplug/replug and moving-route validation
+   (#79/#28/#15). Stationary receiver-to-WiGLE capture and daemon-disconnect
+   clearing passed; they do not establish route accuracy.
+4. Continue transport/hardware work after signatures: detector-device serial/GATT
+   ingestion (#175), experimental live USB HCI receiver (#176), extended/Coded
+   reception (#171/#172/#132), and ALFA endurance/RF/distribution (#155/#156/#157).
+5. Retain firmware resource/drop work (#153), physical M5 UI/buzzer acceptance
+   (#8/#7), permission lifecycle (#159), native GUI evaluation (#158), dependency
+   migration (#1) and release gates (#141/#123). Preserved unfinished local memory
+   and confidence patches require review/rework before landing.
+
+## Current integration evidence
+
+- #173 preserves bounded desktop BLE manufacturer/service payloads and full UUIDs,
+  reports adapter capabilities without inferring RF support, and decodes normalized
+  Remote ID data. Linux coverage was repaired from 80.13% to 81.04% without lowering
+  the gate. Extended/Coded reception remains unvalidated.
+- #177 adds optional gpsd geotagging with stale/disconnected fixes cleared and no
+  silent source fallback. The combined tree has 82.37% local macOS production
+  coverage, excluding test bodies. A granted-permission live run recorded 3,286
+  rows: 2,539 geotagged, nine startup rows blank and 738 rows after gpsd stopped
+  blank. Raw identifiers and coordinates remain local.
+- #174 is offline HCI replay and a receiver investigation, not a live USB driver.
+  The CSR dongle has not been claimed or reset on macOS. #176 owns live acceptance.
+- #175 explicitly tracks the missing host mode for running M5/XIAO devices;
+  hostd stdin remains a command channel, not a firmware-event ingestion channel.
+- #170's smart-glasses/equipment and broader device research stays offline until
+  labeled captures, ordinary-device negatives and provenance support promotion.
+  Vendor/service identifiers do not establish model, ownership or surveillance.
+
+The following platform table records the earlier baseline, not newer final-head
+coverage or release acceptance. Consult the linked issues and PR checks for updates.
 
 ## What exists today
 
@@ -36,7 +74,16 @@ Groomed 2026-11-19 from the project conversation, all open GitHub issues/PRs, cu
 
 ## Complete open-issue inventory
 
-Every open implementation/research issue at this grooming snapshot appears once below. The roadmap tracking issue itself is an index, not an additional deliverable. Later/research entries remain visible without implying current priority.
+The original implementation/research inventory follows. New desktop issues are listed first; their acceptance criteria live in GitHub. The roadmap tracking issue itself is an index, not an additional deliverable. Later/research entries remain visible without implying current priority.
+
+### Added desktop and integration work
+
+| Issue | Work | Remaining scope |
+| --- | --- | --- |
+| [#171](https://github.com/dougborg/AirHound/issues/171) | BLE adapters/capabilities | Hardware matrix, durable identity and actual scan/API capability validation |
+| [#172](https://github.com/dougborg/AirHound/issues/172) | Desktop Remote ID | Controlled legacy/extended/Coded reception and completeness validation |
+| [#175](https://github.com/dougborg/AirHound/issues/175) | Detector-device host ingestion | Serial first, then bounded/reconnect-tested BLE GATT |
+| [#176](https://github.com/dougborg/AirHound/issues/176) | Live USB HCI receiver | Linux/UTM experiment, host ingestion, separate macOS ownership assessment |
 
 ### Now — integrate and stabilize
 
