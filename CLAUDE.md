@@ -1,6 +1,7 @@
 # Repository guide for coding assistants
 
-Use the [README](README.md) for supported entry points,
+Use the [README](README.md) for supported entry points, the
+[documentation index](docs/README.md) for component guides,
 [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions, and the
 [roadmap](docs/roadmap.md) for open work and hardware-release gates. Verify claims
 against the current branch; a local build or short capture is not a release.
@@ -63,7 +64,7 @@ monitor it. M5 no_std application output is 460800 baud; other builds use 115200
 Boot-ROM output stays 115200. See the [bring-up guide](docs/m5stickc-bringup.md)
 for backup, image offsets and hardware validation before flashing.
 
-Coverage uses the pinned toolchain and floors in `.github/`; follow the README
+Coverage uses the pinned toolchain and floors in `.github/`; follow [the testing guide](docs/testing.md)
 rather than substituting toolchain versions or lowering thresholds. Synthetic
 benchmarks exclude radio acquisition. Live macOS profiling requires permissions
 and should not run concurrently with builds for performance comparisons.

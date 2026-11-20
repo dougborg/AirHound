@@ -1,13 +1,15 @@
 # AirHound desktop scanner
 
+[Project home](../README.md) · [Documentation index](../docs/README.md) · [Command protocol](../docs/protocol.md)
+
 `airhound-hostd` scans using the host OS, records address-bearing observations in
 WiGLE CSV, and writes NDJSON to stdout. It has a CLI interface; the macOS `.app`
 bundle provides application identity and permission descriptions, not a GUI.
 
 ## Build and run
 
-Use the host Rust toolchain (`RUSTUP_TOOLCHAIN=stable` when the repository's ESP
-Rust override is active):
+Run the recipes below from the repository root with stable Rust and `just` installed.
+The recipes enter `hostd/`, which selects its own stable toolchain:
 
 ```sh
 just build-hostd             # macOS or Linux
@@ -28,7 +30,7 @@ code. Check System Settings → Privacy & Security → Location Services if WiFi
 addresses are redacted. Location fields are empty when no valid recent fix exists.
 
 Linux needs BlueZ, D-Bus development headers and libpcap headers (Ubuntu:
-`libdbus-1-dev libpcap-dev`). WiFi is opt-in with `--wifi-interface wlan0mon` on an
+`libdbus-1-dev libpcap-dev pkg-config`). WiFi is opt-in with `--wifi-interface wlan0mon` on an
 externally configured monitor-mode interface with capture permission. Linux
 location is available through the optional gpsd provider. The default Linux configuration scans BLE only.
 
@@ -125,7 +127,7 @@ rows do not prove fresh RF sweeps. Linux capture listens continuously on the
 externally selected channel and drops events if its bounded queue fills.
 
 NDJSON commands are accepted on stdin: `{"cmd":"stop"}`, `{"cmd":"start"}`,
-`{"cmd":"status"}` and the configuration commands documented in the root README.
+`{"cmd":"status"}` and the configuration commands in the [protocol guide](../docs/protocol.md#command-results-and-runtime-support).
 `stop` pauses processing, stops BLE discovery and prevents new WiFi scan requests.
 An already-running macOS WiFi call cannot be canceled; its results are discarded
 across pause/resume. Start/stop acknowledgments report the requested state, not
@@ -231,11 +233,24 @@ does not apply to this labeled identity-only path. No estimates are silently
 inserted into WiGLE CSV or the firmware protocol. See the
 [stream protocol and example](../docs/external-scanner-stream-v1.md).
 
-### BLE receiver selection and diagnostics
+## Linux WiFi capture
 
-Use `--list-ble-adapters` for receiver identity and capability evidence without
-starting a scan. Linux supports an explicit `--ble-adapter hciN`; an unavailable
-choice fails rather than falling back. CoreBluetooth selection is system-managed.
-The active receiver appears in scanner-health output. See
-[BLE receiver diagnostics](../docs/ble-receivers.md) for capability layers,
-read-only Linux PHY queries, permission limits and remaining hardware validation.
+Supply an existing monitor-mode interface, with capture permission:
+
+```sh
+cargo +stable run --manifest-path hostd/Cargo.toml -- \
+  --wifi-interface mon0 --no-ble --output capture.csv
+```
+
+Configure interface mode and channel externally. AirHound does not disconnect
+NetworkManager, change interface mode, hop this interface's channel or transmit
+WiFi packets. Without `--wifi-interface`, Linux runs BLE only.
+
+The adapter requires radiotap channel and dBm signal fields. It supports 2.4 GHz
+and 5 GHz channels 36–177; 6 GHz awaits explicit band metadata. Truncated packets,
+failed CRCs, padded payloads and missing/unsupported metadata are discarded.
+Capture and the bounded event queue are best effort under load. Parsed WiFi
+observations use the shared filter and WiGLE writer; Remote ID
+NAN/beacon/probe-response payloads also emit `drone` messages. Security fields
+remain unknown; optional gpsd supplies valid location when configured.
+Hardware/driver compatibility and RF loss still need live validation.

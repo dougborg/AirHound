@@ -1,13 +1,13 @@
 # Contributing to AirHound
 
-AirHound is a community-driven project. The most impactful contribution you can make is adding new device signatures — every new MAC prefix, SSID pattern, or BLE identifier helps the entire detection community.
+AirHound welcomes source-backed signature research, receiver support and improvements to the shared detection pipeline. Start with the [documentation index](docs/README.md) for the component you want to change.
 
 ## Ways to Contribute
 
 Roughly ordered by accessibility:
 
-1. **Report a device signature** — Open an [issue](https://github.com/dougborg/AirHound/issues) with whatever data you have: MAC address, SSID, BLE advertisement name, manufacturer ID. Partial data is fine.
-2. **Add signatures to the database** — Edit `src/defaults.rs` and open a PR. See [Adding Device Signatures](#adding-device-signatures) below.
+1. **Report a device signature** — Open an [issue](https://github.com/dougborg/AirHound/issues) with sources, device/model context and sanitized advertisement examples. Partial evidence is useful; keep private device identifiers and captures out of public issues.
+2. **Add signatures to the database** — Follow the [canonical pack workflow](docs/signature-packs.md) and open a PR. See [Adding Device Signatures](#adding-device-signatures) below.
 3. **Add board support** — New ESP32 board? Add a feature flag in `Cargo.toml` and pin assignments in `src/board.rs`.
 4. **Protocol improvements** — Changes to the NDJSON message format in `src/protocol.rs`. See [#9](https://github.com/dougborg/AirHound/issues/9).
 5. **Bug fixes and code improvements** — Always welcome.
@@ -19,7 +19,7 @@ Roughly ordered by accessibility:
 
 ### Docker (recommended)
 
-No local toolchain needed. Requires Docker and [`just`](https://github.com/casey/just).
+No local ESP toolchain needed. Requires Docker and [`just`](https://github.com/casey/just).
 
 ```bash
 cargo install just
@@ -58,7 +58,7 @@ just bench-hostd
 
 The benchmark is synthetic and needs no radio permissions. `just profile-hostd`
 is a separate live macOS check requiring a connected radio and granted permissions.
-See [testing and analysis](README.md#testing-and-analysis) for coverage, fuzzing,
+See [testing and analysis](docs/testing.md) for coverage, fuzzing,
 CI checks and hardware-validation limits. Keep raw captures, nearby identifiers
 and device flash backups out of commits and CI artifacts.
 
@@ -106,44 +106,44 @@ Common prefixes: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`.
 
 ## Adding Device Signatures
 
-AirHound's signature database has a formal [JSON Schema](schemas/signatures.v1.schema.json) designed for cross-tool sharing ([#11](https://github.com/dougborg/AirHound/issues/11)). The default signatures currently live in [`src/defaults.rs`](src/defaults.rs) in the library crate. There are several types of signatures you can add:
+Start with [signature packs, research and admission](signatures/README.md).
+Production defaults come from `signatures/builtin.v2.json`; do not edit
+`src/generated_signatures.rs` directly. `src/defaults.rs` contains helpers and
+includes the generated tables. The legacy v1 examples are not compiler input.
 
-### MAC OUI Prefixes
+1. Record the primary source, model/firmware/mode, transport and known limits.
+   Distinguish a vendor or protocol clue from device identity.
+2. Add positive and ordinary-device negative fixtures. Include malformed,
+   truncated, wrong-company/UUID and address-type cases where relevant.
+3. Use the supported [compiled profile](docs/signature-packs.md#explicit-compiled-profile).
+   Unsupported predicates must be rejected, not approximated by weaker rules.
+4. Preserve published numeric-ID meaning. Behavior or label changes require the
+   appropriate new pack/ruleset identity and revision-registry entry.
+5. Regenerate and validate from the repository root with `check-jsonschema`
+   installed in your Python environment:
 
-Add entries to `MAC_PREFIXES`. Group by vendor and add a comment header for new vendors:
+   ```sh
+   just generate-signatures
+   just check-signatures
+   just check-json
+   just check-schemas
+   just check-examples
+   python3 -m unittest discover -s signatures/tests -v
+   cargo +stable test --locked --lib --no-default-features
+   ```
 
-```rust
-// === Verkada ===
-([0xAA, 0xBB, 0xCC], "Verkada"),
-([0xDD, 0xEE, 0xFF], "Verkada"),
-```
+Research entries remain disabled until reviewed. A source reference or a
+`device_validated` metadata flag alone does not validate a claim. The
+[admission policy](signatures/README.md#admission-policy) covers provenance,
+licensing, false positives and promotion. Review alert behavior independently
+from signature matching; broad vendor/name/service clues should not become
+confident device alerts.
 
-Find OUI assignments at [Wireshark OUI Lookup](https://www.wireshark.org/tools/oui-lookup.html) or the [IEEE OUI database](https://standards-oui.ieee.org/).
+## Documentation changes
 
-### SSID Patterns
-
-For SSIDs with a fixed prefix and variable suffix, add a `SsidPattern` to `SSID_PATTERNS`:
-
-```rust
-SsidPattern {
-    prefix: "Verkada-",
-    suffix_len: 6,
-    suffix_kind: SuffixKind::HexChars,
-    description: "Verkada camera WiFi",
-},
-```
-
-For exact SSID matches, add to `SSID_EXACT`. For case-insensitive substring matches, add to `SSID_KEYWORDS`.
-
-### BLE Identifiers
-
-- **Device names** — Add to `BLE_NAME_PATTERNS` (case-insensitive substring match)
-- **Service UUIDs** — Add 16-bit short UUIDs to `BLE_SERVICE_UUIDS_16` or `BLE_STANDARD_UUIDS_16`
-- **Manufacturer IDs** — Add company IDs to `BLE_MANUFACTURER_IDS` (find these in BLE advertisement data or the [Bluetooth SIG company list](https://www.bluetooth.com/specifications/assigned-numbers/))
-
-### Guidelines
-
-- **Cite your source.** Add a code comment or mention in the PR where the signature came from (Wireshark capture, another project's database, FCC filing, etc.).
-- **Group by vendor.** Keep entries organized under vendor comment headers.
-- **Test your changes.** Run `just docker-test` (or `just test` natively) — the unit tests verify that filter matching works correctly.
-- **Update counts.** If you add MAC prefixes, update the count in `README.md` under Signature Database.
+Keep the root README focused on choosing a component. Put setup and usage in the
+component README, and detailed contracts or measurement reports under `docs/`.
+Link new guides from [docs/README.md](docs/README.md), and preserve existing paths
+or provide links when moving material. Verify commands against `justfile`, CLI
+help and the current source. Describe hardware support, measured validation and
+planned integration separately.
