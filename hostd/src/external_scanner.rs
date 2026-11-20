@@ -504,10 +504,21 @@ esac
 done
 exit 3
 "#;
-    async fn status(rx: &mut mpsc::Receiver<ScanEvent>, expected: &str) {
+    async fn status(
+        rx: &mut mpsc::Receiver<ScanEvent>,
+        expected: &str,
+        task: &mut tokio::task::JoinHandle<io::Result<()>>,
+    ) {
         timeout(Duration::from_secs(3), async {
             loop {
-                match rx.recv().await.unwrap() {
+                let event = match rx.recv().await {
+                    Some(event) => event,
+                    None => panic!(
+                        "receiver exited while awaiting {expected}: {:?}",
+                        task.await
+                    ),
+                };
+                match event {
                     ScanEvent::ExternalStatus { state, .. } if state == expected => break,
                     ScanEvent::ExternalStatus { state, .. } => assert_ne!(state, "failed"),
                     _ => panic!("unexpected observation"),
@@ -522,12 +533,12 @@ exit 3
         let fake = Fake::new(LIFECYCLE);
         let (tx, mut rx) = mpsc::channel(4);
         let control = ScanControl::new(true);
-        let task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        status(&mut rx, "running").await;
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        status(&mut rx, "running", &mut task).await;
         control.store(false, Ordering::Relaxed);
-        status(&mut rx, "paused").await;
+        status(&mut rx, "paused", &mut task).await;
         control.store(true, Ordering::Relaxed);
-        status(&mut rx, "running").await;
+        status(&mut rx, "running", &mut task).await;
         control.shutdown();
         timeout(Duration::from_secs(3), task)
             .await
@@ -554,8 +565,8 @@ exit 3
         let fake = Fake::new(&format!("head -c 131072 /dev/zero >&2\n{LIFECYCLE}"));
         let (tx, mut rx) = mpsc::channel(4);
         let control = ScanControl::new(true);
-        let task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        status(&mut rx, "running").await;
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        status(&mut rx, "running", &mut task).await;
         control.shutdown();
         timeout(Duration::from_secs(3), task)
             .await
@@ -608,8 +619,8 @@ exit 3
     async fn closed_consumer_still_requests_verified_cleanup() {
         let fake = Fake::new(LIFECYCLE);
         let (tx, mut rx) = mpsc::channel(4);
-        let task = tokio::spawn(scan_loop(fake.options(), tx, ScanControl::new(true)));
-        status(&mut rx, "running").await;
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, ScanControl::new(true)));
+        status(&mut rx, "running", &mut task).await;
         drop(rx);
         timeout(Duration::from_secs(3), task)
             .await
@@ -644,7 +655,7 @@ exit 3
         let fake = Fake::new(&body);
         let (tx, mut rx) = mpsc::channel(1);
         let control = ScanControl::new(true);
-        let task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
         // Keep the initial status queued while the burst is emitted. Process
         // startup on a loaded runner is not part of the pause/stop latency
         // assertion below; allow the production handshake budget plus burst I/O.
@@ -659,7 +670,7 @@ exit 3
         })
         .await
         .unwrap();
-        status(&mut rx, "running").await;
+        status(&mut rx, "running", &mut task).await;
         control.store(false, Ordering::Relaxed);
         let drops = timeout(Duration::from_secs(3), async {
             loop {
@@ -719,8 +730,8 @@ done
         let fake = Fake::new(&body);
         let (tx, mut rx) = mpsc::channel(16);
         let control = ScanControl::new(true);
-        let task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        status(&mut rx, "running").await;
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        status(&mut rx, "running", &mut task).await;
         // No yield: watch coalesces these transitions into latest enabled=true.
         control.store(false, Ordering::Relaxed);
         control.store(true, Ordering::Relaxed);
