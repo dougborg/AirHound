@@ -11,7 +11,11 @@ pub struct State {
 }
 
 #[derive(Clone)]
-pub struct ScanControl(watch::Sender<State>, Arc<Mutex<Snapshot>>);
+pub struct ScanControl(
+    watch::Sender<State>,
+    Arc<Mutex<Snapshot>>,
+    Arc<Mutex<Option<crate::receiver::Receiver>>>,
+);
 
 impl ScanControl {
     pub fn new(enabled: bool) -> Self {
@@ -23,6 +27,7 @@ impl ScanControl {
             })
             .0,
             Arc::new(Mutex::new(Snapshot::default())),
+            Arc::new(Mutex::new(None)),
         )
     }
     pub fn health(&self) -> Snapshot {
@@ -36,9 +41,29 @@ impl ScanControl {
             Scanner::Wifi => snapshot.wifi = health,
         }
     }
+    pub fn set_receiver(&self, receiver: crate::receiver::Receiver) {
+        *self.2.lock().unwrap_or_else(|e| e.into_inner()) = Some(receiver);
+    }
+    pub fn receiver_id(&self) -> Option<String> {
+        self.2
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|r| r.adapter_id.clone())
+    }
+    pub fn set_receiver_availability(&self, availability: &'static str) {
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            receiver.availability = availability;
+        }
+    }
     pub fn health_message(&self) -> serde_json::Value {
-        serde_json::json!({"type":"scanner_health", "schema_version":1,
-            "scan_requested":self.load(Ordering::Relaxed), "scanners":self.health()})
+        let mut value = serde_json::json!({"type":"scanner_health", "schema_version":1,
+            "scan_requested":self.load(Ordering::Relaxed), "scanners":self.health()});
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            value["receiver"] =
+                serde_json::to_value(receiver).expect("receiver metadata is serializable");
+        }
+        value
     }
     pub fn load(&self, _: Ordering) -> bool {
         self.0.borrow().enabled

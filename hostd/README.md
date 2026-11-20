@@ -201,3 +201,12 @@ MAC/SSID matches and explicit `wigle_exported: false`. The normal RSSI threshold
 does not apply to this labeled identity-only path. No estimates are silently
 inserted into WiGLE CSV or the firmware protocol. See the
 [stream protocol and example](../docs/external-scanner-stream-v1.md).
+
+### BLE receiver selection and diagnostics
+
+Use `--list-ble-adapters` for receiver identity and capability evidence without
+starting a scan. Linux supports an explicit `--ble-adapter hciN`; an unavailable
+choice fails rather than falling back. CoreBluetooth selection is system-managed.
+The active receiver appears in scanner-health output. See
+[BLE receiver diagnostics](../docs/ble-receivers.md) for capability layers,
+read-only Linux PHY queries, permission limits and remaining hardware validation.

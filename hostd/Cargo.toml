@@ -31,6 +31,7 @@ corebluetooth-address = { version = "=0.1.0", optional = true }
 objc2-core-location = { version = "0.3", features = ["CLLocationManager", "CLLocation"] }
 objc2-foundation = { version = "0.3", features = ["NSObject"] }
 objc2 = "0.6"
+objc2-core-bluetooth = { version = "0.3", default-features = false, features = ["std", "CBCentralManager", "CBManager"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
@@ -40,3 +41,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pcap = "2.5"
+libc = "0.2"
