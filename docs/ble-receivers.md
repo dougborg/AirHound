@@ -44,7 +44,6 @@ software never reports validated reception from a feature flag.
   nonblocking management socket with a 400 ms deadline per adapter. Missing
   `CAP_NET_ADMIN`, unavailable commands, malformed replies and timeouts leave
   capabilities unknown with a diagnostic reason; normal scanning can continue.
-  Do not grant privileges solely to turn an unknown field into a value.
   The supported LE Coded RX bit establishes only controller-reported support.
   `system_selected_mask` describes controller defaults, **not proof of the PHY
   used by this btleplug scan**. Extended-advertising controller/API exposure and
@@ -77,7 +76,40 @@ receiver candidate. The host inventory still identified the active macOS
 controller as the PCIe BCM4378 after insertion. No reception validation of the
 USB device is claimed.
 
+Read-only enumeration on 2026-11-20 (macOS 27.2, capability implementation
+`d0a0559`) reported one powered-on, system-managed CoreBluetooth receiver.
+`extended_advertising.api` was `unsupported` from the public feature query;
+controller, selected-scan and validated-reception fields remained `unknown`.
+All Coded-RX fields were `unknown`. This measures API exposure, not RF reception.
+
 Remaining #171/#172 acceptance includes identified Linux hardware/firmware and
 BlueZ versions, measured legacy/extended/PHY combinations, controller removal
 under load, and OS-specific payload completeness. Keep those results separate
 from parser fixtures and feature queries.
+
+## Direct USB HCI receiver investigation
+
+A separate receiver process could own a USB Bluetooth controller through HCI and
+feed AirHound typed BLE observations, analogous to the external WiFi receiver.
+[Bumble's USB transport](https://github.com/google/bumble/blob/main/docs/mkdocs/src/transports/usb.md)
+is one existing implementation to evaluate. This would bypass CoreBluetooth's
+property abstraction, but would not add PHY/radio features absent in the dongle.
+It also requires an external-BLE ingest contract; the current WiFi receiver
+protocol must not be silently repurposed as BLE.
+
+Before live macOS USB ownership, account for the documented kernel-panic issue:
+[libusb #1762](https://github.com/libusb/libusb/issues/1762) reports a crash when
+claiming a Bluetooth interface on macOS 26.3.1, and
+[BTstack's libusb port notes](https://github.com/bluekitchen/btstack/blob/master/port/libusb/README.md)
+describe the issue and report a Linux/UTM CSR8510 path working. These reports do
+not establish either failure or safety on this host's macOS 27.2. Read-only
+IORegistry enumeration and CoreBluetooth feature queries do not exercise that
+interface-claim path. No direct USB claim, driver detachment, NVRAM change or
+controller reset was performed in the local inventory check.
+
+Suggested sequence: replay-tested HCI-to-observation adapter, then an isolated
+Linux receiver/VM with explicit USB passthrough, followed by a separately planned
+macOS ownership test. Preserve HCI address types, receiver/session provenance,
+report completeness and bounded queues; do not reuse cached-OS snapshot labels
+for direct controller reports. The CSR8510 is a legacy-path test target, not
+extended/Coded validation hardware.
