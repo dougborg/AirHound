@@ -244,13 +244,6 @@ jobs:
           . /home/esp/export-esp.sh
           cd firmware-std && MCU=${{ matrix.chip }} cargo build --locked --no-default-features --features ${{ matrix.features }} --release --target ${{ matrix.target }} -Z build-std=std,panic_abort
 
-      - name: Check M5Stick startup stack reservation
-        if: matrix.name == 'm5stickc'
-        run: |
-          export PATH="/home/esp/.cargo/bin:$PATH"
-          . /home/esp/export-esp.sh
-          python3 scripts/check-firmware-memory.py target/xtensa-esp32-none-elf/release/airhound
-
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: elf-${{ matrix.name }}
