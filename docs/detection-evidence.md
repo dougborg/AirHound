@@ -86,11 +86,11 @@ continues to apply. Decoded Remote ID's existing alert path is separate.
 The core also supports `watchlist_only`, `all_matches`, and `silent`; a runtime
 selector is not exposed yet. No numerical confidence score is claimed.
 
-JSON signature examples are format demonstrations, not the compiled source of
-truth or a runtime loader. The v1 format lacks contextual payload length and
-alert policy, so it does not export a weaker Find My equivalent. Canonical
-format/default parity (#11), loading (#14), context/full-UUID firmware parity
-(#35/#36), confidence calibration and policy configuration (#154), and temporal
-correlation remain follow-up work. Research candidates remain opt-in and
-unvalidated. Flipper/sub-GHz import is a future observation source for this same
-pipeline, not a reason to duplicate matching in each backend.
+The [canonical v2 pack](signature-packs.md) now generates compiled defaults with
+stable IDs, explicit policy/context, revision checks and review metadata. Legacy
+v1 examples remain demonstrations; their raw-offset semantics are not silently
+reinterpreted. Runtime loading (#14), general contextual predicates/full-UUID
+firmware parity (#35/#36), confidence calibration and policy configuration (#154),
+and temporal correlation remain follow-up work. Research candidates remain
+opt-in and unvalidated. Flipper/sub-GHz and other external receivers are future
+observation sources for this same pipeline.

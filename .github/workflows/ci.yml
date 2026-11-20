@@ -86,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
@@ -95,6 +97,24 @@ jobs:
         run: just check-json
       - name: Validate schemas (metaschema)
         run: just check-schemas
+      - name: Check canonical signature pack and generated defaults
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            python3 scripts/compile-signatures.py --check --base-ref "$BASE_SHA"
+          else
+            python3 scripts/compile-signatures.py --check
+          fi
+          python3 -m unittest discover -s signatures/tests -v
+      - name: Upload canonical signature catalog
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: canonical-signature-pack
+          path: |
+            signatures/builtin.v2.json
+            signatures/revisions.json
+            schemas/signatures.v2.schema.json
       - name: Validate examples against schemas
         run: just check-examples
       - name: Validate serialized command response fixtures

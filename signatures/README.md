@@ -1,10 +1,18 @@
-# Signature research and admission
+# Signature packs, research and admission
+
+The production source of truth is [builtin.v2.json](builtin.v2.json). Its compiler
+generates the shared Rust tables and CI rejects drift. See [pack authoring and
+revision rules](../docs/signature-packs.md). The initial compiled profile preserves
+existing behavior; every migrated entry remains explicitly unvalidated.
+
+## Research pack
 
 The [research pack](../schemas/examples/research-devices.sigs.json) adds 16
 candidate identifiers and six conservative rules for glasses, Axon/TASER
 hardware, Tile services and Meshtastic interfaces. It is **offline research data**:
 firmware and `hostd` do not load this file or enable these alerts. The compiled
-production database remains `src/defaults.rs`; runtime loading is tracked in #14.
+production database is generated from builtin.v2.json; runtime loading is tracked
+in #14.
 
 Each identifier has a source, scope and explicit unvalidated status in
 [research-provenance.json](research-provenance.json). The packet metadata in

@@ -391,18 +391,33 @@ pub fn filter_ble_snapshot(
             result.add_match("ble_mfr", "Known manufacturer ID");
         }
     }
-    // Explicit migration for the known Find My frame. Legacy v1 raw offsets
-    // use the same complete Find My framing requirement as raw packet matching.
-    let find_my = crate::ble_data::BytePattern {
-        bytes: &[0x12, 0x19],
-        mask: None,
-        offset: 0,
-        min_len: 27,
-        max_len: Some(27),
-    };
-    if data.matches_manufacturer(0x004c, &find_my) {
-        result.sig_matches.set(defaults::SIG_IDX_BLE_AD_BYTES_START);
-        result.add_match("ble_ad_bytes", "Find My framing candidate");
+    // The compiled profile encodes a company prefix plus a payload prefix with
+    // exact field length. Use that same generated data for OS snapshots; never
+    // reinterpret legacy raw search patterns as normalized manufacturer data.
+    for (i, pattern) in BLE_AD_BYTES_PATTERNS.iter().enumerate() {
+        if !pattern.active || pattern.offset != Some(0) || pattern.bytes.len() < 2 {
+            continue;
+        }
+        let Some(length) = pattern
+            .exact_manufacturer_len
+            .and_then(|n| n.checked_sub(2))
+        else {
+            continue;
+        };
+        let company_id = u16::from_le_bytes([pattern.bytes[0], pattern.bytes[1]]);
+        let payload = crate::ble_data::BytePattern {
+            bytes: &pattern.bytes[2..],
+            mask: None,
+            offset: 0,
+            min_len: length,
+            max_len: Some(length),
+        };
+        if data.matches_manufacturer(company_id, &payload) {
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_BLE_AD_BYTES_START + i as u16);
+            result.add_match("ble_ad_bytes", pattern.description);
+        }
     }
     result
 }
