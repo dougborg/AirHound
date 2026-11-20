@@ -13,7 +13,7 @@ ctrlc = { version = "3.4", features = ["termination"] }
 rusb = { version = "0.9", features = ["vendored"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 
 [workspace]
 
