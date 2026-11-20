@@ -4,9 +4,12 @@ The no_std M5StickC Plus2 stream uses 460800-baud UART, a 20-slot parsed-event
 queue and a four-slot serialized-output queue. Both processing and output tasks
 yield before acquiring the next record. Yielding after acquisition can retain
 large buffers in the suspended task, consuming DRAM otherwise reserved for the
-startup stack. Display initialization and consumer tasks are polled before radio
-initialization, so the synchronous LCD reset does not block an already-active
-scanner at boot.
+startup stack. Explicit one-shot signals gate radio initialization on consumer readiness and
+the completed splash-to-status redraw. Display failure releases the barrier in
+degraded mode. WiFi capture remains disabled until the BLE host scan-start
+attempt completes; its channel-hopping task starts with capture. The fixed
+two-second splash is UI time, not a guessed radio-settling delay. Normal scan
+intervals and queue/drop accounting are unchanged.
 
 The internal heap remains 64 KiB and the existing observation table remains in
 PSRAM. The queue allocation trades relatively large 512-byte serialized slots for
@@ -109,3 +112,13 @@ and stable free heap. RF traffic was uncontrolled; the lower count does not
 establish a causal improvement. The early startup loss remains unresolved.
 The explicit yield is retained to let consumers run before further BLE/GATT
 setup; it is not claimed to eliminate the initialization stall.
+
+## Startup readiness validation
+
+The evidence-build baseline recorded 64 scan queue drops between 1,945 and
+2,354 ms after boot, then no further increase through 122 s. The splash screen
+previously cleared and drew its first status page after scanning had started.
+The readiness barrier moves that synchronous drawing ahead of radio startup.
+Capture-consumer and radio-ready timestamps make the sequence observable.
+Repeat fresh-boot captures to verify the change; a gate prevents intentional
+early reception and does not prove RF losslessness.

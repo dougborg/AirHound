@@ -33,6 +33,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::timer::timg::TimerGroup;
@@ -96,6 +97,13 @@ type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
 type CommandChannel = Channel<CriticalSectionRawMutex, Option<HostCommand>, 4>;
 
 // ── Static channels and shared state ─────────────────────────────────
+
+// One-shot startup handshakes: no radio capture until consumers and the
+// initial display transition have finished. Signals retain early completion.
+static FILTER_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static OUTPUT_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+#[cfg(feature = "m5stickc")]
+pub(crate) static DISPLAY_READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 /// Static channel for scan events from WiFi sniffer ISR + BLE scan task
 pub(crate) static SCAN_CHANNEL: ScanChannel = Channel::new();
@@ -384,10 +392,14 @@ async fn main(spawner: embassy_executor::Spawner) {
         }
     );
 
-    // Poll display initialization and consumer tasks before either radio starts.
-    // Avoid collecting a startup burst while the synchronous LCD reset runs.
+    FILTER_READY.wait().await;
+    OUTPUT_READY.wait().await;
     #[cfg(feature = "m5stickc")]
-    embassy_futures::yield_now().await;
+    if !DISPLAY_READY.wait().await {
+        // A failed display has no remaining startup drawing to block capture.
+        log::warn!("Display unavailable; continuing without UI");
+    }
+    log::info!("Capture consumers ready: ms={}", Instant::now().as_millis());
 
     // ── BLE radio initialization ───────────────────────────────────────
     // BLE must be initialized BEFORE WiFi for coexistence to work
@@ -416,16 +428,8 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     let mut sniffer = wifi_interfaces.sniffer;
     sniffer.set_receive_cb(wifi_sniffer_callback);
-    sniffer
-        .set_promiscuous_mode(true)
-        .expect("Promiscuous mode failed");
-
-    // Give consumers a turn as soon as capture starts, before BLE/GATT setup.
-    embassy_futures::yield_now().await;
-
-    spawner.spawn(wifi_channel_hop_task()).unwrap();
-
-    log::info!("WiFi sniffer initialized in promiscuous mode");
+    // Keep capture disabled through BLE host/GATT initialization. The scanner
+    // future enables WiFi only after the BLE host accepts its scan request.
 
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
@@ -477,6 +481,11 @@ async fn main(spawner: embassy_executor::Spawner) {
             let config = ScanConfig::default();
 
             let result = scanner.scan(&config).await;
+            sniffer
+                .set_promiscuous_mode(true)
+                .expect("Promiscuous mode failed");
+            spawner.spawn(wifi_channel_hop_task()).unwrap();
+            log::info!("WiFi sniffer initialized in promiscuous mode");
             let _session = match result {
                 Ok(session) => session,
                 Err(e) => {
@@ -486,6 +495,7 @@ async fn main(spawner: embassy_executor::Spawner) {
             };
 
             log::info!("BLE scan started (active, continuous)");
+            log::info!("Radio capture ready: ms={}", Instant::now().as_millis());
             // Session stays alive as long as _session exists.
             // Reports flow through ScanEventHandler on the runner.
             loop {
@@ -632,6 +642,7 @@ async fn filter_task() {
 
     let scan_rx = SCAN_CHANNEL.receiver();
     let output_tx = OUTPUT_CHANNEL.sender();
+    FILTER_READY.signal(());
 
     loop {
         // Yield before acquiring an event: buffers must not live across this await.
@@ -971,6 +982,7 @@ async fn output_serial_task() {
     log::info!("Serial output task started");
 
     let output_rx = OUTPUT_CHANNEL.receiver();
+    OUTPUT_READY.signal(());
 
     loop {
         // Keep the previous 512-byte message out of the suspended task state.
