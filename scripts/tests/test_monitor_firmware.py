@@ -9,6 +9,15 @@ spec.loader.exec_module(module)
 
 
 class MonitorTests(unittest.TestCase):
+    def test_scan_loss_timing_is_separate_from_event_count(self):
+        monitor = module.Monitor('m5stickc_plus2', '0.1.1')
+        monitor.line(b'INFO - Scan loss timing: first_ms=2100 last_ms=2300')
+        monitor.line(b'INFO - Scan loss timing: first_ms=2100 last_ms=45000')
+        summary = monitor.summary(65)
+        self.assertEqual(summary['scan_loss_timing'], [
+            dict(first_ms=2100, last_ms=2300), dict(first_ms=2100, last_ms=45000)])
+        self.assertEqual(summary['stream_stats'], [])
+
     def test_radio_diagnostics_distinguish_reception_from_matches(self):
         monitor = module.Monitor('m5stickc_plus2', '0.1.1')
         self.sample(monitor)

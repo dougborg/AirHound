@@ -18,6 +18,7 @@ class Monitor:
         self.board, self.version = board, version
         self.require_psram = require_psram
         self.stream_stats = []
+        self.scan_loss_timing = []
         self.observation_counts = Counter()
         self.memory_stats = []
         self.psram_ready = False
@@ -77,6 +78,9 @@ class Monitor:
             self.wifi_stats.append(sample)
             if sample['hop_errors']:
                 self.failures.add('WiFi channel hopping failed')
+        timing = re.fullmatch(r'INFO - Scan loss timing: first_ms=(\d+) last_ms=(\d+)', line)
+        if timing:
+            self.scan_loss_timing.append(dict(zip(('first_ms', 'last_ms'), map(int, timing.groups()))))
         observed = re.fullmatch(r'INFO - Observed addresses: aps=(\d+) wifi_other=(\d+) ble=(\d+) wifi_hits=(\d+) ble_hits=(\d+) limited=(true|false)', line)
         if observed:
             sample = dict(zip(('aps', 'wifi_other', 'ble', 'wifi_hits', 'ble_hits'),
@@ -116,6 +120,7 @@ class Monitor:
                 'message_counts': dict(self.types),
                 'observation_counts': dict(self.observation_counts),
                 'stream_stats': self.stream_stats, 'status_samples': self.statuses,
+                'scan_loss_timing': self.scan_loss_timing,
                 'wifi_stats': self.wifi_stats,
                 'observed_addresses': self.observed_addresses,
                 'memory_stats': self.memory_stats, 'psram_ready': self.psram_ready,
