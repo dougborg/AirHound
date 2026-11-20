@@ -1,5 +1,7 @@
 {
   "core": 89,
   "hostd-linux": 81,
-  "hostd-darwin": 81
+  "hostd-darwin": 81,
+  "driver-linux": 81,
+  "driver-darwin": 81
 }
