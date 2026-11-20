@@ -616,7 +616,19 @@ async fn filter_task<W: Write, O: Write>(
             continue;
         }
         if !control.load(Ordering::Relaxed) {
-            continue;
+            if matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
+                let mut state = control.subscribe();
+                while !state.borrow().enabled && !state.borrow().shutdown {
+                    if state.changed().await.is_err() {
+                        break;
+                    }
+                }
+                if state.borrow().shutdown {
+                    break;
+                }
+            } else {
+                continue;
+            }
         }
 
         let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
@@ -626,7 +638,13 @@ async fn filter_task<W: Write, O: Write>(
         match event {
             ScanEvent::BleSourceStatus(_) => unreachable!(),
             ScanEvent::BlePacket(ref packet) => {
-                if packet.ingestion_generation != control.subscribe().borrow().generation {
+                let state = *control.subscribe().borrow();
+                let accepted_generation = if state.shutdown {
+                    state.generation.wrapping_sub(1)
+                } else {
+                    state.generation
+                };
+                if !packet.replay && packet.ingestion_generation != accepted_generation {
                     continue;
                 }
                 let result = packet
@@ -2388,5 +2406,42 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("fixture source failure"));
+    }
+    #[tokio::test]
+    async fn queued_replay_survives_pause_and_live_queue_drains_on_shutdown() {
+        for replay in [false, true] {
+            let control = ScanControl::new(true);
+            let mut packet = ble_packet::tests::packet(&[]);
+            packet.replay = replay;
+            let (tx, rx) = mpsc::channel(2);
+            tx.send(ScanEvent::BlePacket(Box::new(packet)))
+                .await
+                .unwrap();
+            drop(tx);
+            if replay {
+                control.store(false, Ordering::Relaxed);
+            } else {
+                control.shutdown();
+            }
+            let output = RecordingWriter::default();
+            let consume = filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                output.clone(),
+                control.clone(),
+            );
+            let resume = async {
+                if replay {
+                    tokio::task::yield_now().await;
+                    control.store(true, Ordering::Relaxed);
+                }
+            };
+            let (result, ()) = tokio::join!(consume, resume);
+            result.unwrap();
+            assert!(data_output(&output).contains("ble_packet_observation"));
+        }
     }
 }

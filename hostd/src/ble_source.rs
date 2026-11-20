@@ -152,6 +152,7 @@ pub async fn scan(
                 return Ok(());
             }
             let result = consume(file, "ble-pcap", true, &tx, &control, &mut stats).await;
+            let completed = matches!(result, Ok(true));
             control.set_health(
                 Scanner::Ble,
                 if result.is_err() {
@@ -161,8 +162,10 @@ pub async fn scan(
                 },
                 if result.is_err() {
                     "pcap_replay_failed"
-                } else {
+                } else if completed {
                     "pcap_replay_finished"
+                } else {
+                    "pcap_replay_stopped"
                 },
             );
             control.set_receiver_availability(if result.is_err() {
@@ -175,8 +178,10 @@ pub async fn scan(
                     &stats,
                     if result.is_err() {
                         "failed"
-                    } else {
+                    } else if completed {
                         "finished"
+                    } else {
+                        "stopped"
                     },
                 ))
                 .await;

@@ -110,9 +110,9 @@ there is no silent fallback to native BLE. Initial process-spawn failure is fata
 A ten-second header deadline catches a helper that never becomes ready; a quiet
 RF environment after readiness does not cause a reconnect.
 
-Stop/start commands pause ingestion and restart the helper on resume. Queued
+Stop/start commands pause ingestion and restart the helper on resume. Queued live
 records from an old control generation are discarded rather than replayed after
-resume. Replay retains its reader position. Shutdown reaps the child and closes
+resume. Replay retains its reader position and queued records. Shutdown reaps the child and closes
 the serial handle. The independently powered Sniffle radio can remain in passive
 receive mode after the host closes it; host stop is not a radio-power-off command.
 
