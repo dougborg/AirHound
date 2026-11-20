@@ -21,6 +21,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 mod buzzer;
 #[cfg(feature = "m5stickc")]
 mod display;
+mod memory;
 
 // Re-export library modules so binary submodules (display, buzzer) can use crate::*
 pub(crate) use airhound::{
@@ -119,6 +120,12 @@ pub(crate) static WIFI_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static BLE_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 pub(crate) static ODID_MATCH_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// Aggregate radio diagnostics: no identifiers or allocation in the callback.
+static WIFI_RX_COUNT: AtomicU32 = AtomicU32::new(0);
+static WIFI_PARSED_COUNT: AtomicU32 = AtomicU32::new(0);
+static WIFI_QUEUE_DROPS: AtomicU32 = AtomicU32::new(0);
+static WIFI_HOP_ERRORS: AtomicU32 = AtomicU32::new(0);
+
 /// Last match description for display
 pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
     Mutex::new(RefCell::new(heapless::String::new()));
@@ -153,6 +160,7 @@ fn get_filter_config() -> FilterConfig {
 /// Parses raw 802.11 frames using `parse_wifi_frame()` (ieee80211 crate)
 /// and pushes matching events to the scan channel via `try_send` (non-blocking).
 fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
+    WIFI_RX_COUNT.fetch_add(1, Ordering::Relaxed);
     let rssi = pkt.rx_cntl.rssi as i8;
     let channel = pkt.rx_cntl.channel as u8;
 
@@ -166,7 +174,10 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     }
 
     if let Some(event) = scanner::parse_wifi_frame(pkt.data, rssi, channel) {
-        let _ = SCAN_CHANNEL.try_send(ScanEvent::WiFi(event));
+        WIFI_PARSED_COUNT.fetch_add(1, Ordering::Relaxed);
+        if SCAN_CHANNEL.try_send(ScanEvent::WiFi(event)).is_err() {
+            WIFI_QUEUE_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -182,8 +193,13 @@ unsafe extern "C" {
 async fn wifi_channel_hop_task() {
     loop {
         for &ch in scanner::WIFI_CHANNELS {
-            unsafe {
-                esp_wifi_set_channel(ch, 0);
+            let result = unsafe { esp_wifi_set_channel(ch, 0) };
+            if result != 0 {
+                // Report the first failure, then use the periodic aggregate to
+                // avoid flooding serial output if the radio stops responding.
+                if WIFI_HOP_ERRORS.fetch_add(1, Ordering::Relaxed) == 0 {
+                    log::warn!("WiFi channel {} failed: {}", ch, result);
+                }
             }
             Timer::after(Duration::from_millis(scanner::DEFAULT_DWELL_MS)).await;
         }
@@ -215,11 +231,25 @@ impl EventHandler for ScanEventHandler {
 async fn main(spawner: embassy_executor::Spawner) {
     esp_println::logger::init_logger_from_env();
 
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let config = esp_hal::Config::default();
+    #[cfg(feature = "m5stickc")]
+    let config = config.with_psram(esp_hal::psram::PsramConfig {
+        size: esp_hal::psram::PsramSize::Size(2 * 1024 * 1024),
+        ..Default::default()
+    });
+    let peripherals = esp_hal::init(config);
+    #[cfg(feature = "m5stickc")]
+    memory::init(peripherals.PSRAM);
+    #[cfg(not(feature = "m5stickc"))]
+    memory::init();
 
     // Set up heap allocator (needed for BLE + WiFi coex stacks).
     // ESP32-S3 needs more heap for coex; ESP32 is tighter on DRAM.
-    #[cfg(feature = "esp32")]
+    #[cfg(feature = "m5stickc")]
+    {
+        esp_alloc::heap_allocator!(size: 64 * 1024);
+    }
+    #[cfg(all(feature = "esp32", not(feature = "m5stickc")))]
     {
         esp_alloc::heap_allocator!(size: 64 * 1024);
     }
@@ -317,8 +347,18 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     // ── WiFi sniffer initialization ─────────────────────────────────────
 
-    let (_wifi_controller, wifi_interfaces) =
+    let (mut wifi_controller, wifi_interfaces) =
         esp_radio::wifi::new(peripherals.WIFI, Default::default()).expect("WiFi init failed");
+
+    // esp-radio requires a started interface even for passive sniffing.
+    // Station mode does not associate or scan unless explicitly requested.
+    wifi_controller
+        .set_mode(esp_radio::wifi::WifiMode::Station)
+        .expect("WiFi station mode failed");
+    wifi_controller
+        .start_async()
+        .await
+        .expect("WiFi start failed");
 
     let mut sniffer = wifi_interfaces.sniffer;
     sniffer.set_receive_cb(wifi_sniffer_callback);
@@ -672,6 +712,7 @@ fn handle_wifi_event(
         let idx = MAC_INDEX.borrow(cs).borrow();
         filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
     });
+    memory::wifi(wifi.mac, wifi.frame_type, result.matched);
     if !result.matched {
         return;
     }
@@ -746,6 +787,7 @@ fn handle_ble_event(
         let idx = MAC_INDEX.borrow(cs).borrow();
         filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
     });
+    memory::ble(ble.mac, result.matched);
     if !result.matched {
         return;
     }
@@ -822,10 +864,34 @@ async fn status_task() {
 
         let uptime_secs = (Instant::now().as_millis() / 1000) as u32;
 
+        log::info!(
+            "Memory stats: internal_free={} external_free={}",
+            memory::internal_free(),
+            memory::external_free()
+        );
+        let counts = memory::counts();
+        log::info!(
+            "Observed addresses: aps={} wifi_other={} ble={} wifi_hits={} ble_hits={} limited={}",
+            counts.aps,
+            counts.wifi_other,
+            counts.ble,
+            counts.wifi_hits,
+            counts.ble_hits,
+            counts.limited
+        );
+        log::info!(
+            "WiFi stats: rx={} parsed={} queue_drops={} hop_errors={} matches={}",
+            WIFI_RX_COUNT.load(Ordering::Relaxed),
+            WIFI_PARSED_COUNT.load(Ordering::Relaxed),
+            WIFI_QUEUE_DROPS.load(Ordering::Relaxed),
+            WIFI_HOP_ERRORS.load(Ordering::Relaxed),
+            WIFI_MATCH_COUNT.load(Ordering::Relaxed),
+        );
+
         let msg = DeviceMessage::Status {
             scanning: SCANNING.load(Ordering::Relaxed),
             uptime: uptime_secs,
-            heap_free: esp_alloc::HEAP.free() as u32,
+            heap_free: memory::internal_free() as u32,
             ble_clients: BLE_CLIENTS.load(Ordering::Relaxed),
             board: board::BOARD_NAME,
             version: VERSION,
@@ -895,7 +961,7 @@ async fn command_task() {
             let msg = DeviceMessage::Status {
                 scanning: SCANNING.load(Ordering::Relaxed),
                 uptime: uptime_secs,
-                heap_free: esp_alloc::HEAP.free() as u32,
+                heap_free: memory::internal_free() as u32,
                 ble_clients: BLE_CLIENTS.load(Ordering::Relaxed),
                 board: board::BOARD_NAME,
                 version: VERSION,

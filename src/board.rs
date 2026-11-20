@@ -7,9 +7,9 @@
 ///
 /// | | ESP32 (M5StickC) | ESP32-S3 (XIAO) |
 /// |---|---|---|
-/// | Heap | 64 KB | 128 KB |
+/// | Internal heap | 64 KiB | 128 KiB |
 /// | Scan channel | 8 slots | 16 slots |
-/// | PSRAM | No | Yes (unused) |
+/// | PSRAM | 2 MB (observations) | Yes (unused) |
 /// | Display | ST7789V2 135×240 | None |
 /// | DRAM limit | ~180 KB total | ~512 KB total |
 ///
@@ -37,8 +37,10 @@ mod hw {
 #[allow(dead_code)]
 #[cfg(feature = "board-m5stickc")]
 mod hw {
-    pub const LED_PIN: u8 = 10; // Built-in LED
-    pub const HAS_PSRAM: bool = false;
+    pub const LED_PIN: u8 = 19; // Plus2 red LED, shared with IR emitter
+
+    // Used by the no_std firmware for a separate application memory pool.
+    pub const HAS_PSRAM: bool = true;
     pub const HAS_GPS_HEADER: bool = false;
     pub const HAS_DISPLAY: bool = true;
     pub const HAS_BUZZER: bool = true;
