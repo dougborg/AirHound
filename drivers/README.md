@@ -10,7 +10,7 @@ and supplies bounded, versioned observations.
 | --- | --- | --- |
 | ALFA AWUS036ACHM / MT7610U | Experimental passive userspace WiFi receiver; live macOS evidence and remaining release gates documented | [Build, operation and limitations](mt7610u/README.md), [test procedure](mt7610u/TESTING.md) |
 | CSR USB Bluetooth / raw HCI | Investigation and offline replay tooling; not a supported replacement macOS Bluetooth driver | [HCI investigation](../docs/usb-hci-receiver-investigation.md) |
-| CatSniffer v3.x | Capture/import integration investigation; no end-to-end AirHound support claim | [Integration plan](../docs/catsniffer-integration.md) |
+| CatSniffer / Sniffle | Live passive BLE and DLT256 replay into desktop observations; extended-chain reassembly pending | [Source guide](../docs/sniffle-source.md), [hardware roadmap](../docs/catsniffer-integration.md) |
 | AWOK original Dual ESP32 v3 | Hardware/firmware identification and passive source integration investigation | [Integration plan](../docs/awok-integration.md) |
 
 The MT7610U project is GPL-2.0-only and is not linked into MIT AirHound. Its firmware

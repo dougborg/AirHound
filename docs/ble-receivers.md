@@ -113,3 +113,11 @@ macOS ownership test. Preserve HCI address types, receiver/session provenance,
 report completeness and bounded queues; do not reuse cached-OS snapshot labels
 for direct controller reports. The CSR8510 is a legacy-path test target, not
 extended/Coded validation hardware.
+
+## External raw-packet sources
+
+`--sniffle-port` selects live Sniffle USB capture; `--ble-pcap` selects a saved
+DLT256 capture. These replace native BLE for that session and are not listed by
+`--list-ble-adapters`, which enumerates native OS adapters. See the
+[Sniffle source guide](sniffle-source.md) for metadata, fixed-channel/PHY selection,
+reconnect behavior and unvalidated extended/Coded modes.

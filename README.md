@@ -16,7 +16,7 @@ same physical device.
 | --- | --- | --- |
 | Run a portable detector | [ESP32 firmware](docs/firmware.md) | M5StickC Plus2 and XIAO ESP32-S3; [M5 controls](docs/m5-controls.md) |
 | Scan from macOS or Linux | [Desktop CLI](hostd/README.md) | Native BLE/WiFi, WiGLE CSV, NDJSON and optional gpsd location |
-| Use an external receiver | [Receivers and drivers](drivers/README.md) | Experimental ALFA MT7610U integration; other receivers under investigation |
+| Use an external receiver | [Receivers and drivers](drivers/README.md) | CatSniffer/Sniffle BLE capture and experimental ALFA MT7610U integration |
 | Work on detection logic | [Shared core and source layout](src/README.md) | Parsing, signatures, rule evidence and alert policy |
 | Improve signatures | [Signature packs](signatures/README.md) | Canonical production pack, research candidates and admission policy |
 | Consume observations or send commands | [Schemas](schemas/README.md) | Firmware/desktop contracts, examples and transport limits |
@@ -122,9 +122,9 @@ measure pipeline processing, not radio scan frequency.
 ## Roadmap
 
 The [roadmap](docs/roadmap.md) and [tracking issue #160](https://github.com/dougborg/AirHound/issues/160)
-record remaining work and release gates. [CatSniffer](docs/catsniffer-integration.md)
-and [AWOK Dual ESP32](docs/awok-integration.md) are integration investigations,
-not supported AirHound detector targets.
+record remaining work and release gates. [CatSniffer/Sniffle](docs/sniffle-source.md)
+feeds desktop observations; broader CatSniffer protocols and
+[AWOK Dual ESP32](docs/awok-integration.md) remain integration investigations.
 
 ## Contributing
 
@@ -147,3 +147,6 @@ for sources and evaluation; consult upstream projects for their current capabili
 AirHound is MIT licensed. The independent [MT7610U receiver](drivers/mt7610u/README.md)
 is GPL-2.0-only and runs as a separate process; it is not linked into AirHound.
 Its README documents firmware terms and hardware-validation limits.
+
+The separate [Sniffle helper](scripts/sniffle-source.py) is GPL-3.0-only and uses
+user-installed Sniffle tools; see [source setup and licensing](docs/sniffle-source.md).
