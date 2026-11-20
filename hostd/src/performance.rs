@@ -70,7 +70,17 @@ async fn performance_event_pipeline() {
                 .count();
             let messages = io::BufReader::new(std::fs::File::open(&json_path).unwrap())
                 .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(&line.unwrap()).unwrap())
+                .collect::<Vec<_>>();
+            let health_messages = messages
+                .iter()
+                .filter(|msg| msg["type"] == "scanner_health")
                 .count();
+            assert_eq!(
+                health_messages, 1,
+                "the benchmark must retain initial scanner health"
+            );
+            let messages = messages.len() - health_messages;
             assert_eq!(
                 csv_rows,
                 if scenario == "platform_id" {
