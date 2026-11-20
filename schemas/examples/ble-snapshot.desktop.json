@@ -44,5 +44,16 @@
       "omitted_service_records": 0,
       "truncated_payloads": 0
     }
+  },
+  "detection": {
+    "engine": "evidence-1",
+    "policy": "rules_and_watchlist",
+    "pack": "builtin-2",
+    "ruleset": "none",
+    "sig": [],
+    "rules": [],
+    "more": false,
+    "basis": "possibly_cached",
+    "alert": "none"
   }
 }
