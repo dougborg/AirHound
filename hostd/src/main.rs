@@ -630,6 +630,30 @@ async fn filter_task<W: Write, O: Write>(
                         advertisement: Some(snapshot),
                     },
                 )?;
+                if cfg.ble_enabled && (!snapshot.rssi_available || event.rssi >= cfg.min_rssi) {
+                    let context = ble_remote_id::Context {
+                        peripheral_id: id,
+                        identity_scope: if cfg!(target_os = "macos") {
+                            "corebluetooth"
+                        } else {
+                            "btleplug"
+                        },
+                        address: observed_mac.as_ref().map(|s| s.as_str()),
+                        address_type: snapshot.address_type,
+                        receiver_id: snapshot.receiver_id.as_deref(),
+                        rssi: snapshot.rssi_available.then_some(event.rssi),
+                        ts: start_time.elapsed().as_millis() as u32,
+                    };
+                    for record in &snapshot.service_data {
+                        ble_remote_id::emit(
+                            &mut output,
+                            &context,
+                            &record.uuid.0,
+                            &record.payload,
+                            record.truncated,
+                        )?;
+                    }
+                }
             }
             ScanEvent::BlePeripheral {
                 ref event,
@@ -1711,6 +1735,103 @@ mod tests {
         assert!(!output.is_empty());
         assert!(!String::from_utf8(output).unwrap().contains("0x180A"));
     }
+    #[tokio::test]
+    async fn remote_id_flows_from_backend_properties_without_mac_or_signature_gate() {
+        let rid_uuid = uuid::Uuid::parse_str("0000fffa-0000-1000-8000-00805f9b34fb").unwrap();
+        let custom_uuid = uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
+        let basic = |counter: u8| {
+            let mut payload = vec![0; 27];
+            payload[..4].copy_from_slice(&[0x0d, counter, 0x02, 0x12]);
+            payload[4..8].copy_from_slice(b"TEST");
+            payload
+        };
+        let hex = include_str!("../tests/fixtures/remote-id-service-data.hex").trim();
+        let long: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let mut wrong_app = basic(1);
+        wrong_app[0] = 0;
+        let mut oversized = basic(1);
+        oversized.resize(ble_payload::MAX_RECORD_BYTES + 1, 0);
+        for enabled in [true, false] {
+            let cases = [
+                ("legacy1", rid_uuid, basic(1), Some(-45)),
+                ("legacy2", rid_uuid, basic(2), Some(-45)),
+                ("long", rid_uuid, long.clone(), Some(-45)),
+                ("wrong_uuid", custom_uuid, basic(1), Some(-45)),
+                ("wrong_app", rid_uuid, wrong_app.clone(), Some(-45)),
+                ("short", rid_uuid, vec![0x0d, 1, 0], Some(-45)),
+                ("truncated", rid_uuid, oversized.clone(), Some(-45)),
+                ("unknown_rssi", rid_uuid, basic(3), None),
+                ("weak", rid_uuid, basic(4), Some(-100)),
+            ];
+            let (tx, rx) = mpsc::channel(cases.len());
+            for (id, uuid, payload, rssi) in cases {
+                let mut props = btleplug::api::PeripheralProperties {
+                    rssi,
+                    ..Default::default()
+                };
+                props.service_data.insert(uuid, payload);
+                let mut event = ble::observation(id, &props, None);
+                if let ScanEvent::BleSnapshot { snapshot, .. } = &mut event {
+                    snapshot.receiver_id = Some("test-receiver".into());
+                }
+                tx.send(event).await.unwrap();
+            }
+            drop(tx);
+            let csv = RecordingWriter::default();
+            let output = RecordingWriter::default();
+            let mut config = FilterConfig::new();
+            config.ble_enabled = enabled;
+            filter_task(
+                rx,
+                Arc::new(Mutex::new(config)),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                WigleWriter::new(csv.clone()).unwrap(),
+                output.clone(),
+                ScanControl::new(true),
+            )
+            .await
+            .unwrap();
+            let messages: Vec<serde_json::Value> = data_output(&output)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let decoded: Vec<_> = messages
+                .iter()
+                .filter(|m| m["type"] == "ble_remote_id")
+                .collect();
+            assert_eq!(decoded.len(), if enabled { 4 } else { 0 });
+            if enabled {
+                assert_eq!(decoded[0]["message_counter"], 1);
+                assert_eq!(decoded[1]["message_counter"], 2);
+                assert_eq!(decoded[2]["uas_id"], "SSEVTFG93700070");
+                assert_eq!(decoded[3]["peripheral_id"], "unknown_rssi");
+                assert!(decoded[3].get("rssi").is_none());
+                let ordinary = messages
+                    .iter()
+                    .find(|m| {
+                        m["type"] == "ble_observation" && m["peripheral_id"] == "unknown_rssi"
+                    })
+                    .unwrap();
+                assert!(ordinary["match"].as_array().unwrap().is_empty());
+                for value in decoded {
+                    assert!(value.get("address").is_none());
+                    assert!(value.get("mac").is_none());
+                    assert_eq!(value["receiver_id"], "test-receiver");
+                    assert_eq!(value["packet_completeness"], "unknown");
+                }
+            }
+            assert_eq!(
+                recorded(&csv).lines().count(),
+                2,
+                "UUID identity must not fabricate CSV addresses"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn backend_payloads_survive_conversion_filtering_and_output() {
         let mut props = btleplug::api::PeripheralProperties {

@@ -172,6 +172,9 @@ where
     }
     let (pending, mut enrichment) = mpsc::channel(ENRICHMENT_CAPACITY);
     let output = tx.clone();
+    // A receiver is fixed for this scan generation. Keep `control` owned by the
+    // enclosing future until both ingest and enrichment have drained.
+    let receiver_id = control.receiver_id();
     let ingest = async move {
         loop {
             if ingest_state.borrow().generation != initial.generation {
@@ -189,7 +192,11 @@ where
             };
             if let Some(props) = props {
                 let (id, props) = props;
-                let event = observation(&id, &props, None);
+                let mut event = observation(&id, &props, None);
+                if let ScanEvent::BleSnapshot { snapshot, .. } = &mut event {
+                    // Freeze receiver provenance at admission, before enrichment can wait.
+                    snapshot.receiver_id = receiver_id.clone();
+                }
                 drop(props); // Do not retain unbounded OS maps across output backpressure.
                 match pending.try_send((id, event)) {
                     Ok(()) => {}

@@ -33,8 +33,8 @@ leaving the actual service payload; it is not a local wireless capture.
 
 | Receive path | Software fixture decoding | Live legacy reception | Live extended / PHY reception |
 | --- | --- | --- | --- |
-| Linux BlueZ/btleplug | Backend tests are required before completion | Not established by fixtures | Not validated |
-| macOS CoreBluetooth/btleplug | Backend tests are required before completion | Not established by fixtures | Not validated; system API visibility applies |
+| Linux BlueZ/btleplug | Shared backend conversion-to-output fixtures pass | Not established by fixtures | Not validated |
+| macOS CoreBluetooth/btleplug | Shared backend conversion-to-output fixtures pass | Not established by fixtures | Not validated; system API visibility applies |
 | M5 no_std firmware | Separate implementation and 62-byte storage limit | Existing firmware path | This desktop work adds no support |
 
 Adapter capability flags are diagnostics, not validation results. An OS may
