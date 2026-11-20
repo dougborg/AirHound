@@ -54,7 +54,8 @@ hostd/target/release/airhound-hostd --ble-pcap capture.pcap \
 Replay uses captured timestamps, not replay wall time, and never attaches a
 current GPS fix to historical rows. EOF closes the BLE source; with WiFi disabled
 the session exits after draining output. With another source active the session
-continues. PCAPNG and other link types are rejected explicitly. The parser supports
+continues. Replay requires a regular file; FIFOs and device nodes are rejected. PCAPNG and
+other link types are rejected explicitly. The parser supports
 both byte orders and microsecond/nanosecond classic-PCAP timestamps, bounded to
 4096 captured bytes per record. It rejects malformed framing before allocating
 an unbounded record. Replay backpressures rather than discarding input records.
