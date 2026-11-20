@@ -1,0 +1,7 @@
+{
+  "type": "stream_stats",
+  "scan_drops": 0,
+  "output_drops": 0,
+  "ble_output_drops": 0,
+  "serialize_errors": 0
+}

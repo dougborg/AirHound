@@ -59,7 +59,7 @@ use watchlist::Watchlist;
 
 #[gatt_service(uuid = "4a690001-1c4a-4e3c-b5d8-f47b2e1c0a9d")]
 struct AirHoundGattService {
-    /// TX — filtered scan results, notify-only.
+    /// TX — observations, match metadata and status, notify-only.
     /// Messages are chunked into BLE_MAX_NOTIFY-sized pieces.
     /// The companion accumulates until it sees '\n' (NDJSON delimiter).
     #[characteristic(uuid = "4a690002-1c4a-4e3c-b5d8-f47b2e1c0a9d", notify)]
@@ -126,6 +126,11 @@ static WIFI_PARSED_COUNT: AtomicU32 = AtomicU32::new(0);
 static WIFI_QUEUE_DROPS: AtomicU32 = AtomicU32::new(0);
 static WIFI_HOP_ERRORS: AtomicU32 = AtomicU32::new(0);
 
+static SCAN_DROPS: AtomicU32 = AtomicU32::new(0);
+static OUTPUT_DROPS: AtomicU32 = AtomicU32::new(0);
+static BLE_OUTPUT_DROPS: AtomicU32 = AtomicU32::new(0);
+static SERIALIZE_ERRORS: AtomicU32 = AtomicU32::new(0);
+
 /// Last match description for display
 pub(crate) static LAST_MATCH: Mutex<RefCell<heapless::String<32>>> =
     Mutex::new(RefCell::new(heapless::String::new()));
@@ -172,7 +177,9 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
     #[cfg(not(feature = "esp32"))]
     {
         if let Some(odid_event) = scanner::try_parse_odid_wifi(pkt.data, rssi, channel) {
-            let _ = SCAN_CHANNEL.try_send(ScanEvent::Odid(odid_event));
+            if SCAN_CHANNEL.try_send(ScanEvent::Odid(odid_event)).is_err() {
+                SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
             return;
         }
     }
@@ -181,6 +188,7 @@ fn wifi_sniffer_callback(pkt: esp_radio::wifi::sniffer::PromiscuousPkt<'_>) {
         WIFI_PARSED_COUNT.fetch_add(1, Ordering::Relaxed);
         if SCAN_CHANNEL.try_send(ScanEvent::WiFi(event)).is_err() {
             WIFI_QUEUE_DROPS.fetch_add(1, Ordering::Relaxed);
+            SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -224,7 +232,9 @@ impl EventHandler for ScanEventHandler {
         while let Some(Ok(report)) = it.next() {
             let addr_bytes: &[u8; 6] = report.addr.raw().try_into().unwrap();
             let event = scanner::BleAdvParser::parse(addr_bytes, report.rssi, report.data);
-            let _ = SCAN_CHANNEL.try_send(ScanEvent::Ble(event));
+            if SCAN_CHANNEL.try_send(ScanEvent::Ble(event)).is_err() {
+                SCAN_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -507,6 +517,9 @@ async fn main(spawner: embassy_executor::Spawner) {
                 handle_gatt_connection(&gatt_conn, &server).await;
 
                 BLE_CLIENTS.fetch_sub(1, Ordering::Relaxed);
+                while BLE_OUTPUT_CHANNEL.try_receive().is_ok() {
+                    BLE_OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+                }
                 log::info!("BLE client disconnected, re-advertising");
             }
         },
@@ -539,6 +552,7 @@ async fn handle_gatt_connection<'s, P: PacketPool>(
                         .await
                         .is_err()
                     {
+                        BLE_OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
                         return;
                     }
                 }
@@ -700,7 +714,11 @@ fn emit_drone_sighting(
     buf.resize_default(MAX_MSG_LEN).ok();
     if let Some(len) = comm::serialize_message(&msg, &mut buf) {
         buf.truncate(len);
-        let _ = output_tx.try_send(buf);
+        if output_tx.try_send(buf).is_err() {
+            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
+        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -709,6 +727,9 @@ fn handle_wifi_event(
     config: &FilterConfig,
     output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
 ) {
+    if !config.wifi_enabled {
+        return;
+    }
     let input = WiFiScanInput {
         mac: &wifi.mac,
         ssid: wifi.ssid.as_str(),
@@ -720,11 +741,8 @@ fn handle_wifi_event(
         filter_wifi_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
     });
     memory::wifi(wifi.mac, wifi.frame_type, result.matched);
-    if !result.matched {
-        return;
-    }
 
-    // Check if this is a drone detection — emit DroneSighting instead of WiFiScan
+    // Check if this is a drone detection — emit supplemental DroneSighting
     // ODID beacon IE parsing requires raw_ies which is only present on ESP32-S3
     #[cfg(not(feature = "esp32"))]
     if result
@@ -735,7 +753,6 @@ fn handle_wifi_event(
         if let Some(frame) = odid::parse_odid_wifi_beacon(&wifi.raw_ies) {
             if frame.has_data() {
                 let rule_name = result.rule_names.first().copied();
-                update_last_match_and_buzz(&result);
                 emit_drone_sighting(
                     &frame,
                     &wifi.mac,
@@ -744,13 +761,14 @@ fn handle_wifi_event(
                     rule_name,
                     output_tx,
                 );
-                return;
             }
         }
     }
 
-    WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-    update_last_match_and_buzz(&result);
+    if result.matched {
+        WIFI_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+        update_last_match_and_buzz(&result);
+    }
 
     let mut mac_str = MacString::new();
     format_mac(&wifi.mac, &mut mac_str);
@@ -772,7 +790,11 @@ fn handle_wifi_event(
     buf.resize_default(MAX_MSG_LEN).ok();
     if let Some(len) = comm::serialize_message(&msg, &mut buf) {
         buf.truncate(len);
-        let _ = output_tx.try_send(buf);
+        if output_tx.try_send(buf).is_err() {
+            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
+        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -781,6 +803,9 @@ fn handle_ble_event(
     config: &FilterConfig,
     output_tx: &embassy_sync::channel::Sender<'_, CriticalSectionRawMutex, MsgBuffer, 8>,
 ) {
+    if !config.ble_enabled {
+        return;
+    }
     let input = BleScanInput {
         mac: &ble.mac,
         name: ble.name.as_str(),
@@ -795,11 +820,8 @@ fn handle_ble_event(
         filter_ble_with_rules(&input, config, &defaults::DEFAULT_RULE_DB, &idx)
     });
     memory::ble(ble.mac, result.matched);
-    if !result.matched {
-        return;
-    }
 
-    // Check if this is a drone detection — emit DroneSighting instead of BleScan
+    // Check if this is a drone detection — emit supplemental DroneSighting
     if result
         .rule_categories
         .iter()
@@ -808,15 +830,15 @@ fn handle_ble_event(
         if let Some(frame) = odid::parse_odid_ble(&ble.raw_ad) {
             if frame.has_data() {
                 let rule_name = result.rule_names.first().copied();
-                update_last_match_and_buzz(&result);
                 emit_drone_sighting(&frame, &ble.mac, ble.rssi, "ble", rule_name, output_tx);
-                return;
             }
         }
     }
 
-    BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
-    update_last_match_and_buzz(&result);
+    if result.matched {
+        BLE_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
+        update_last_match_and_buzz(&result);
+    }
 
     let mut mac_str = MacString::new();
     format_mac(&ble.mac, &mut mac_str);
@@ -838,7 +860,11 @@ fn handle_ble_event(
     buf.resize_default(MAX_MSG_LEN).ok();
     if let Some(len) = comm::serialize_message(&msg, &mut buf) {
         buf.truncate(len);
-        let _ = output_tx.try_send(buf);
+        if output_tx.try_send(buf).is_err() {
+            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
+        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -854,7 +880,11 @@ async fn output_serial_task() {
         let msg = output_rx.receive().await;
 
         // Forward to BLE output channel (non-blocking, drops if full or no client)
-        let _ = BLE_OUTPUT_CHANNEL.try_send(msg.clone());
+        if BLE_CLIENTS.load(Ordering::Relaxed) > 0
+            && BLE_OUTPUT_CHANNEL.try_send(msg.clone()).is_err()
+        {
+            BLE_OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Log to serial via esp-println
         if let Ok(s) = core::str::from_utf8(&msg) {
@@ -908,7 +938,23 @@ async fn status_task() {
         buf.resize_default(MAX_MSG_LEN).ok();
         if let Some(len) = comm::serialize_message(&msg, &mut buf) {
             buf.truncate(len);
-            let _ = OUTPUT_CHANNEL.try_send(buf);
+            if OUTPUT_CHANNEL.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let msg = DeviceMessage::StreamStats {
+            scan_drops: SCAN_DROPS.load(Ordering::Relaxed),
+            output_drops: OUTPUT_DROPS.load(Ordering::Relaxed),
+            ble_output_drops: BLE_OUTPUT_DROPS.load(Ordering::Relaxed),
+            serialize_errors: SERIALIZE_ERRORS.load(Ordering::Relaxed),
+        };
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            if OUTPUT_CHANNEL.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -978,7 +1024,9 @@ async fn command_task() {
             buf.resize_default(MAX_MSG_LEN).ok();
             if let Some(len) = comm::serialize_message(&msg, &mut buf) {
                 buf.truncate(len);
-                let _ = output_tx.try_send(buf);
+                if output_tx.try_send(buf).is_err() {
+                    OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
     }
