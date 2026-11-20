@@ -107,14 +107,14 @@ class FakeScanner:
 
 
 class ProfileTests(unittest.TestCase):
-    def profile(self, arguments=None, **behavior):
+    def profile(self, arguments=None, allow_empty=True, **behavior):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake = FakeScanner(root, **behavior)
             with contextlib.ExitStack() as stack:
                 for target, attribute, value in [
                     (profiler, 'ROOT', root),
-                    (profiler.sys, 'argv', ['profile-macos.py'] + (arguments or ['--seconds', '1'])),
+                    (profiler.sys, 'argv', ['profile-macos.py'] + (['--allow-empty'] if allow_empty else []) + (arguments or ['--seconds', '1'])),
                     (profiler.sys, 'platform', 'darwin'),
                     (profiler.time, 'monotonic', lambda: fake.now),
                     (profiler.time, 'sleep', fake.sleep),
@@ -131,6 +131,16 @@ class ProfileTests(unittest.TestCase):
             metrics = json.loads(paths[0].read_text())
             self.assertFalse(paths[0].with_name('commands.fifo').exists())
             return result, metrics, fake.signals
+
+    def test_quiet_run_requires_explicit_diagnostic_override(self):
+        result, metrics, _ = self.profile(allow_empty=False)
+        self.assertEqual(result, 1)
+        self.assertFalse(metrics['reception_verified'])
+        self.assertTrue(any('No WIFI observations' in e for e in metrics['errors']))
+        result, metrics, _ = self.profile(allow_empty=True)
+        self.assertEqual(result, 0)
+        self.assertFalse(metrics['reception_verified'])
+        self.assertTrue(metrics['allow_empty'])
 
     def test_early_exit_is_failure_with_unmeasured_shutdown(self):
         for when in (0, .5):

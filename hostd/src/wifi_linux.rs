@@ -29,6 +29,11 @@ async fn capture_loop<T: pcap::Activated>(
         if !crate::control::wait_running(&mut state, &tx).await {
             return Ok(());
         }
+        control.set_health(
+            crate::health::Scanner::Wifi,
+            crate::health::Phase::Running,
+            "capture_active",
+        );
         // Even a stream of truncated packets must allow cancellation to run.
         tokio::task::yield_now().await;
         match capture.next_packet() {

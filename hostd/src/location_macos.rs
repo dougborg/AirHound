@@ -8,6 +8,7 @@
 //! `NSLocationWhenInUseUsageDescription` — otherwise macOS won't show the
 //! authorization prompt. See `hostd/macos/Info.plist` and `just bundle-hostd`.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, Once};
 use std::time::Duration;
 
@@ -24,6 +25,36 @@ const ACCURACY_BEST: CLLocationAccuracy = -1.0;
 // and its run loop remain on the thread that created them.
 static LOCATION: Mutex<Option<Location>> = Mutex::new(None);
 static START: Once = Once::new();
+static AUTHORIZATION: AtomicU8 = AtomicU8::new(0);
+
+/// Read only the thread-owned manager's current authorization snapshot.
+pub fn permission_blocked() -> bool {
+    AUTHORIZATION.load(Ordering::Relaxed) == 2
+}
+fn authorization_state(status: CLAuthorizationStatus, services_enabled: bool) -> u8 {
+    let allowed = services_enabled
+        && matches!(
+            status,
+            CLAuthorizationStatus::AuthorizedAlways | CLAuthorizationStatus::AuthorizedWhenInUse
+        );
+    let blocked = !services_enabled
+        || matches!(
+            status,
+            CLAuthorizationStatus::Denied | CLAuthorizationStatus::Restricted
+        );
+    if allowed {
+        1
+    } else if blocked {
+        2
+    } else {
+        0
+    }
+}
+fn refresh_authorization(status: CLAuthorizationStatus, services_enabled: bool) -> bool {
+    let state = authorization_state(status, services_enabled);
+    AUTHORIZATION.store(state, Ordering::Relaxed);
+    state == 1
+}
 
 /// Start a location thread with the active run loop required by CoreLocation.
 pub fn start() {
@@ -65,7 +96,14 @@ fn location_loop() {
     loop {
         autoreleasepool(|_| {
             run_loop.runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(1.0));
-            let snapshot = unsafe { mgr.location() }.as_deref().and_then(read_location);
+            let allowed = refresh_authorization(unsafe { mgr.authorizationStatus() }, unsafe {
+                CLLocationManager::locationServicesEnabled_class()
+            });
+            let snapshot = if allowed {
+                unsafe { mgr.location() }.as_deref().and_then(read_location)
+            } else {
+                None
+            };
             *LOCATION.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
         });
         // A run loop with no sources can return immediately (e.g. permission
@@ -103,6 +141,20 @@ mod tests {
     use super::*;
     use objc2::AllocAnyThread;
     use objc2_core_location::{CLLocation, CLLocationCoordinate2D};
+
+    #[test]
+    fn authorization_distinguishes_pending_denied_and_granted_without_cached_fixes() {
+        for (status, expected) in [
+            (CLAuthorizationStatus::NotDetermined, 0),
+            (CLAuthorizationStatus::Denied, 2),
+            (CLAuthorizationStatus::Restricted, 2),
+            (CLAuthorizationStatus::AuthorizedAlways, 1),
+            (CLAuthorizationStatus::AuthorizedWhenInUse, 1),
+        ] {
+            assert_eq!(authorization_state(status, true), expected);
+            assert_eq!(authorization_state(status, false), 2);
+        }
+    }
 
     #[test]
     fn fresh_fixes_preserve_coordinates_and_stale_or_invalid_fixes_are_rejected() {

@@ -10,6 +10,8 @@
 mod address_macos;
 mod ble;
 mod control;
+mod health;
+use health::{Phase, Scanner};
 mod external_scanner;
 use airhound_hostd::external_wifi;
 mod observation;
@@ -205,7 +207,10 @@ async fn main() -> io::Result<()> {
         io::stdout(),
         Scanners {
             ble: |tx, control| async move {
-                let adapter = ble::get_adapter().await.map_err(io::Error::other)?;
+                let Some(adapter) = ble::initialize(ble::get_adapter(), &control, &tx).await?
+                else {
+                    return Ok(());
+                };
                 ble::scan_loop(adapter, tx, control)
                     .await
                     .map_err(io::Error::other)
@@ -227,6 +232,11 @@ async fn main() -> io::Result<()> {
                             .await
                             .map_err(io::Error::other),
                         None => {
+                            control.set_health(
+                                Scanner::Wifi,
+                                Phase::Disabled,
+                                "monitor_interface_not_configured",
+                            );
                             log::info!(
                                 "WiFi disabled: select a monitor interface with --wifi-interface"
                             );
@@ -323,20 +333,32 @@ where
     let ble_control = control.clone();
     let ble = tokio::spawn(async move {
         if cfg.ble_enabled {
-            if let Err(e) = (scanners.ble)(ble_tx, ble_control).await {
+            ble_control.set_health(Scanner::Ble, Phase::Initializing, "adapter_initializing");
+            if let Err(e) = (scanners.ble)(ble_tx, ble_control.clone()).await {
+                ble_control.set_health(
+                    Scanner::Ble,
+                    Phase::Unavailable,
+                    "adapter_failed_check_permission_or_power",
+                );
                 log::error!("BLE scan error: {e}");
             }
+        } else {
+            ble_control.set_health(Scanner::Ble, Phase::Disabled, "disabled_by_configuration");
         }
     });
     let wifi_control = control.clone();
     let wifi = tokio::spawn(async move {
         if cfg.wifi_enabled {
-            if let Err(e) = (scanners.wifi)(tx, wifi_control).await {
+            wifi_control.set_health(Scanner::Wifi, Phase::Initializing, "adapter_initializing");
+            if let Err(e) = (scanners.wifi)(tx, wifi_control.clone()).await {
+                wifi_control.set_health(Scanner::Wifi, Phase::Unavailable, "adapter_failed");
                 log::error!("WiFi scan error: {e}");
                 if policy.fatal_wifi_errors {
                     let _ = failure_tx.send(e).await;
                 }
             }
+        } else {
+            wifi_control.set_health(Scanner::Wifi, Phase::Disabled, "disabled_by_configuration");
         }
     });
     let mut filter = tokio::spawn(filter_task(
@@ -411,11 +433,21 @@ async fn filter_task<W: Write, O: Write>(
     let mut flush_tick = tokio::time::interval(std::time::Duration::from_secs(5));
     flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    let mut last_health = None;
     loop {
+        let health = control.health_message();
+        if last_health.as_ref() != Some(&health) {
+            observation::write_json(&mut output, &health)?;
+            last_health = Some(health);
+        }
         let event = tokio::select! {
             event = rx.recv() => match event {
                 Some(event) => event,
-                None => break,
+                None => {
+                    let health = control.health_message();
+                    if last_health.as_ref() != Some(&health) { observation::write_json(&mut output, &health)?; }
+                    break;
+                },
             },
             _ = flush_tick.tick() => {
                 wigle.flush()?;
@@ -429,6 +461,15 @@ async fn filter_task<W: Write, O: Write>(
             reconnect_attempts,
         } = event
         {
+            control.set_health(
+                Scanner::Wifi,
+                match state.as_str() {
+                    "running" => Phase::Running,
+                    "paused" => Phase::Paused,
+                    _ => Phase::Unavailable,
+                },
+                "external_receiver_state",
+            );
             let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts});
             observation::write_json(&mut output, &value)?;
             continue;
@@ -694,6 +735,7 @@ async fn command_loop(
         scanning_state.store(scanning, Ordering::Relaxed);
         write_message(&mut output, &comm::command_response(cmd.as_ref(), result))?;
         if matches!(cmd, Some(HostCommand::GetStatus)) {
+            observation::write_json(&mut output, &scanning_state.health_message())?;
             write_message(
                 &mut output,
                 &DeviceMessage::Status {
@@ -850,6 +892,48 @@ mod tests {
         }
     }
 
+    // Existing observation/command assertions exclude the additive health stream.
+    fn data_output(output: &RecordingWriter) -> String {
+        recorded(output)
+            .lines()
+            .filter(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["type"] != "scanner_health"
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn failed_adapter_is_reported_even_without_observations() {
+        let output = RecordingWriter::default();
+        run_session(
+            SessionPolicy::native(),
+            FilterConfig {
+                wifi_enabled: false,
+                ..FilterConfig::new()
+            },
+            WigleWriter::new(Vec::new()).unwrap(),
+            output.clone(),
+            Scanners {
+                ble: |_, _| async { Err(io::Error::other("denied")) },
+                wifi: |_, _| async { panic!("disabled") },
+            },
+            |_, _, _| std::future::pending(),
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+        let messages: Vec<serde_json::Value> = recorded(&output)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let health = messages.last().unwrap();
+        assert_eq!(health["type"], "scanner_health");
+        assert_eq!(health["scanners"]["ble"]["state"], "unavailable");
+        assert_eq!(health["scanners"]["wifi"]["state"], "disabled");
+        assert_eq!(health["scan_requested"], true);
+    }
+
     #[tokio::test]
     async fn command_input_changes_state_and_returns_status_in_order() {
         let (tx, rx) = mpsc::channel(1);
@@ -900,7 +984,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"scanning\":false"));
         assert!(lines[1].contains("\"scanning\":true"));
-        assert_eq!(output.flushes.load(Ordering::Relaxed), 7);
+        assert_eq!(output.flushes.load(Ordering::Relaxed), 9);
     }
 
     #[tokio::test]
@@ -1164,7 +1248,7 @@ mod tests {
         assert_eq!(csv.lines().count(), 7, "{csv}");
         assert!(csv.contains("56:56:56:56:56:56"));
         assert!(csv.contains("-110"));
-        let messages = recorded(&output);
+        let messages = data_output(&output);
         assert_eq!(messages.lines().count(), 2, "{messages}");
         assert!(messages.contains("Flock-123456"));
         assert!(messages.contains("FS Ext Battery"));
@@ -1202,7 +1286,10 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(recorded(&output).lines().count(), usize::from(!ble_enabled));
+            assert_eq!(
+                data_output(&output).lines().count(),
+                usize::from(!ble_enabled)
+            );
         }
         let output = RecordingWriter::default();
         run_session(
@@ -1222,7 +1309,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(recorded(&output).lines().count(), 1);
+        assert_eq!(data_output(&output).lines().count(), 1);
     }
 
     #[tokio::test]
@@ -1259,7 +1346,7 @@ mod tests {
             if let Err(error) = result {
                 assert_eq!(error.kind(), io::ErrorKind::Interrupted);
             }
-            assert_eq!(recorded(&output).lines().count(), 1);
+            assert_eq!(data_output(&output).lines().count(), 1);
         }
     }
 
@@ -1363,7 +1450,7 @@ mod tests {
             )
             .await
             .unwrap();
-            let text = recorded(&output);
+            let text = data_output(&output);
             assert_eq!(text.lines().count(), usize::from(enabled), "{text}");
             if enabled {
                 assert!(text.contains("GBR-OP-123ABCD"));
@@ -1428,7 +1515,7 @@ mod tests {
         )
         .await;
         assert!(!scanning.load(Ordering::Relaxed));
-        assert_eq!(recorded(&output).lines().count(), 3);
+        assert_eq!(data_output(&output).lines().count(), 3);
         struct BrokenInput;
         impl io::Read for BrokenInput {
             fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
@@ -1538,7 +1625,7 @@ mod tests {
             3,
             "UUID-only observations must not become WiGLE MAC rows"
         );
-        let messages: Vec<serde_json::Value> = recorded(&output)
+        let messages: Vec<serde_json::Value> = data_output(&output)
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
@@ -1621,7 +1708,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let value: serde_json::Value = serde_json::from_str(&recorded(&output)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&data_output(&output)).unwrap();
         assert_eq!(value["type"], "external_wifi_observation");
         assert!(value["rssi_dbm"].is_null());
         assert_eq!(value["estimated_rssi_dbm"], -121);
