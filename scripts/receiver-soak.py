@@ -168,7 +168,7 @@ class Protocol:
             if state == 'paused' and record.get('cleanup_verified') is not True:
                 self.fail('pause_cleanup_unverified')
             for key in COUNTERS:
-                value = record.get(key)
+                value = record.get(key, 0) if key == "mcu_timeouts" else record.get(key)
                 if type(value) is not int or value < self.counters[key]:
                     self.fail('invalid_or_decreasing_counter')
                 else:
@@ -196,7 +196,7 @@ class Protocol:
             self.beacon_records += 1
         elif kind == 'stopped':
             for key in COUNTERS:
-                value = record.get(key)
+                value = record.get(key, 0) if key == "mcu_timeouts" else record.get(key)
                 if type(value) is not int or value < self.counters[key]:
                     self.fail('invalid_or_decreasing_counter')
                 else:

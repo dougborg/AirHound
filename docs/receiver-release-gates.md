@@ -239,3 +239,17 @@ mt76 binding, or controlled benchmark results. A subsequent authorized check
 verified `iw`, `tshark`, `dumpcap`, and the guest `mt76x0u` kernel module; firmware
 installation and physical USB assignment remain separate actions. Record
 those checks in each actual run rather than treating the inventory as validation.
+
+### 2026-11-19 unattended validation
+
+A 60-second seven-channel smoke run passed: 2,570 beacons, zero producer drops,
+verified cleanup, 12 resource samples, unchanged five-descriptor count, and
+approximately 0.39 MiB RSS growth. This is not endurance evidence.
+
+The subsequent eight-hour attempt stopped after about 20 seconds on an MCU
+RX DC-offset calibration timeout. A follow-up with bounded timeout recovery
+failed during startup after three MCU timeouts (two recovery attempts), with
+verified shutdown. No overnight soak completed. The failure cause remains
+unresolved; retry after a physical reset and retain the failed run evidence.
+Physical disconnect/reconnect, sleep/wake and controlled RF comparison remain
+pending operator availability. Raw captures and firmware stay local.
