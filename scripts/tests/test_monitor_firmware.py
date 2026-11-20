@@ -87,3 +87,15 @@ class MonitorTests(unittest.TestCase):
         self.assertFalse(monitor.summary(35)['passed'])
         self.sample(monitor, uptime=60)
         self.assertTrue(monitor.summary(65)['passed'])
+
+    def test_stream_summary_separates_ordinary_events_without_identifiers(self):
+        monitor = module.Monitor('m5stickc_plus2', '0.1.1')
+        monitor.line(b'{"type":"wifi","ssid":"private","match":[]}')
+        monitor.line(b'{"type":"ble","name":"private","match":[{"detail":"private"}]}')
+        monitor.line(b'{"type":"stream_stats","scan_drops":2,"output_drops":3,"ble_output_drops":4,"serialize_errors":0,"extra":"private"}')
+        summary = monitor.summary(1)
+        self.assertEqual(summary['observation_counts'], {'wifi_ordinary': 1, 'ble_matched': 1})
+        self.assertEqual(summary['stream_stats'][0]['output_drops'], 3)
+        self.assertNotIn('private', json.dumps(summary))
+        monitor.line(b'{"type":"stream_stats","scan_drops":true}')
+        self.assertIn('invalid stream loss metrics', monitor.summary(1)['failures'])
