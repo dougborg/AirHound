@@ -1,18 +1,77 @@
 # AirHound
 
-Open surveillance detection toolkit: a portable Rust library, [standardized signature format](schemas/signatures.v1.schema.json), and [documented companion event protocol](schemas/device-message.v1.schema.json) for WiFi and BLE surveillance device detection. ESP32 firmware provides a ready-to-flash reference implementation; the same library and formats support Linux daemons, Kismet integrations, and any tool that adopts the schemas.
+AirHound is a Rust toolkit for observing nearby WiFi and Bluetooth devices and
+matching their advertisements against surveillance-device signatures. It includes
+ESP32 firmware, a macOS/Linux desktop scanner, a portable `no_std` detection
+library, and documented JSON formats.
+
+**A signature match is a lead, not confirmed device identity.** Vendor OUIs,
+standard BLE services and names can also belong to unrelated devices. Observed
+address counts are separate from signature-hit counts, and changing addresses
+can represent the same physical device.
+
+## Choose a starting point
+
+| Use case | Current implementation | Start here |
+| --- | --- | --- |
+| Portable detector | M5StickC Plus2 and XIAO ESP32-S3 firmware; WiFi/BLE observations, signature alerts, serial and BLE output | [Firmware setup](#esp32-firmware) |
+| Scan from a Mac | CLI with CoreWLAN WiFi, CoreBluetooth BLE and optional location | [Desktop quick start](#desktop-quick-start) |
+| Scan from Linux | CLI with BlueZ BLE; WiFi requires an existing monitor-mode interface | [Desktop guide](hostd/README.md) |
+| External ALFA receiver | Experimental AWUS036ACHM/MT7610U passive receiver and hostd process integration; not a general WiFi driver | [Receiver guide](drivers/mt7610u/README.md) |
+| Consume embedded observations | Firmware emits all parsed observations, including `match: []`; a custom serial/BLE consumer is currently required | [Streaming contract](docs/firmware-streaming.md) |
+| Reuse detection logic or formats | Portable library, compiled defaults and JSON Schemas | [Architecture](#architecture), [schemas](#standard-formats) |
+
+There is no desktop GUI yet. The macOS `.app` bundle supplies permission identity
+for the CLI. `hostd` scans local radios or supervises the external receiver; it
+does **not** yet connect to an M5/XIAO over serial or BLE. See the
+[roadmap](docs/roadmap.md) for implementation and hardware-validation gaps.
+
+## Desktop quick start
+
+Install stable Rust and [`just`](https://github.com/casey/just), then run from the
+repository root. Desktop recipes use `hostd`'s stable toolchain; the ESP toolchain
+is only needed for firmware.
+
+**macOS:**
+
+```sh
+just bundle-hostd
+open -n hostd/AirHound.app --stdout /tmp/airhound-events.ndjson \
+  --stderr /tmp/airhound.log --args --output /tmp/airhound-observations.csv
+```
+
+Allow Bluetooth and Location Services when prompted. Output files are protected
+against overwriting; choose a new CSV path for another run. The standard build
+attempts private-API BLE address lookup, with UUID-only fallback. Use
+`just bundle-hostd-public-api` to omit that lookup; this does not by itself make
+an App Store-ready application.
+
+**Linux:** install BlueZ, `libdbus-1-dev`, `libpcap-dev` and `pkg-config`
+(Debian/Ubuntu names), then:
+
+```sh
+just build-hostd
+hostd/target/release/airhound-hostd --output observations.csv
+# WiFi as well, with a monitor interface you have configured externally:
+hostd/target/release/airhound-hostd --wifi-interface mon0 --output capture.csv
+```
+
+Linux defaults to BLE only. The process needs capture permission for WiFi;
+AirHound does not configure monitor mode or hop the Linux interface's channel.
+See the [desktop guide](hostd/README.md) for output semantics, permissions,
+scan cadence, external receivers, benchmarks and live profiling.
 
 ## Why AirHound
 
-Surveillance cameras, ALPR systems, and related RF devices are proliferating in public spaces. Several community projects have built tools to detect them (see [Related Projects](#related-projects) below), each combining scanning, analysis, alerting, and UI into a single firmware.
+Surveillance cameras, ALPR systems, and related RF devices are proliferating in public spaces. Community projects have developed several approaches to detecting and documenting them (see [Related Projects](#related-projects)).
 
 AirHound takes a different approach: **separation of concerns**, built around three portable deliverables:
 
-1. **Signature database** — the most complete open-source collection of surveillance device identifiers (MAC OUI, SSID, BLE name/UUID/manufacturer), in a [standard JSON format](schemas/signatures.v1.schema.json) any tool can import ([#11](https://github.com/dougborg/AirHound/issues/11))
+1. **Signature database** — a collection of community-sourced device identifiers (MAC OUI, SSID, BLE name/UUID/manufacturer), in a [standard JSON format](schemas/signatures.v1.schema.json) any tool can import ([#11](https://github.com/dougborg/AirHound/issues/11))
 2. **Companion event protocol** — a documented NDJSON wire format with [JSON Schemas](schemas/) for detection events and host commands, transport-agnostic ([#9](https://github.com/dougborg/AirHound/issues/9))
 3. **Detection library** — portable Rust crate (`no_std`, no platform dependencies) that connects signatures to scan data, testable on any host
 
-Each layer is independently useful. The ESP32 firmware wires all three together with real radio hardware, but a Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)), Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)), or any other tool can consume the same signatures and speak the same protocol. Analysis, scoring, GPS tagging, and storage live in companion apps — the detection layer stays thin and focused. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+Each layer is independently useful. The ESP32 firmware wires all three together with real radio hardware, and the desktop CLI uses the same library. A Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) remains planned. Analysis, scoring, GPS tagging, and storage live in companion apps — the detection layer stays thin and focused. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
 
 The goal is a community-maintained signature database and open standards that work across multiple tools, hardware platforms, and companion apps ([#16](https://github.com/dougborg/AirHound/issues/16)).
 
@@ -20,14 +79,13 @@ The goal is a community-maintained signature database and open standards that wo
 
 AirHound builds on work by the surveillance detection community. These projects pioneered the techniques and published the device signatures that AirHound's signature database draws from:
 
-| Project | Platform | WiFi | BLE | Output | Notes |
-|---------|----------|------|-----|--------|-------|
-| [Flock-You](https://github.com/colonelpanichacks/flock-you) | ESP32-S3 | — | Scan | Web UI, JSON/CSV/KML | Largest community, GPS via browser |
-| [OUI-Spy](https://github.com/colonelpanichacks/oui-spy) | ESP32-S3 (custom PCB) | — | Scan | Web UI | Multi-mode: surveillance, drone, proximity |
-| [FlockSquawk](https://github.com/f1yaw4y/FlockSquawk) | ESP32 (5 variants) | Promisc | Scan | Serial JSON, audio | First dual WiFi+BLE detection |
-| [FlockBack](https://github.com/NSM-Barii/flock-back) | Linux (Python) | Monitor | Scan | CLI | No dedicated hardware needed |
-| [ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder) | ESP32 (many) | Promisc | Scan | Serial, WiGLE CSV | Flock detection within broader toolkit |
-| [DeFlock](https://deflock.org) | iOS | — | — | — | Companion app |
+Related community projects include [Flock-You](https://github.com/colonelpanichacks/flock-you),
+[OUI-Spy](https://github.com/colonelpanichacks/oui-spy),
+[FlockSquawk](https://github.com/f1yaw4y/FlockSquawk),
+[FlockBack](https://github.com/NSM-Barii/flock-back),
+[ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder), and
+[DeFlock](https://deflock.org). Consult their own documentation for current
+hardware support and capabilities.
 
 AirHound's approach is complementary: a portable detection library and standardized formats that separate scanning from analysis. The ESP32 firmware uses BLE GATT relay so the phone keeps its own connectivity; a Linux daemon or Kismet companion can use the same library with different radios. AirHound's signature database builds on research from these projects — the goal is a shared, community-maintained signature format that benefits everyone ([#11](https://github.com/dougborg/AirHound/issues/11)).
 
@@ -36,40 +94,45 @@ AirHound's approach is complementary: a portable detection library and standardi
 - **Standard formats** — Surveillance device signatures, detection events, and host commands all have formal [JSON Schemas](schemas/). Any tool can validate, import, or produce conforming data without depending on AirHound's code.
 - **Library-first** — Core detection logic in a portable `no_std` Rust library with no platform dependencies. Platform code (ESP32 firmware, Linux daemon, Kismet companion) is a thin consumer layer.
 - **App-agnostic** — Open NDJSON companion protocol over any transport (BLE GATT, serial, TCP). Sensors and companion apps are interchangeable.
-- **Multi-platform** — ESP32 firmware today. Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)) and Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) planned, sharing the same library and formats.
+- **Multi-platform** — ESP32 firmware and a macOS/Linux desktop CLI share detection logic. Kismet integration remains planned.
 - **Community signatures** — The signature database is designed to grow through contributions and be shared across projects ([#11](https://github.com/dougborg/AirHound/issues/11), [#16](https://github.com/dougborg/AirHound/issues/16)). See [Contributing](CONTRIBUTING.md).
 
 ## Terminology
 
 **Data:**
+
 - **Signature** — an atomic, stateless matching criterion (MAC OUI, SSID pattern, BLE name, raw byte pattern, etc.). Evaluated against a single frame in isolation.
 - **Rule** — a named device detection that composes signatures with boolean logic (`anyOf`/`allOf`/`not`). Still stateless — combines per-frame signature matches, not temporal patterns.
 - **Signature database** — portable JSON file of signatures and rules ([`signatures.v1.schema.json`](schemas/signatures.v1.schema.json)).
 
 **Processing:**
+
 - **Scan event** — a parsed WiFi frame or BLE advertisement, before any evaluation.
 - **Filter engine** — stateless code that evaluates scan events against signatures.
 - **Match** — positive result: a scan event matched one or more signatures. Contains match reasons.
 - **Match reason** — a single explanation: which signature type triggered and a human-readable detail.
 
 **Communication:**
-- **Device message** — NDJSON output from sensor (WiFi match, BLE match, or status).
+
+- **Device message** — NDJSON output from a sensor: observations with optional match metadata, drone data, status, command results or stream counters.
 - **Host command** — NDJSON input to sensor (start, stop, configure).
 - **Companion event protocol** — the transport-agnostic NDJSON wire format for device messages and host commands.
 
 **WIDS (planned, [#32](https://github.com/dougborg/AirHound/issues/32)):**
+
 - **Fingerprint alert** — single-frame security anomaly detection (e.g., malformed IE, zero WPA NONCE).
 - **Behavioral alert** — multi-frame temporal detection (e.g., deauth flood, evil twin). Implemented as code modules with configurable thresholds, not declarative rules.
 
 ## Standard Formats
 
-AirHound defines three JSON Schemas ([draft 2020-12](https://json-schema.org/draft/2020-12)) in the [`schemas/`](schemas/) directory. These are designed for cross-tool use — any surveillance detection project can adopt them independently of AirHound's Rust code.
+AirHound defines JSON Schemas ([draft 2020-12](https://json-schema.org/draft/2020-12)) in the [`schemas/`](schemas/) directory. These are designed for cross-tool use — any surveillance detection project can adopt them independently of AirHound's Rust code.
 
 | Schema | Description | Used by |
 |--------|-------------|---------|
 | [`signatures.v1.schema.json`](schemas/signatures.v1.schema.json) | Portable signature database: MAC OUI prefixes, SSID patterns, BLE names/UUIDs/manufacturer IDs, with boolean rule composition (`anyOf`/`allOf`/`not`) | Signature contributors, tool importers, runtime loaders ([#14](https://github.com/dougborg/AirHound/issues/14)) |
-| [`device-message.v1.schema.json`](schemas/device-message.v1.schema.json) | Detection events emitted by sensors: WiFi matches, BLE matches, status reports | Companion apps, log analysis, data pipelines |
+| [`device-message.v1.schema.json`](schemas/device-message.v1.schema.json) | Firmware observations, match metadata, drone data, status, command results and stream counters | Companion apps, log analysis, data pipelines |
 | [`host-command.v1.schema.json`](schemas/host-command.v1.schema.json) | Commands sent to sensors: start/stop scanning, set RSSI threshold, configure buzzer | Companion apps, CLI tools |
+| [`desktop-ble.v1.schema.json`](schemas/desktop-ble.v1.schema.json) | Desktop BLE observations with platform UUIDs and optional addresses | Desktop consumers |
 
 An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demonstrates the format with Flock Safety, Raven, and AirTag signatures.
 
@@ -84,8 +147,18 @@ An [example signature file](schemas/examples/flock-raven-airtag.sigs.json) demon
 
 #### M5StickC Plus2 Features
 
-- **135x240 TFT display** (ST7789V2) — status screen with match counts, uptime, and last detection
-- **Passive buzzer** (GPIO2) — short alert beep on surveillance device match, togglable via BLE command
+The no_std build provides:
+
+- **TFT display** (240×135 landscape) — Overview separates AP, other WiFi and BLE address counts from signature hits; Details shows memory and WiFi queue statistics.
+- **Front button A** — switches Overview / Details.
+- **Side button B** — toggles detection sound; companion buzzer commands update the same state.
+- **Passive buzzer** (GPIO2) — short alert on signature matches. Settings reset at reboot.
+
+See the [controls guide](docs/m5-controls.md) for debounce and validation details.
+These controls describe the no_std runtime; do not assume ESP-IDF UI parity.
+USB uses a CH9102 USB-to-UART bridge. The application console is **460800 baud**
+for no_std M5 builds, **115200** for other builds. Boot-ROM output remains
+115200; a different USB protocol cannot bypass this board's physical UART.
 
 See [M5StickC Plus2 bring-up and backup procedure](docs/m5stickc-bringup.md)
 for the local hardware validation and serial-monitor workflow.
@@ -120,8 +193,8 @@ long-range reception.
 ### Quick Start
 
 Check the assets on the [Releases](https://github.com/dougborg/AirHound/releases)
-page before downloading: v0.1.1 has no firmware assets. Build from source below
-when no binaries are attached. Future release binaries produced by this workflow
+page before downloading; a release tag alone does not imply flashable binaries.
+Build from source below when no binaries are attached. Future release binaries produced by this workflow
 are merged no_std images containing the bootloader, partition table and application.
 ESP-IDF builds are currently CI previews, not release assets.
 
@@ -142,7 +215,7 @@ espflash write-bin --chip esp32 0x0 airhound-m5stickc.bin           # M5StickC P
 espflash monitor --monitor-baud 460800 # no_std M5; other builds: 115200
 ```
 
-AirHound starts scanning immediately on boot. All parsed WiFi/BLE observations from enabled radios appear as NDJSON on BLE GATT notifications and serial; signature matches are metadata, not a condition for streaming. See [firmware streaming](docs/firmware-streaming.md) for loss counters and transport limits.
+AirHound starts scanning immediately on boot. The firmware attempts to emit every parsed WiFi/BLE observation from enabled radios as NDJSON on BLE GATT notifications and serial; signature matches are metadata, not a condition for streaming. See [firmware streaming](docs/firmware-streaming.md) for loss counters and transport limits.
 
 Live radio coexistence, runtime memory headroom, buzzer behavior and board
 flashing remain tracked in [#141](https://github.com/dougborg/AirHound/issues/141).
@@ -160,7 +233,7 @@ cargo install just
 just docker-build            # Both targets
 just docker-build-xiao       # XIAO ESP32-S3 only
 just docker-build-m5stickc   # M5StickC Plus2 only
-just docker-clean            # Clean (required after dependency changes)
+just docker-clean           # Clean stale artifacts when needed
 ```
 
 #### Native
@@ -196,12 +269,12 @@ AirHound uses newline-delimited JSON (NDJSON) for all communication. The format 
 
 ### Device Messages (sensor -> host)
 
-**WiFi scan result:**
+**Matched WiFi observation:**
 ```json
 {"type":"wifi","mac":"B4:1E:52:XX:XX:XX","ssid":"Flock-A1B2C3","rssi":-65,"ch":6,"frame":"beacon","match":[{"type":"mac_oui","detail":"Flock Safety"},{"type":"ssid_pattern","detail":"Flock Safety camera WiFi"}],"ts":12345}
 ```
 
-**BLE scan result:**
+**Matched BLE observation:**
 ```json
 {"type":"ble","mac":"58:8E:81:XX:XX:XX","name":"FS Ext Battery","rssi":-72,"mfr":2504,"match":[{"type":"ble_name","detail":"FS Ext Battery"},{"type":"ble_mfr","detail":"Known manufacturer ID"}],"ts":12346}
 ```
@@ -210,6 +283,13 @@ AirHound uses newline-delimited JSON (NDJSON) for all communication. The format 
 ```json
 {"type":"status","scanning":true,"uptime":3600,"heap_free":45000,"ble_clients":1,"board":"xiao_esp32s3","version":"0.1.0"}
 ```
+
+Ordinary firmware observations have the same fields with `"match": []` and no
+`rule`. Check match metadata before alerting. Serial output also contains log
+prefixes and diagnostics; it is not a clean bidirectional NDJSON port. Firmware
+commands are received over BLE GATT, whereas hostd receives its own commands on
+stdin. [Stream counters and framing](docs/firmware-streaming.md) explain bounded,
+best-effort delivery and BLE reassembly.
 
 ### Host Commands (host -> sensor)
 
@@ -241,33 +321,29 @@ AirHound's value lives in three separable, portable layers ([#17](https://github
 
 ### Library Modules
 
-The library is organized in two code layers. Layer 1 is implemented; Layer 2 modules are planned.
+The portable library currently includes frame parsing (`scanner`, `odid`),
+signature/rule evaluation (`filter`, `rules`, `defaults`), bounded observation and
+address tracking (`observations`, `mac_index`), watchlist/proximity primitives,
+button state handling, and protocol serialization (`protocol`, `comm`). Module
+availability does not imply every runtime exposes every feature as a command.
 
-```
-                    ┌──────────────────────────────────┐
-                    │          Platform Binaries        │
-                    ├───────────┬───────────┬───────────┤
-                    │  ESP32    │  Linux    │  Kismet   │
-                    │ Firmware  │  Daemon   │ Companion │
-                    │           │  (#13)    │  (#12)    │
-                    └─────┬─────┴─────┬─────┴─────┬─────┘
-                          │           │           │
-┌─────────────────────────┴───────────┴───────────┴──────┐
-│  Layer 2 (Planned) — feature-gated modules             │
-│  gps · tracker · channel · export · wids               │
-│  (#28)  (#29)    (#30)    (#31)    (#32)               │
-├────────────────────────────────────────────────────────┤
-│  Layer 1 (Implemented) — no_std, no dependencies       │
-│  scanner · filter · defaults · protocol · comm · board │
-└────────────────────────────────────────────────────────┘
-```
+| Component | Responsibility |
+| --- | --- |
+| [`src/lib.rs`](src/lib.rs) | Shared `no_std` detection and protocol code |
+| [`src/main.rs`](src/main.rs) | Embassy/esp-hal no_std firmware |
+| [`firmware-std/`](firmware-std/) | ESP-IDF firmware alternative |
+| [`hostd/`](hostd/) | macOS/Linux scanning, lifecycle, location and WiGLE export |
+| [`drivers/mt7610u/`](drivers/mt7610u/) | Separate GPL receiver process; not linked into AirHound |
+
+Broader history, adaptive channel management, WIDS, Kismet integration and a
+native desktop GUI remain [roadmap work](docs/roadmap.md).
 
 ### Firmware Pipeline (ESP32)
 
 ```
 ┌─────────────────┐    ┌──────────────────┐
 │  WiFi Sniffer   │    │   BLE Scanner    │
-│  (13-ch hop)    │    │  (periodic scan) │
+│  (13-ch hop)    │    │  (passive scan)  │
 └────────┬────────┘    └────────┬─────────┘
          │ ScanEvent            │ ScanEvent
          └──────────┬───────────┘
@@ -284,6 +360,11 @@ The library is organized in two code layers. Layer 1 is implemented; Layer 2 mod
 │ (notify) │ │ (UART)   │ │ (M5StickC)   │
 └──────────┘ └──────────┘ └──────────────┘
 ```
+
+Serial/BLE carry observations; local signature alerts and display counters have
+separate semantics. See [streaming](docs/firmware-streaming.md) and
+[M5 throughput experiments](docs/m5-stream-performance.md) for queue limits,
+measured behavior and remaining validation.
 
 ## Signature Database
 
@@ -303,7 +384,9 @@ See the [prioritized roadmap](docs/roadmap.md) and its published
 [tracking issue #160](https://github.com/dougborg/AirHound/issues/160) for the
 complete open-issue inventory, dependencies, evidence and release gates.
 
-1. Integrate the locally validated firmware/receiver work and open PRs (#152).
+1. Integrate the locally validated firmware/receiver work and open PRs (#152),
+   including M5 controls and observation streaming. Source availability on a
+   branch is not a published hardware release.
 2. Address firmware memory/stack/drop limits (#153), signature confidence (#154),
    and macOS live capture/permission failures (#159).
 3. Validate receiver endurance/recovery (#155), channel/RF performance (#156),
@@ -425,7 +508,7 @@ unknown message types when using newer firmware.
 
 ### Desktop scanner configuration
 
-Run `cargo run --manifest-path hostd/Cargo.toml -- --help` for options.
+Run `cargo +stable run --manifest-path hostd/Cargo.toml -- --help` for options.
 `--no-ble` and `--no-wifi` disable the corresponding scanner; at least one
 must remain enabled. `--rssi -70` sets the detection threshold (default -90 dBm,
 range -128 through 0); WiGLE CSV continues to record all observed networks.
@@ -442,7 +525,7 @@ Install `libpcap-dev`, `libdbus-1-dev`, and `pkg-config` before building hostd
 (Debian/Ubuntu package names). Supply an existing monitor-mode interface:
 
 ```bash
-cargo run --manifest-path hostd/Cargo.toml -- \
+cargo +stable run --manifest-path hostd/Cargo.toml -- \
   --wifi-interface mon0 --no-ble --output capture.csv
 ```
 
