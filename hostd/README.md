@@ -10,9 +10,8 @@ Use the host Rust toolchain (`RUSTUP_TOOLCHAIN=stable` when the repository's ESP
 Rust override is active):
 
 ```sh
-just test-hostd
-just clippy-hostd
-just bundle-hostd
+just build-hostd             # macOS or Linux
+just bundle-hostd            # macOS only
 hostd/AirHound.app/Contents/MacOS/airhound-hostd --output observations.csv
 ```
 
@@ -32,6 +31,18 @@ Linux needs BlueZ, D-Bus development headers and libpcap headers (Ubuntu:
 `libdbus-1-dev libpcap-dev`). WiFi is opt-in with `--wifi-interface wlan0mon` on an
 externally configured monitor-mode interface with capture permission. Linux
 location is not implemented. The default Linux configuration scans BLE only.
+
+## Receiving detector-device data
+
+`hostd` currently scans native host radios or supervises the external receiver
+process described below. It has no M5/XIAO serial-port or BLE GATT client mode.
+Its stdin accepts commands for its own scanning session, not firmware events.
+
+Embedded firmware does emit ordinary and matched observations over serial/BLE.
+Use a separate consumer following the [firmware streaming contract](../docs/firmware-streaming.md),
+or `scripts/monitor-firmware.py` for bounded serial validation. That script writes
+private captures and aggregate diagnostics; it does not feed hostd or export WiGLE.
+For no_std M5 firmware select `--baud 460800`; other firmware builds use 115200.
 
 ## Observation identity and export
 
@@ -70,7 +81,7 @@ build. Exclude it with:
 
 ```sh
 just bundle-hostd-public-api
-# Equivalent build: cargo build --manifest-path hostd/Cargo.toml --release --locked --no-default-features
+# Equivalent build: cargo +stable build --manifest-path hostd/Cargo.toml --release --locked --no-default-features
 ```
 
 That build keeps UUID-based BLE records and WiFi scanning. It omits the resolver
@@ -170,8 +181,8 @@ This MIT utility validates bounded records, session/sequence consistency and
 signal provenance, then prints aggregate counts without network identifiers.
 It does not link the GPL driver, launch a scanner, ingest observations into the
 normal hostd pipeline, run detection matching or export WiGLE CSV. The receiver's
-signal estimates remain unvalidated; live integration needs a host observation
-model that preserves this distinction. Ordinary `cargo run` still selects
+signal estimates remain unvalidated; the live receiver integration below preserves this distinction with its own
+observation type. This file-checking utility remains a separate offline path. Ordinary `cargo run` still selects
 `airhound-hostd`.
 
 ## Live external receiver

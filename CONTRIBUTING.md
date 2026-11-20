@@ -12,7 +12,7 @@ Roughly ordered by accessibility:
 4. **Protocol improvements** — Changes to the NDJSON message format in `src/protocol.rs`. See [#9](https://github.com/dougborg/AirHound/issues/9).
 5. **Bug fixes and code improvements** — Always welcome.
 6. **Library module contributions** — Layer 2 modules ([#28](https://github.com/dougborg/AirHound/issues/28)–[#32](https://github.com/dougborg/AirHound/issues/32)) are pure Rust with no platform dependencies, fully testable on host with `cargo test`. See the [architecture vision](https://github.com/dougborg/AirHound/issues/17) for context.
-7. **Linux daemon and Kismet companion** — If you have experience with `pcap`, `bluer`, or the Kismet REST API, see [#13](https://github.com/dougborg/AirHound/issues/13) and [#12](https://github.com/dougborg/AirHound/issues/12).
+7. **Desktop scanner and integrations** — Improve the existing macOS/Linux CLI in `hostd/`, add detector-device transport ingestion, or help with planned Kismet integration ([#12](https://github.com/dougborg/AirHound/issues/12)).
 8. **Cross-project signature sharing** — Help bridge AirHound's portable signature format ([#11](https://github.com/dougborg/AirHound/issues/11)) to other detection tools ([#16](https://github.com/dougborg/AirHound/issues/16)).
 
 ## Development Setup
@@ -27,7 +27,7 @@ cargo install just
 just docker-build            # Build both targets
 just docker-check            # Type-check only
 just docker-test             # Run unit tests
-just docker-clean            # Clean (required after dependency changes)
+just docker-clean            # Clean stale artifacts when needed
 ```
 
 ### Host library development
@@ -42,6 +42,25 @@ cargo +stable fmt --check
 cargo +stable fmt --manifest-path firmware-std/Cargo.toml --check
 node --test .github/scripts/preview-comment.test.js
 ```
+
+### Desktop development and performance
+
+`hostd/` selects stable Rust independently of the firmware toolchain. Install the
+platform prerequisites in the [desktop guide](hostd/README.md), then run:
+
+```sh
+just test-hostd
+just clippy-hostd
+just fmt-hostd
+python3 -B -m unittest discover -s scripts/tests -v
+just bench-hostd
+```
+
+The benchmark is synthetic and needs no radio permissions. `just profile-hostd`
+is a separate live macOS check requiring a connected radio and granted permissions.
+See [testing and analysis](README.md#testing-and-analysis) for coverage, fuzzing,
+CI checks and hardware-validation limits. Keep raw captures, nearby identifiers
+and device flash backups out of commits and CI artifacts.
 
 ### Native firmware
 

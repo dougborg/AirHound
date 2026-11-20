@@ -1,181 +1,130 @@
-# CLAUDE.md
+# Repository guide for coding assistants
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Use the [README](README.md) for supported entry points,
+[CONTRIBUTING.md](CONTRIBUTING.md) for development conventions, and the
+[roadmap](docs/roadmap.md) for open work and hardware-release gates. Verify claims
+against the current branch; a local build or short capture is not a release.
 
-## Project Overview
+## Repository layout
 
-AirHound is a surveillance detection toolkit built around three portable layers: a standardized **signature database** (JSON Schema in `schemas/signatures.v1.schema.json`), a documented **companion event protocol** (NDJSON with JSON Schemas in `schemas/`), and a **detection library** (`src/lib.rs` — `no_std` Rust, no platform dependencies). ESP32 firmware is the reference platform consumer; a Linux daemon ([#13](https://github.com/dougborg/AirHound/issues/13)) and Kismet companion ([#12](https://github.com/dougborg/AirHound/issues/12)) are planned. Companion apps handle analysis, scoring, GPS tagging, and storage. See [#17](https://github.com/dougborg/AirHound/issues/17) for the full architecture vision.
+- `src/lib.rs`: portable `no_std` detection library. Includes parsing, rules,
+  signatures, bounded address/observation tracking, watchlist/proximity primitives,
+  buttons and protocol serialization. It has library dependencies but no required
+  ESP platform dependencies when built with `--no-default-features`.
+- `src/main.rs`: Embassy/esp-hal firmware. Owns radio initialization, callbacks,
+  static channels, tasks and output; `display.rs`, `buzzer.rs` and `memory.rs`
+  provide board-specific functionality.
+- `firmware-std/`: ESP-IDF runtime alternative with a separate lockfile.
+- `hostd/`: macOS/Linux CLI with its own stable toolchain and lockfile. Native
+  radio capture, WiGLE output, lifecycle handling and external receiver supervision.
+- `drivers/mt7610u/`: separate GPL-2.0-only passive userspace receiver experiment.
+  MIT hostd communicates with it through a process protocol, without linking it.
+- `schemas/`: signature, firmware message, command and desktop BLE contracts.
+- `scripts/` and `.github/`: validation, packaging, benchmarking and CI workflows.
 
-## Terminology
+The desktop exists today; Kismet integration and a native GUI remain planned.
+The macOS `.app` supplies permission identity, not a graphical interface. Hostd
+cannot yet ingest an embedded detector's serial/BLE stream. Its stdin is for
+commands, not observations.
 
-The project uses these terms consistently across code, schemas, and documentation:
+## Commands
 
-**Data concepts:**
-- **Signature** — atomic, stateless matching criterion. Currently 6 types: `mac_oui`, `wifi_ssid`, `ble_name`, `ble_service_uuid`, `ble_manufacturer_id`, `ble_ad_bytes`. Defined in `signatures.v1.schema.json`, compiled defaults in `defaults.rs`.
-- **Rule** — named device detection composing signatures with `anyOf`/`allOf`/`not` boolean logic. Defined in `signatures.v1.schema.json`. Rule evaluation engine not yet implemented.
-- **Signature database** — portable JSON collection of signatures and rules.
+Run from the repository root unless stated otherwise. Install `just` first.
 
-**Processing concepts:**
-- **Scan event** — parsed WiFi frame or BLE advertisement. Types: `ScanEvent`, `WiFiEvent`, `BleEvent` in `scanner.rs`.
-- **Filter engine** — stateless code evaluating scan events against signatures. Entry points: `filter_wifi()`, `filter_ble()` in `filter.rs`.
-- **Filter config** — runtime parameters (RSSI threshold, WiFi/BLE enable). `FilterConfig` in `filter.rs`. Not signature data.
-- **Match** — positive result from the filter engine. `FilterResult` in `filter.rs`.
-- **Match reason** — which signature type triggered and a human-readable detail. `MatchReason` in `protocol.rs`. The `filter_type` field name is a legacy misnomer (rename to `signature_type` tracked for v2, [#9](https://github.com/dougborg/AirHound/issues/9)).
+```sh
+# Portable logic; no ESP toolchain or device required
+cargo +stable test --locked --lib --no-default-features
+cargo +stable fmt --check
+cargo +stable fmt --manifest-path firmware-std/Cargo.toml --check
+python3 -B -m unittest discover -s scripts/tests -v
+just check-json
 
-**Output concepts:**
-- **Device message** — NDJSON line from sensor. `DeviceMessage` in `protocol.rs`, schema: `device-message.v1.schema.json`.
-- **Host command** — NDJSON line to sensor. `HostCommand` in `protocol.rs`, schema: `host-command.v1.schema.json`.
-- **Companion event protocol** — the transport-agnostic NDJSON wire format for device messages and host commands.
+# Desktop (hostd selects stable Rust)
+just test-hostd
+just clippy-hostd
+just fmt-hostd
+just build-hostd
+just bench-hostd
 
-**WIDS concepts (planned, [#32](https://github.com/dougborg/AirHound/issues/32)):**
-- **Fingerprint alert** — single-frame security anomaly (e.g., malformed IE, zero WPA NONCE). Stateless.
-- **Behavioral alert** — multi-frame temporal detection (e.g., deauth flood, evil twin). Requires per-device state. Implemented as code in `wids.rs`, not declarative rules.
-
-## Build Commands
-
-The project builds inside Docker using chip-specific Espressif images (no local ESP toolchain needed). Install `just` (`cargo install just`).
-
-```bash
-just docker-build            # Both targets
-just docker-build-xiao       # XIAO ESP32-S3 only
-just docker-build-m5stickc   # M5StickC Plus2 only
-just docker-check            # Type-check both targets
-just docker-clean            # Clean artifacts (REQUIRED after dependency changes)
+# Firmware: Docker avoids a local ESP toolchain
+just docker-build-xiao
+just docker-build-m5stickc
+just docker-build-std-xiao
+just docker-build-std-m5stickc
 ```
 
-To flash (requires `espflash` on host, device connected via USB):
-```bash
-espflash flash --chip esp32s3 target/xtensa-esp32s3-none-elf/release/airhound
-espflash flash --chip esp32 target/xtensa-esp32-none-elf/release/airhound
-```
+Native firmware builds require the `esp` toolchain installed by `espup` and its
+export environment. Use `just build-xiao` / `just build-m5stickc`. `build-std` is
+passed by the recipes, not globally in `.cargo/config.toml`, so host tests work.
+Select only one board feature: `xiao` (default) or `m5stickc`.
 
-Tests and formatting:
-```bash
-just docker-test             # Run unit tests (in container)
-just test                    # Run unit tests (requires nightly on host)
-cargo fmt --check            # Check formatting (requires nightly on host)
-just setup-hooks             # Configure git pre-commit + commit-msg hooks
-```
+`just flash-xiao-host` / `just flash-m5stickc-host` flash an existing ELF and
+monitor it. M5 no_std application output is 460800 baud; other builds use 115200.
+Boot-ROM output stays 115200. See the [bring-up guide](docs/m5stickc-bringup.md)
+for backup, image offsets and hardware validation before flashing.
 
-The project uses `build-std = ["core", "alloc"]` (passed via justfile, not `.cargo/config.toml`). Commits must follow [Conventional Commits](https://www.conventionalcommits.org/) format.
+Coverage uses the pinned toolchain and floors in `.github/`; follow the README
+rather than substituting toolchain versions or lowering thresholds. Synthetic
+benchmarks exclude radio acquisition. Live macOS profiling requires permissions
+and should not run concurrently with builds for performance comparisons.
 
-## Feature Flags
+## Runtime and memory constraints
 
-Board features (`xiao`, `m5stickc`) select chip features (`esp32s3`, `esp32`), which enable chip-specific crate features across all `esp-*` dependencies. **Only one board feature should be active at a time.** `xiao` is the default.
+Firmware tasks cooperate on an Embassy executor. WiFi callback delivery must
+remain non-blocking. The no_std queues currently are:
 
-The `m5stickc` feature additionally enables display (`mipidsi`, `embedded-graphics`, `embedded-hal-bus`) and buzzer modules.
+| Queue | M5 | XIAO |
+| --- | --- | --- |
+| Scan events | 20 | 16 |
+| Serialized output | 4 | 8 |
+| Commands | 4 | 4 |
+| BLE output | 4 | 4 |
 
-## Architecture
+The pipeline is radio → scan queue → parsing/matching → output queue → serial
+and optional BLE forwarding. Both firmware runtimes attempt to stream ordinary
+and matching observations; only signature matches trigger signature alerts.
+`stream_stats` reports bounded-queue/serialization losses, not all RF loss or
+proof of subscriber delivery. See [streaming](docs/firmware-streaming.md).
 
-The project's three portable layers (signature schemas, companion event protocol, detection library) are described in [Architectural Direction](#architectural-direction) below. This section covers the **ESP32 firmware** implementation.
+M5 has a 64 KiB internal heap and an isolated 2 MiB PSRAM allocator used for a
+4,096-entry observed-address tracker. Radios, RTOS and queues still need internal
+RAM. XIAO's internal heap is 128 KiB; the M5 PSRAM work does not enable XIAO PSRAM.
+Do not infer free internal memory from available external RAM.
 
-The firmware runs on the Embassy async executor (`esp-rtos`). All tasks are single-threaded cooperative (no preemption). Tasks communicate through static `embassy_sync::Channel`s defined in `main.rs`:
+Embassy futures occupy static RAM. Keeping large buffers live across `.await`
+can consume startup stack headroom even when compilation succeeds. The M5 linked
+startup-stack gate is 7 KiB; run `scripts/check-firmware-memory.py` against its ELF
+when changing static storage, queues, task futures or heap allocations. This is
+a layout guard, not a measured runtime stack high-water mark. Build both boards
+after changing shared event types.
 
-- **SCAN_CHANNEL** (capacity 8 on ESP32, 16 on ESP32-S3) — WiFi sniffer ISR and BLE scan task push raw `ScanEvent`s
-- **OUTPUT_CHANNEL** (capacity 8) — Serialized NDJSON `MsgBuffer`s ready for transmission
-- **CMD_CHANNEL** (capacity 4) — Parsed `HostCommand`s from BLE or serial input
-- **BLE_OUTPUT_CHANNEL** (capacity 4) — Cloned output messages forwarded as BLE GATT notifications
-- **BUZZER_SIGNAL** (capacity 1, m5stickc only) — Coalescing trigger for buzzer beeps
+M5 no_std excludes WiFi Remote ID events for static-memory reasons. XIAO no_std
+and both ESP-IDF builds include them. The generic BLE event keeps only 62 bytes;
+decoder tests do not establish extended/Coded PHY reception.
 
-Pipeline: `WiFi Sniffer / BLE Scanner → SCAN_CHANNEL → filter_task → OUTPUT_CHANNEL → output_serial_task / BLE GATT TX`
+## Board and platform details
 
-Shared state uses atomics (`SCANNING`, `BLE_CLIENTS`, `WIFI_MATCH_COUNT`, `BLE_MATCH_COUNT`, `BUZZER_ENABLED`) and `critical_section::Mutex<Cell<T>>` for larger types (`FILTER_CONFIG`, `LAST_MATCH`).
+M5StickC Plus2: GPIO4 power hold must be high; GPIO27 backlight; GPIO12 display
+reset; ST7789V2 display; GPIO2 passive buzzer; front button A GPIO37 and side
+button B GPIO39. Buttons use external pull-ups. See [controls](docs/m5-controls.md).
+Its CH9102 USB bridge carries UART; native USB cannot be enabled in software.
 
-### Crate Structure
+Linux WiFi requires an externally configured monitor interface. Hostd does not
+change interface mode or hop its channels. macOS CoreBluetooth provides UUIDs;
+standard builds attempt private address lookup with UUID fallback. Public-API
+builds omit that lookup. Neither path guarantees stable physical-device identity.
+The ALFA receiver is an experimental passive scanner, not an OS network driver.
 
-The project is split into a library crate (`src/lib.rs`) and a binary crate (`src/main.rs`). The library contains all pure-logic modules testable on host (`cargo test --lib --no-default-features`). The binary contains ESP-specific code (ISR callbacks, embassy tasks, hardware init). Library uses `#![cfg_attr(not(test), no_std)]` — `no_std` for firmware, `std` for tests.
+## Change discipline
 
-The library is organized in two layers with progressive feature gates:
-
-| Layer | Modules | Requires | Status |
-|-------|---------|----------|--------|
-| Layer 1 | `scanner`, `filter`, `defaults`, `protocol`, `comm`, `board` | `no_std`, no deps | Implemented |
-| Layer 2 | `gps` ([#28](https://github.com/dougborg/AirHound/issues/28)), `tracker` ([#29](https://github.com/dougborg/AirHound/issues/29)), `channel` ([#30](https://github.com/dougborg/AirHound/issues/30)) | `no_std` + `alloc` | Planned |
-| Layer 2 | `export` ([#31](https://github.com/dougborg/AirHound/issues/31)) | `std` | Planned |
-| Layer 2 | `wids` ([#32](https://github.com/dougborg/AirHound/issues/32)) | `no_std` + `alloc` | Planned |
-
-### Module Responsibilities
-
-**Library modules** (`src/lib.rs` re-exports):
-- **`scanner.rs`** — WiFi/BLE event types, 802.11 frame parsing (`parse_wifi_frame()`), BLE advertisement parsing (`BleAdvParser`). Pure functions — ISR callbacks and channel hop task live in `main.rs`.
-- **`filter.rs`** — Stateless filter engine. `filter_wifi()` and `filter_ble()` evaluate inputs against default signatures plus runtime `FilterConfig`. Returns up to 4 `MatchReason`s per result.
-- **`defaults.rs`** — Default signature data: MAC OUI prefixes, SSID patterns, BLE names, service UUIDs, manufacturer IDs. Currently compiled in; runtime loading planned ([#14](https://github.com/dougborg/AirHound/issues/14)).
-- **`protocol.rs`** — Serde-based NDJSON message types using `heapless` strings. `DeviceMessage` (wifi/ble/status) and `HostCommand` (start/stop/status/set_rssi/set_buzzer).
-- **`comm.rs`** — JSON serialization/deserialization, `LineReader` NDJSON accumulator, command handler. BLE GATT service definition and channel type aliases live in `main.rs`.
-- **`board.rs`** — Compile-time hardware constants per board (pin assignments, capabilities).
-
-**Planned library modules (Layer 2)** — not yet implemented, see [#17](https://github.com/dougborg/AirHound/issues/17):
-- **`gps.rs`** ([#28](https://github.com/dougborg/AirHound/issues/28)) — NMEA parsing, position types, geofence helpers. Feature gate: `gps`. No deps beyond `heapless`.
-- **`tracker.rs`** ([#29](https://github.com/dougborg/AirHound/issues/29)) — Device history, re-identification, follow detection. Feature gate: `tracker`. Depends on `gps`.
-- **`channel.rs`** ([#30](https://github.com/dougborg/AirHound/issues/30)) — WiFi channel scheduling and dwell optimization. Feature gate: `channel`.
-- **`export.rs`** ([#31](https://github.com/dougborg/AirHound/issues/31)) — WiGLE CSV, KML, pcapng export. Feature gate: `std`. Requires `std` I/O.
-- **`wids.rs`** ([#32](https://github.com/dougborg/AirHound/issues/32)) — Rogue AP detection, deauth monitoring. Feature gate: `wids`.
-
-**Binary modules** (`src/main.rs`):
-- Entry point, heap setup, peripheral init, task spawning, WiFi sniffer callback, channel hop task, BLE scan task, BLE GATT server, serial output task. Owns all static channels, shared state, and ESP-specific types.
-- **`display.rs`** (m5stickc only) — ST7789V2 display driver. `Screen` renderer with `row!` and `centered!` macros.
-- **`buzzer.rs`** (m5stickc only) — LEDC-driven passive buzzer.
-
-## Key Constraints
-
-- **`no_std` core, progressive feature gates**: Layer 1 modules use `heapless` collections with fixed capacities — no `alloc`, no platform deps. Layer 2 modules (planned) will use feature gates: `gps`, `tracker`, `channel`, and `wids` require `alloc`; `export` requires `std`. On ESP32, `alloc` is only for the WiFi/BLE radio stacks and any opted-in Layer 2 modules.
-- **Heap budget is tight**: ESP32 (M5StickC) uses 64KB heap — reduced from 72KB to leave DRAM for stack. ESP32-S3 (XIAO) uses 128KB. Cannot go below ~60KB on ESP32 or WiFi/BLE coex allocation fails.
-- **Stack overflow risk on ESP32**: Embassy task futures are stored in static BSS. Large generic types (e.g., mipidsi Display with nested SPI generics) consume significant DRAM. Use `StaticCell` for large buffers instead of task-stack allocation.
-- **All string types have fixed max lengths**: `MacString` (18), `NameString` (33), `MatchDetail` (32), `MsgBuffer` (512 bytes). Be mindful of truncation.
-- **ISR context for WiFi sniffer callback**: The sniffer callback runs in interrupt context — must use `try_send` (non-blocking) on the channel, not `.await`.
-- **BLE must init before WiFi** for coexistence to work (assertion failure otherwise on ESP32-S3).
-
-### Platform comparison
-
-| | ESP32 (M5StickC) | ESP32-S3 (XIAO) |
-|---|---|---|
-| Heap | 64 KB | 128 KB |
-| Total DRAM | ~180 KB | ~512 KB |
-| Scan channel capacity | 8 slots | 16 slots |
-| PSRAM | No | Yes (unused) |
-| Display | ST7789V2 135×240 | None |
-| Buzzer | GPIO2 passive | GPIO3 passive |
-| Feature gate | `esp32` / `m5stickc` | `esp32s3` / `xiao` |
-
-ESP32 is the binding DRAM constraint. Adding fields to `ScanEvent` or increasing channel capacity can cause linker overflow. Always verify with `just docker-build-m5stickc` after changing shared types.
-
-## M5StickC Plus2 Hardware
-
-- **GPIO4 = POWER_HOLD** — must drive HIGH to keep device powered (especially on battery)
-- **GPIO27 = backlight** — active HIGH
-- **GPIO12 = display RST** — manual hardware reset required before mipidsi init
-- Display: ST7789V2, 135×240, SPI2 at 40MHz, offset(52,40), color inversion ON, BGR
-- Buzzer: passive on GPIO2, driven by LEDC PWM
-
-## Dependencies
-
-All `esp-*` crates are from **git main branch** (`https://github.com/esp-rs/esp-hal.git`). Docker named volumes cache the cargo registry/git — run `just docker-clean` after switching dependency sources. `trouble-host 0.6.0` is the BLE host stack.
-
-Docker recipes use chip-specific images (`espressif/idf-rust:esp32s3_latest`, `esp32_latest`) for builds. The devcontainer (`.devcontainer/`) uses `all_latest` for interactive use (`just docker-shell`) and VS Code / Codespaces.
-
-## Architectural Direction
-
-The project is built around three portable layers ([#17](https://github.com/dougborg/AirHound/issues/17)):
-
-| Layer | Artifact | Status |
-|-------|----------|--------|
-| Signature Database | `schemas/signatures.v1.schema.json` + `schemas/examples/` | v1 committed |
-| Companion Event Protocol | `schemas/device-message.v1.schema.json`, `schemas/host-command.v1.schema.json` | v1 committed |
-| Detection Library | `src/lib.rs` (scanner, filter, defaults, protocol, comm) | Implemented |
-
-Each layer is independently useful. The schemas are designed for cross-tool adoption ([#11](https://github.com/dougborg/AirHound/issues/11), [#16](https://github.com/dougborg/AirHound/issues/16)) — other projects can consume the signature format or wire protocol without depending on AirHound's Rust code.
-
-### Platform Targets
-
-| Platform | Runtime | WiFi Source | BLE Source | Issue |
-|----------|---------|-------------|------------|-------|
-| ESP32 firmware | Embassy (`esp-rtos`) | Promiscuous mode (`esp-radio`) | `trouble-host` | — |
-| Linux daemon | Tokio | `pcap` (monitor mode) | `bluer` (BlueZ) | [#13](https://github.com/dougborg/AirHound/issues/13) |
-| Kismet companion | Tokio | Kismet REST API | Kismet REST API | [#12](https://github.com/dougborg/AirHound/issues/12) |
-
-### Key Principles
-
-- **Standard formats first** — Signature database and companion event protocol are defined by JSON Schemas, usable by any tool regardless of language or runtime.
-- **Library owns logic, binaries own I/O** — scanning, filtering, protocol, and analysis in the library; radio drivers, async runtimes, and output sinks in platform binaries.
-- **Feature gates control dependencies** — Layer 1 is unconditional `no_std`. Layer 2 modules behind feature flags so consumers only pay for what they use.
-- **App-agnostic companion protocol** — NDJSON over any transport. Sensors and companion apps are interchangeable.
+- Use Conventional Commits and focused PRs; run checks appropriate to the change.
+- Keep protocol examples and schemas consistent with serialization and runtime
+  command support. A parsed command is not necessarily implemented everywhere.
+- Distinguish observed addresses, signature hits and confirmed identity. Broad
+  OUI/name/service signatures can produce false positives.
+- Keep firmware/driver build evidence separate from live radio, permissions,
+  fault recovery and endurance evidence.
+- Keep raw identifiers, captures and flash backups local and ignored. Publish
+  aggregate validation results only.
+- Read dependency versions and pins from manifests/lockfiles. ESP dependencies
+  must be upgraded as a tested set; Docker images are pinned in `justfile`.
