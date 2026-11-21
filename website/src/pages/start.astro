@@ -1,0 +1,119 @@
+---
+import Site from "../layouts/Site.astro";
+---
+
+<Site
+  title="Get started"
+  description="Choose a desktop CLI, ESP32 detector or external receiver and follow the right AirHound setup guide."
+>
+  <header class="page-header wrap">
+    <h1>Choose your setup.</h1>
+    <p class="lead">
+      Start with one observation source. Check its capabilities, install the
+      matching component, and learn what its output can tell you.
+    </p>
+  </header>
+  <div class="wrap content prose">
+    <div class="notice">
+      <strong>Check release status before installing.</strong>Hardware
+      acceptance is incomplete for several paths.{" "}
+      <a href="/downloads/">Downloads</a> distinguish published stable and
+      preview releases; <a href="/hardware/">the receiver matrix</a> records
+      limitations.
+    </div>
+    <h2 id="desktop">Desktop: macOS or Linux</h2>
+    <p>
+      The desktop component is a command-line scanner. The macOS app bundle
+      supplies permission identity; it is not a graphical application.
+    </p>
+    <ol>
+      <li>
+        <a href="/downloads/">Choose your operating system and architecture.</a>{" "}
+        Preview package targets include Apple Silicon/macOS 15+ and Linux
+        x86-64/glibc 2.35+. Other combinations require source builds.
+      </li>
+      <li>
+        Follow{" "}
+        <a href="/reference/hostd/">desktop installation and permissions</a>.
+        macOS requires the appropriate Bluetooth and Location access; Linux
+        requires its documented radio/system dependencies.
+      </li>
+      <li>
+        Run the documented scan command, inspect observations, and choose NDJSON
+        or WiGLE output.{" "}
+        <a href="/reference/docs/desktop-scanner-health/">
+          Scanner health guidance
+        </a>{" "}
+        explains startup and shutdown behavior.
+      </li>
+      <li>
+        For receiver-location context, follow{" "}
+        <a href="/reference/docs/gnss-wardriving/">gpsd setup</a>. A receiver
+        fix is not the observed device’s location.
+      </li>
+    </ol>
+    <h2 id="firmware">Pocket detector: M5 or XIAO</h2>
+    <p>
+      Confirm the exact board before flashing. M5StickC Plus2 and XIAO ESP32-S3
+      use different images; no_std and ESP-IDF are distinct runtime variants.
+    </p>
+    <ol>
+      <li>
+        Read the <a href="/reference/docs/firmware/">firmware setup guide</a>{" "}
+        and{" "}
+        <a href="/reference/docs/release-status/">board acceptance status</a>.
+      </li>
+      <li>
+        For M5, follow{" "}
+        <a href="/reference/docs/m5stickc-bringup/">
+          backup and bring-up instructions
+        </a>{" "}
+        before replacing firmware. Select the correct board/runtime download.
+      </li>
+      <li>
+        Check the display and{" "}
+        <a href="/reference/docs/m5-controls/">buttons and sound controls</a>.
+        Separate observed addresses from signature matches.
+      </li>
+    </ol>
+    <p class="small">
+      A running detector’s observation stream is not yet a supported
+      plug-and-play desktop ingestion source.{" "}
+      <a href="https://github.com/dougborg/AirHound/issues/175">
+        Track that work in #175.
+      </a>
+    </p>
+    <h2 id="external">External receivers</h2>
+    <ul class="toc-list">
+      <li>
+        <h3>
+          <a href="/reference/docs/sniffle-source/">CatSniffer / Sniffle BLE</a>
+        </h3>
+        <p>
+          Live passive capture and DLT256 replay. Install the upstream
+          firmware/tools separately; start with the documented primary-channel
+          limits.
+        </p>
+      </li>
+      <li>
+        <h3>
+          <a href="/reference/drivers/mt7610u/">ALFA AWUS036ACHM / MT7610U</a>
+        </h3>
+        <p>
+          Experimental userspace passive WiFi receiver, separately licensed and
+          packaged. Read the endurance/RF limitations before use.
+        </p>
+      </li>
+    </ul>
+    <h2>Understand the output</h2>
+    <p>
+      Read{" "}
+      <a href="/reference/docs/detection-evidence/">
+        detection evidence and alert policy
+      </a>{" "}
+      before interpreting a match.{" "}
+      <a href="/signatures/">Inspect the rule and its provenance</a>; a legacy
+      label is not independent device validation.
+    </p>
+  </div>
+</Site>

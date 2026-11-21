@@ -1,0 +1,68 @@
+---
+import Site from "../layouts/Site.astro";
+---
+
+<Site
+  title="Privacy & licenses"
+  description="Website privacy, external services and AirHound component licenses."
+>
+  <header class="page-header wrap">
+    <h1>Privacy & licenses.</h1>
+    <p class="lead">
+      The project website is a static guide. It does not receive your wireless
+      observations.
+    </p>
+  </header>
+  <div class="wrap content prose">
+    <h2>Website privacy</h2>
+    <p>
+      This site includes no application analytics, advertising trackers, account
+      system or capture-upload endpoint. Documentation search runs against a
+      local static index. Fonts are served with the site.
+    </p>
+    <p>
+      Your browser still requests website files from the hosting provider. The
+      production provider and its request-log policy must be documented before
+      launch. Following a GitHub link takes you to GitHub, whose own privacy
+      policy applies. Download assets are hosted on GitHub Releases.
+    </p>
+    <p>
+      Examples use synthetic or sanitized information. Please keep identifying
+      observations out of public issue reports and screenshots.
+    </p>
+    <p>
+      Self-hosted typefaces: <a href="/licenses/manrope.txt">Manrope license</a>{" "}
+      and <a href="/licenses/newsreader.txt">Newsreader license</a> (SIL Open
+      Font License).
+    </p>
+    <h2 id="licenses">Different components, explicit licenses</h2>
+    <ul>
+      <li>
+        <a href="https://github.com/dougborg/AirHound/blob/main/LICENSE">
+          AirHound project: MIT
+        </a>
+      </li>
+      <li>
+        <a href="https://github.com/dougborg/AirHound/tree/main/drivers/mt7610u">
+          Independent MT7610U receiver: GPL-2.0-only, with component notices and
+          corresponding source
+        </a>
+      </li>
+      <li>
+        <a href="https://github.com/dougborg/AirHound/blob/main/scripts/sniffle-source.py">
+          Sniffle source helper: GPL-3.0-only
+        </a>
+      </li>
+      <li>
+        <a href="https://github.com/dougborg/AirHound/tree/main/website">
+          Website source and third-party dependency notices
+        </a>
+      </li>
+    </ul>
+    <p>
+      External radio firmware and upstream Sniffle tools are installed
+      separately. A signature’s inclusion does not settle every upstream data
+      provenance question; consult its review metadata.
+    </p>
+  </div>
+</Site>

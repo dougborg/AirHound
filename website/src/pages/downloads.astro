@@ -1,0 +1,188 @@
+---
+import Site from "../layouts/Site.astro";
+import snapshot from "../data/releases.json";
+interface Asset {
+  name: string;
+  url: string;
+  size: number;
+  component: string;
+  platform: string;
+  target: string;
+}
+interface Release {
+  tag: string;
+  name: string;
+  preview: boolean;
+  publishedAt: string;
+  url: string;
+  assets: Asset[];
+}
+const catalog: { checkedAt: string; releases: Release[] } = snapshot;
+import { selectChannels } from "../../scripts/releases.mjs";
+const { stable, preview } = selectChannels(catalog.releases);
+---
+
+<Site
+  title="Downloads"
+  description="Choose an AirHound release by component, operating system, board and runtime. Preview labels and source provenance stay explicit."
+>
+  <header class="page-header wrap">
+    <h1>
+      The right build.
+      <br />
+      For your setup.
+    </h1>
+    <p class="lead">
+      Choose a published release, then match the component and platform.
+      Firmware boards and runtimes are not interchangeable.
+    </p>
+  </header>
+  <div class="wrap content">
+    <div class="notice">
+      <strong>Stable and preview are different channels.</strong>Latest
+      published stable:{" "}
+      {stable ? <a href={stable.url}>{stable.tag}</a> : "none in this catalog"}.
+      Latest published preview:{" "}
+      {preview ? (
+        <a href={preview.url}>{preview.tag}</a>
+      ) : (
+        "none in this catalog"
+      )}
+      . A preview can contain newer features with incomplete hardware
+      acceptance.{" "}
+      <a href="/reference/docs/release-status/">
+        Read support and validation limits.
+      </a>
+    </div>
+    <p class="small">
+      Release metadata checked{" "}
+      {new Date(catalog.checkedAt).toISOString().slice(0, 10)}. This static
+      catalog updates through reviewed source changes.{" "}
+      <a href="https://github.com/dougborg/AirHound/releases">
+        Check GitHub for newer releases.
+      </a>
+    </p>
+    <div class="filters" data-download-ui hidden>
+      <label>
+        Platform
+        <select id="download-platform">
+          <option value="all">All platforms</option>
+          <option value="macOS">macOS</option>
+          <option value="Linux">Linux</option>
+          <option value="Embedded">Embedded firmware</option>
+        </select>
+      </label>
+      <p>Source archives and checksums remain visible.</p>
+    </div>
+    {catalog.releases.map((release) => (
+      <section class="release">
+        <header>
+          <h2>{release.tag}</h2>
+          <span class:list={["tag", release.preview ? "experimental" : ""]}>
+            {release.preview ? "Preview · experimental" : "Stable channel"}
+          </span>
+        </header>
+        <div class="release-links">
+          <a href={release.url}>Release notes & all assets</a>
+          <a
+            href={`https://github.com/dougborg/AirHound/tree/${encodeURIComponent(release.tag)}`}
+          >
+            Tagged source & documentation
+          </a>
+        </div>
+        {release.assets.length > 0 ? (
+          <div
+            class="table-scroll"
+            tabindex="0"
+            role="region"
+            aria-label={`Downloads for ${release.tag}`}
+          >
+            <table>
+              <caption>Published artifacts for {release.tag}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Component</th>
+                  <th scope="col">Target</th>
+                  <th scope="col">Download</th>
+                </tr>
+              </thead>
+              <tbody>
+                {release.assets.map((asset) => (
+                  <tr data-download data-platform={asset.platform}>
+                    <th scope="row">{asset.component}</th>
+                    <td>{asset.target}</td>
+                    <td>
+                      <a class="asset" href={asset.url}>
+                        {asset.name}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p class="empty">
+            No recognized packaged assets for this version. Open the release for
+            its available files, or build from tagged source.
+          </p>
+        )}
+      </section>
+    ))}
+    <h2>Before you install</h2>
+    <div class="prose">
+      <ul>
+        <li>
+          <strong>Desktop:</strong> preview package targets are macOS 15+ Apple
+          Silicon and Linux x86-64/glibc 2.35+ with libdbus/libpcap. Intel Mac
+          and Linux ARM use source builds.{" "}
+          <a href="/reference/hostd/">Read installation instructions.</a>
+        </li>
+        <li>
+          <strong>macOS:</strong> bundles are ad-hoc signed, not Developer ID
+          signed or notarized. Follow component instructions and grant the
+          required permissions. Do not disable system-wide security protections.
+        </li>
+        <li>
+          <strong>Firmware:</strong> match M5StickC Plus2 or XIAO ESP32-S3, then
+          no_std or ESP-IDF.{" "}
+          <a href="/reference/docs/firmware/">
+            Check flashing instructions and validation.
+          </a>
+        </li>
+        <li>
+          <strong>ALFA:</strong> a separate experimental GPL-2.0-only passive
+          receiver. Match each binary to its corresponding-source archive and
+          notices. <a href="/reference/drivers/mt7610u/">Read its limits.</a>
+        </li>
+      </ul>
+    </div>
+    <h2>Verify the file you downloaded.</h2>
+    <div class="prose">
+      <p>
+        Where provided, download <code>SHA256SUMS</code> alongside the selected
+        asset. On macOS use <code>shasum -a 256 filename</code>; on Linux use{" "}
+        <code>sha256sum filename</code>. Compare the complete digest with that
+        file’s entry in the checksums list.
+      </p>
+      <p class="small">
+        Checksums detect file changes; they do not establish publisher signing.
+        Older releases may lack checksums or the complete package inventory. No
+        missing artifact is synthesized here.
+      </p>
+    </div>
+  </div>
+</Site>
+<script>
+  const select =
+    document.querySelector<HTMLSelectElement>("#download-platform");
+  document.querySelector("[data-download-ui]")?.removeAttribute("hidden");
+  select?.addEventListener("change", () => {
+    document.querySelectorAll<HTMLElement>("[data-download]").forEach((row) => {
+      row.hidden =
+        select.value !== "all" &&
+        row.dataset.platform !== select.value &&
+        row.dataset.platform !== "All";
+    });
+  });
+</script>

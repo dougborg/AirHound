@@ -1,0 +1,115 @@
+---
+import Site from "../layouts/Site.astro";
+import hardware from "../data/hardware.json";
+---
+
+<Site
+  title="Hardware & receivers"
+  description="Compare AirHound observation sources, operating systems, setup guides and verified limitations."
+>
+  <header class="page-header wrap">
+    <h1>Know your receiver.</h1>
+    <p class="lead">
+      Radio capability, firmware, transport and operating system all shape what
+      reaches the detector. Support is more than a USB device appearing.
+    </p>
+  </header>
+  <div class="wrap content">
+    <div class="notice">
+      <strong>Experimental means unfinished acceptance.</strong>This matrix
+      summarizes development documentation. Follow each evidence link for exact
+      test conditions; parser replay is not proof of live RF reception.{" "}
+      <a href="/reference/docs/release-status/">
+        Read the release support record.
+      </a>
+    </div>
+    <div class="filters" data-filter-ui hidden>
+      <label>
+        Platform
+        <select id="platform" aria-label="Platform">
+          <option value="all">All platforms</option>
+          <option value="macOS">macOS</option>
+          <option value="Linux">Linux</option>
+          <option value="Embedded">Embedded</option>
+          <option value="Research">Research only</option>
+        </select>
+      </label>
+      <p id="receiver-count" role="status"></p>
+    </div>
+    <div
+      class="table-scroll"
+      tabindex="0"
+      role="region"
+      aria-label="Receiver compatibility table"
+    >
+      <table>
+        <caption>Observation sources and acceptance limits</caption>
+        <thead>
+          <tr>
+            <th scope="col">Receiver</th>
+            <th scope="col">Platform & status</th>
+            <th scope="col">What to know</th>
+            <th scope="col">Setup & evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {hardware.map((row) => (
+            <tr data-receiver data-platform={row.platform}>
+              <th scope="row">{row.name}</th>
+              <td>
+                {row.platform}
+                <p>
+                  <span class:list={["tag", row.state]}>{row.status}</span>
+                </p>
+              </td>
+              <td>{row.limits}</td>
+              <td>
+                <a href={row.guide}>Setup / investigation</a>
+                <p>
+                  <a href={row.evidence}>Validation & limits</a>
+                </p>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <h2>Match the data, not the connector.</h2>
+    <div class="prose">
+      <p>
+        BLE extended advertising and Coded PHY depend on the controller,
+        firmware and transport. A larger parser buffer alone cannot add
+        reception support. Native macOS CoreBluetooth does not expose public BLE
+        MAC addresses; private enrichment is optional and can fail.
+      </p>
+      <p>
+        A flashed M5 or XIAO scanning successfully does not yet imply desktop
+        serial/BLE-GATT ingestion. That work is tracked separately in{" "}
+        <a href="https://github.com/dougborg/AirHound/issues/175">#175</a>.
+        Choose a documented source path from <a href="/start/">Get started</a>.
+      </p>
+    </div>
+  </div>
+</Site>
+<script>
+  const control = document.querySelector<HTMLSelectElement>("#platform");
+  const rows = [
+    ...document.querySelectorAll<HTMLTableRowElement>("[data-receiver]"),
+  ];
+  document
+    .querySelector<HTMLElement>("[data-filter-ui]")
+    ?.removeAttribute("hidden");
+  function filter() {
+    let count = 0;
+    for (const row of rows) {
+      row.hidden =
+        control?.value !== "all" &&
+        !row.dataset.platform?.includes(control?.value ?? "");
+      if (!row.hidden) count++;
+    }
+    const status = document.querySelector("#receiver-count");
+    if (status) status.textContent = `${count} receiver entries shown`;
+  }
+  control?.addEventListener("change", filter);
+  filter();
+</script>

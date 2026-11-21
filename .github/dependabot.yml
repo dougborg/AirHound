@@ -67,3 +67,11 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/website"
+    schedule:
+      interval: "weekly"
+    groups:
+      website-minor-and-patch:
+        update-types: ["minor", "patch"]

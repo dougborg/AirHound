@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "tokens": {
+    "color": {
+      "paper": "#f7f4ed",
+      "ink": "#24342d",
+      "muted": "#526257",
+      "accent": "#a53e1e",
+      "line": "#c8cec2",
+      "wash": "#e9ede2"
+    },
+    "font": {
+      "display": "Newsreader Variable",
+      "body": "Manrope Variable"
+    },
+    "layout": {
+      "maxWidth": "1280px",
+      "mobileGutter": "18px"
+    }
+  }
+}
