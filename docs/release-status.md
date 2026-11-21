@@ -80,6 +80,11 @@ not close those gates or promote experimental features to production support.
 
 ### Maintainer release procedure
 
+Feature releases advance the minor version even before 1.0 (for example,
+0.1.1 → 0.2.0); fixes alone advance the patch. Breaking changes before 1.0 also
+advance the minor version. GitHub prerelease status is independent of that version
+number and remains enabled while the hardware acceptance matrix is incomplete.
+
 Release Please updates the root crate and its copies in the desktop, ESP-IDF and
 fuzz lockfiles. Keep locked builds enabled. Review the version PR and require its
 CI checks before merging. The release workflow creates a draft, builds all
