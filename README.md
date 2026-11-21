@@ -27,6 +27,8 @@ same physical device.
 | Develop, benchmark or validate | [Contributing](CONTRIBUTING.md), [scripts](scripts/README.md) | Tests, coverage, fuzzing, packaging and live validation |
 
 The [documentation index](docs/README.md) groups the detailed guides by task.
+The [repository map](docs/repository-layout.md) explains component build roots,
+toolchains, generated files and licensing boundaries.
 There is no desktop GUI yet: the macOS `.app` supplies permission identity for the
 CLI. `hostd` does not yet ingest M5/XIAO serial or BLE GATT streams. A separate
 consumer can use the [firmware streaming contract](docs/firmware-streaming.md).

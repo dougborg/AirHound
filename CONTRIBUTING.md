@@ -17,6 +17,9 @@ Roughly ordered by accessibility:
 
 ## Development Setup
 
+Use the [repository map](docs/repository-layout.md) to choose the right build root,
+toolchain and lockfile before making changes.
+
 ### Docker (recommended)
 
 No local ESP toolchain needed. Requires Docker and [`just`](https://github.com/casey/just).
