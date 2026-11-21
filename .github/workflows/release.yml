@@ -100,6 +100,7 @@ jobs:
     permissions:
       contents: write # attach binaries to the draft release and publish it
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: release-bin-*
@@ -125,3 +126,8 @@ jobs:
             SHA256SUMS
           fail_on_unmatched_files: true
           draft: false
+          prerelease: true
+          make_latest: "false"
+          name: "${{ needs.release-please.outputs.tag_name }} — Preview"
+          body_path: docs/release-status.md
+          append_body: true

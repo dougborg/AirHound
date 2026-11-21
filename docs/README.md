@@ -47,6 +47,7 @@ These do not claim production integration or validated support for every listed 
 ## Development and project status
 
 - [Tests, coverage, fuzzing and performance](testing.md)
+- [Preview release status, assets and publication procedure](release-status.md)
 - [Contribution process](../CONTRIBUTING.md)
 - [Priorities, issue inventory and release gates](roadmap.md)
 - [Change history](../CHANGELOG.md)

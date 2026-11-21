@@ -5,7 +5,25 @@
       "release-type": "rust",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
-      "draft": true
+      "draft": true,
+      "prerelease": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "hostd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == \"airhound\")].version"
+        },
+        {
+          "type": "toml",
+          "path": "firmware-std/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == \"airhound\")].version"
+        },
+        {
+          "type": "toml",
+          "path": "fuzz/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == \"airhound\")].version"
+        }
+      ]
     }
   }
 }
