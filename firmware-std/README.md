@@ -20,8 +20,10 @@ just docker-build-std
 The recipes choose the target, `MCU`, board feature and `build-std` options.
 Artifacts are under `firmware-std/target/<target>/release/airhound-std`, where the
 target is `xtensa-esp32-espidf` for M5 or `xtensa-esp32s3-espidf` for XIAO.
-CI builds both variants. ESP-IDF images are CI previews, not the merged no_std
-release binaries described in the [firmware guide](../docs/firmware.md).
+CI builds both variants. Preview releases package them as `airhound-m5stickc-std.bin`
+and `airhound-xiao-std.bin`, separate from the no_std images. They include the
+ESP-IDF bootloader and partition table from that build. See the
+[release inventory](../docs/release-status.md); live hardware validation remains incomplete.
 
 ## Runtime differences
 
