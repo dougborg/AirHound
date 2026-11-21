@@ -287,25 +287,18 @@ impl BleAdvParser {
             raw_ad,
         };
 
-        let mut pos = 0;
         let mut name_is_complete = false;
-        while pos < ad_data.len() {
-            let len = ad_data[pos] as usize;
-            if len == 0 || pos + 1 + len > ad_data.len() {
-                break;
-            }
-
-            let ad_type = ad_data[pos + 1];
-            let data = &ad_data[pos + 2..pos + 1 + len];
+        for field in crate::ble_data::AdStructures::new(ad_data) {
+            let ad_type = field.kind;
+            let data = field.data;
 
             match ad_type {
                 // 16-bit service UUID lists
                 0x02 | 0x03 => {
-                    let mut i = 0;
-                    while i + 1 < data.len() {
-                        let uuid = u16::from_le_bytes([data[i], data[i + 1]]);
+                    // Use the same structural validation as raw/desktop
+                    // matching: an odd-length list contributes no UUIDs.
+                    for uuid in field.uuids().filter_map(crate::ble_data::Uuid::as_u16) {
                         let _ = event.service_uuids_16.push(uuid);
-                        i += 2;
                     }
                 }
                 // Service Data carries its UUID even when no UUID-list AD
@@ -336,8 +329,6 @@ impl BleAdvParser {
                 }
                 _ => {}
             }
-
-            pos += 1 + len;
         }
 
         event
@@ -485,6 +476,62 @@ mod tests {
     }
 
     // ── BleAdvParser tests ──────────────────────────────────────────
+
+    // Synthetic framing fixtures, not captured device evidence. A recognized
+    // service prefix inside an invalid UUID list must not become rule evidence.
+    #[test]
+    fn malformed_uuid_lists_do_not_create_signature_evidence() {
+        for kind in [0x02, 0x03] {
+            let malformed = [4, kind, 0xfa, 0xff, 0xaa];
+            let event = BleAdvParser::parse(&[0x02; 6], -50, &malformed);
+            assert!(event.service_uuids_16.is_empty(), "AD type {kind:#x}");
+            assert_eq!(event.advertised_service_uuids().count(), 0);
+            let result = filter_parsed_ble(&event);
+            assert!(!result.matched);
+            assert!(result.rule_categories.is_empty());
+
+            // A bad field does not erase an independently well-formed field.
+            let mut mixed = malformed.to_vec();
+            mixed.extend_from_slice(&[3, kind, 0xfa, 0xff]);
+            let valid = BleAdvParser::parse(&[0x02; 6], -50, &mixed);
+            assert_eq!(valid.service_uuids_16.as_slice(), &[0xfffa]);
+            assert!(filter_parsed_ble(&valid)
+                .rule_categories
+                .contains(&crate::rules::MatchCategory::Drone));
+        }
+    }
+
+    #[test]
+    fn incomplete_uuid_fields_cannot_supply_a_known_prefix() {
+        // Both complete and incomplete UUID-list types require complete AD
+        // framing and an integral number of UUIDs, independent of list meaning.
+        for kind in [0x02, 0x03] {
+            let complete = [5, kind, 0xfa, 0xff, 0x00, 0x31];
+            for end in 0..complete.len() {
+                let event = BleAdvParser::parse(&[0x02; 6], -50, &complete[..end]);
+                assert!(!filter_parsed_ble(&event).matched, "kind={kind} end={end}");
+            }
+            let event = BleAdvParser::parse(&[0x02; 6], -50, &complete);
+            assert!(filter_parsed_ble(&event).matched);
+        }
+    }
+
+    fn filter_parsed_ble(event: &BleEvent) -> crate::filter::FilterResult {
+        crate::filter::filter_ble_with_rules(
+            &crate::filter::BleScanInput {
+                address_type: crate::filter::BleAddressType::Unknown,
+                mac: &event.mac,
+                name: event.name.as_str(),
+                rssi: event.rssi,
+                service_uuids_16: &event.service_uuids_16,
+                manufacturer_id: event.manufacturer_id,
+                raw_ad: &event.raw_ad,
+            },
+            &crate::filter::FilterConfig::new(),
+            &crate::defaults::DEFAULT_RULE_DB,
+            &crate::mac_index::MacIndex::new(),
+        )
+    }
 
     #[test]
     fn legacy_remote_id_service_data_matches_drone_rule() {
