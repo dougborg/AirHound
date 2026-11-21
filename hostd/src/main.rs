@@ -255,6 +255,8 @@ async fn main() -> io::Result<()> {
                 .expect("clap requires firmware"),
             channels: args.external_channels.clone(),
             dwell_ms: args.external_dwell_ms,
+            #[cfg(test)]
+            fixture_script: None,
         });
     let writer = prepare_output(&args)?;
     // An explicit missing selection is a startup error, not a fallback or a half-running session.
