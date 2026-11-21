@@ -32,6 +32,8 @@ are labeled separately.
 - [Desktop Remote ID decoding and reception limits](desktop-remote-id.md)
 - [External WiFi file format](external-wifi-v1.md) and [live process protocol](external-scanner-stream-v1.md)
 
+- [Flipper companion parser and synthetic demo](../companions/flipper/README.md)
+
 ## Hardware setup and validation
 
 - [M5 backup, flashing and bring-up](m5stickc-bringup.md), [buttons and sound](m5-controls.md), [streaming experiments](m5-stream-performance.md)

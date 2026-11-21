@@ -22,6 +22,11 @@
           "type": "toml",
           "path": "fuzz/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value == \"airhound\")].version"
+        },
+        {
+          "type": "toml",
+          "path": "companions/flipper/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == \"airhound\")].version"
         }
       ]
     }

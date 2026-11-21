@@ -75,3 +75,14 @@ updates:
     groups:
       website-minor-and-patch:
         update-types: ["minor", "patch"]
+
+  # Keep the installed Flipper API target deliberate; SDK upgrades need hardware acceptance.
+  - package-ecosystem: "cargo"
+    directory: "/companions/flipper"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "flipperzero*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

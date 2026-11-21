@@ -1,0 +1,2 @@
+# Static FAP artifact inspection only; no runtime Python dependency.
+pyelftools==0.32

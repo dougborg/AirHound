@@ -40,6 +40,7 @@ export async function prepare() {
     "src/README.md",
     "firmware-std/README.md",
     "hostd/README.md",
+    "companions/flipper/README.md",
     "drivers/README.md",
     "drivers/mt7610u/README.md",
     "drivers/mt7610u/TESTING.md",
