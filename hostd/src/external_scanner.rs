@@ -19,6 +19,8 @@ pub struct Options {
     pub firmware: PathBuf,
     pub channels: Vec<u8>,
     pub dwell_ms: u16,
+    #[cfg(test)]
+    pub fixture_script: Option<PathBuf>,
 }
 
 fn error(message: &str) -> io::Error {
@@ -184,7 +186,17 @@ async fn scan_loop_with_timeouts(
     if !crate::control::wait_running(&mut state, &tx).await {
         return Ok(());
     }
-    let mut child = Command::new(&options.executable)
+    let mut command = Command::new(&options.executable);
+    // Test fixtures are mutable temporary scripts. Read them through a stable
+    // interpreter rather than exec'ing their inode: Linux rejects execution
+    // while any process still holds a writable descriptor (ETXTBSY), including
+    // a descriptor briefly inherited by a concurrently spawning test child.
+    // Production still executes only the explicitly selected receiver directly.
+    #[cfg(test)]
+    if let Some(script) = &options.fixture_script {
+        command.arg(script);
+    }
+    let mut child = command
         .arg("stream")
         .arg("--firmware")
         .arg(&options.firmware)
@@ -466,7 +478,8 @@ mod tests {
         }
         fn options(&self) -> Options {
             Options {
-                executable: self.executable.clone(),
+                executable: PathBuf::from("/bin/sh"),
+                fixture_script: Some(self.executable.clone()),
                 firmware: self.directory.join("unused"),
                 channels: vec![1],
                 dwell_ms: 500,
@@ -504,6 +517,33 @@ esac
 done
 exit 3
 "#;
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn writable_fixture_descriptor_does_not_prevent_receiver_lifecycle() {
+        let fake = Fake::new(LIFECYCLE);
+        let writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&fake.executable)
+            .unwrap();
+        // Reproduce the exact CI error deterministically, without timing or
+        // relaxing supervision/handshake deadlines.
+        let error = std::process::Command::new(&fake.executable)
+            .spawn()
+            .expect_err("Linux must reject exec of a writable script inode");
+        assert_eq!(error.raw_os_error(), Some(26)); // ETXTBSY
+        let (tx, mut rx) = mpsc::channel(4);
+        let control = ScanControl::new(true);
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        status(&mut rx, "running", &mut task).await;
+        control.shutdown();
+        timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        fake.assert_exited();
+        drop(writer);
+    }
     async fn status(
         rx: &mut mpsc::Receiver<ScanEvent>,
         expected: &str,
