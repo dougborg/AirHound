@@ -24,6 +24,9 @@ CI builds both variants. Preview releases package them as `airhound-m5stickc-std
 and `airhound-xiao-std.bin`, separate from the no_std images. They include the
 ESP-IDF bootloader and partition table from that build. See the
 [release inventory](../docs/release-status.md); live hardware validation remains incomplete.
+The SDK uses its 1.5 MiB single factory-app partition (no OTA); the default
+1 MiB layout is too small for the current M5 application. Rebuild the SDK output
+after changing this setting rather than pairing an old partition table with a new app.
 
 ## Runtime differences
 
