@@ -4,7 +4,7 @@
     ".": {
       "release-type": "rust",
       "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
       "draft": true,
       "prerelease": true,
       "extra-files": [
