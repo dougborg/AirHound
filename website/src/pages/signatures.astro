@@ -104,6 +104,9 @@ const sources = pack.sources as Record<
               <div class="sources">
                 <a href={sources[id].url}>{id}</a> ·{" "}
                 {sources[id].verification.replaceAll("_", " ")}
+                <p>
+                  Source revision: <code>{sources[id].revision}</code>
+                </p>
                 <p>{sources[id].reuse}</p>
               </div>
             ))}

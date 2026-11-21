@@ -72,7 +72,7 @@ const { stable, preview } = selectChannels(catalog.releases);
           <option value="Embedded">Embedded firmware</option>
         </select>
       </label>
-      <p>Source archives and checksums remain visible.</p>
+      <p>Matching source archives and release checksums remain visible.</p>
     </div>
     {catalog.releases.map((release) => (
       <section class="release">
@@ -91,36 +91,39 @@ const { stable, preview } = selectChannels(catalog.releases);
           </a>
         </div>
         {release.assets.length > 0 ? (
-          <div
-            class="table-scroll"
-            tabindex="0"
-            role="region"
-            aria-label={`Downloads for ${release.tag}`}
-          >
-            <table>
-              <caption>Published artifacts for {release.tag}</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Component</th>
-                  <th scope="col">Target</th>
-                  <th scope="col">Download</th>
-                </tr>
-              </thead>
-              <tbody>
-                {release.assets.map((asset) => (
-                  <tr data-download data-platform={asset.platform}>
-                    <th scope="row">{asset.component}</th>
-                    <td>{asset.target}</td>
-                    <td>
-                      <a class="asset" href={asset.url}>
-                        {asset.name}
-                      </a>
-                    </td>
+          <>
+            <p class="table-hint">Scroll horizontally to see download links.</p>
+            <div
+              class="table-scroll"
+              tabindex="0"
+              role="region"
+              aria-label={`Downloads for ${release.tag}`}
+            >
+              <table>
+                <caption>Published artifacts for {release.tag}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Component</th>
+                    <th scope="col">Target</th>
+                    <th scope="col">Download</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {release.assets.map((asset) => (
+                    <tr data-download data-platform={asset.platform}>
+                      <th scope="row">{asset.component}</th>
+                      <td>{asset.target}</td>
+                      <td>
+                        <a class="asset" href={asset.url}>
+                          {asset.name}
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : (
           <p class="empty">
             No recognized packaged assets for this version. Open the release for

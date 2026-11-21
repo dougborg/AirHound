@@ -1,6 +1,111 @@
 {
-  "checkedAt": "2026-11-21T17:46:35.290Z",
+  "checkedAt": "2026-11-21T17:56:06.338Z",
   "releases": [
+    {
+      "tag": "airhound-v0.2.0",
+      "name": "airhound-v0.2.0 — Preview",
+      "preview": true,
+      "publishedAt": "2026-11-21T17:50:40Z",
+      "url": "https://github.com/dougborg/AirHound/releases/tag/airhound-v0.2.0",
+      "assets": [
+        {
+          "name": "airhound-desktop-linux-x86_64.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-desktop-linux-x86_64.tar.gz",
+          "size": 2223640,
+          "component": "Desktop",
+          "platform": "Linux",
+          "target": "Linux x86-64 · glibc 2.35+"
+        },
+        {
+          "name": "airhound-desktop-macos-arm64.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-desktop-macos-arm64.tar.gz",
+          "size": 2004536,
+          "component": "Desktop",
+          "platform": "macOS",
+          "target": "macOS 15+ · Apple Silicon"
+        },
+        {
+          "name": "airhound-m5stickc-std.bin",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-m5stickc-std.bin",
+          "size": 1411888,
+          "component": "Firmware",
+          "platform": "Embedded",
+          "target": "M5StickC Plus2 · ESP-IDF"
+        },
+        {
+          "name": "airhound-m5stickc.bin",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-m5stickc.bin",
+          "size": 1008640,
+          "component": "Firmware",
+          "platform": "Embedded",
+          "target": "M5StickC Plus2 · no_std"
+        },
+        {
+          "name": "airhound-source.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-source.tar.gz",
+          "size": 493563,
+          "component": "Source & tools",
+          "platform": "All",
+          "target": "Tracked source, scripts, schemas and docs"
+        },
+        {
+          "name": "airhound-xiao-std.bin",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-xiao-std.bin",
+          "size": 1325008,
+          "component": "Firmware",
+          "platform": "Embedded",
+          "target": "XIAO ESP32-S3 · ESP-IDF"
+        },
+        {
+          "name": "airhound-xiao.bin",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/airhound-xiao.bin",
+          "size": 918592,
+          "component": "Firmware",
+          "platform": "Embedded",
+          "target": "XIAO ESP32-S3 · no_std"
+        },
+        {
+          "name": "mt7610u-lab-linux-x86_64-source.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/mt7610u-lab-linux-x86_64-source.tar.gz",
+          "size": 7109266,
+          "component": "Corresponding source",
+          "platform": "Linux",
+          "target": "Exact vendored receiver source"
+        },
+        {
+          "name": "mt7610u-lab-linux-x86_64.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/mt7610u-lab-linux-x86_64.tar.gz",
+          "size": 789295,
+          "component": "ALFA receiver",
+          "platform": "Linux",
+          "target": "Linux x86-64 · experimental"
+        },
+        {
+          "name": "mt7610u-lab-macos-arm64-source.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/mt7610u-lab-macos-arm64-source.tar.gz",
+          "size": 7115563,
+          "component": "Corresponding source",
+          "platform": "macOS",
+          "target": "Exact vendored receiver source"
+        },
+        {
+          "name": "mt7610u-lab-macos-arm64.tar.gz",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/mt7610u-lab-macos-arm64.tar.gz",
+          "size": 714402,
+          "component": "ALFA receiver",
+          "platform": "macOS",
+          "target": "macOS arm64 · experimental"
+        },
+        {
+          "name": "SHA256SUMS",
+          "url": "https://github.com/dougborg/AirHound/releases/download/airhound-v0.2.0/SHA256SUMS",
+          "size": 1050,
+          "component": "Checksums",
+          "platform": "All",
+          "target": "Release artifact integrity"
+        }
+      ]
+    },
     {
       "tag": "airhound-v0.1.1",
       "name": "airhound: v0.1.1",

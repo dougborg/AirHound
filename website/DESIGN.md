@@ -18,4 +18,4 @@ Hardware: setup and evidence per source; research cannot look supported.
 Signatures: canonical rule extraction, validation/limitations visible, no runtime installation claim.
 
 ## Responsive and interaction rules
-Main navigation wraps visibly on mobile; no hidden mobile menu is needed. Essential content works without scripts. Filters progressively enhance tables/catalogs. Focus rings use 3px rust outline with 5px offset. Reduced motion gets static content. No analytics, remote fonts or third-party embeds.
+Main navigation wraps visibly on mobile; no hidden mobile menu is needed. Essential content works without scripts. Filters progressively enhance tables/catalogs. Main-site focus rings use a 3px rust outline with 5px offset; Starlight documentation uses #bd5128 with 4px offset. Mobile download tables show an explicit horizontal-scroll hint. Reduced motion gets static content. No analytics, remote fonts or third-party embeds.
