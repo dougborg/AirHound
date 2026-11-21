@@ -80,3 +80,53 @@ test("essential content works without JavaScript", async ({ browser }) => {
   ).toBeVisible();
   await context.close();
 });
+
+test("published preview downloads retain exact platform and source choices", async ({
+  page,
+}) => {
+  await page.goto("/downloads/");
+  await expect(
+    page.getByRole("heading", { name: "airhound-v0.2.0", exact: true }),
+  ).toBeVisible();
+  const preview = page
+    .locator("section.release")
+    .filter({
+      has: page.getByRole("heading", { name: "airhound-v0.2.0", exact: true }),
+    });
+  await expect(preview.locator("[data-download]")).toHaveCount(12);
+  await page.locator("#download-platform").selectOption("macOS");
+  await expect(
+    preview.getByRole("link", {
+      name: "airhound-desktop-macos-arm64.tar.gz",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("link", {
+      name: "mt7610u-lab-macos-arm64-source.tar.gz",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("link", { name: "SHA256SUMS", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByRole("link", { name: "airhound-xiao.bin", exact: true }),
+  ).toBeHidden();
+  await page.locator("#download-platform").selectOption("all");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({
+    path: ".impeccable/review/downloads-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    path: ".impeccable/review/downloads-mobile.png",
+    fullPage: true,
+  });
+});

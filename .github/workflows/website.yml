@@ -2,10 +2,10 @@ name: Website
 
 on:
   pull_request:
-    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
+    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'drivers/mt7610u/TESTING.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
   push:
     branches: [main]
-    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
+    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'drivers/mt7610u/TESTING.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
   workflow_dispatch:
 
 permissions:

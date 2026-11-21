@@ -46,7 +46,7 @@ Automated axe checks target WCAG A/AA rules but do not establish conformance. Be
 
 ## Initial review evidence (2026-11-21)
 
-- 46 generated pages; all internal links/anchors checked, 9 focused data/URL tests, Astro type checks, 6 Chromium browser tests (including mobile/desktop axe, local search, filters and no-JavaScript essentials) passed locally.
+- 46 generated pages; all internal links/anchors checked, 9 focused data/URL tests, Astro type checks, 7 Chromium browser tests (including mobile/desktop axe, local search, filters and no-JavaScript essentials) passed locally.
 - Homepage Lighthouse: performance 100, accessibility 100, best practices 100; ~94,461 bytes initial transfer, simulated LCP 0.75 s, CLS 0. Local HTTP preview, Chromium 159, Lighthouse mobile 412×823, simulated 150 ms RTT / 1.6 Mbps / 4× CPU slowdown. This is a local lab result, not real-user production performance or full accessibility conformance.
 - Homepage HTML ~2.2 KiB gzip and referenced JS ~1.1 KiB gzip. No third-party runtime network requests are required.
 - Desktop 1440×1000 and mobile 390×844 full-page screenshots are generated in the ignored `.impeccable/review/` directory and uploaded by CI. No production deployment occurred.

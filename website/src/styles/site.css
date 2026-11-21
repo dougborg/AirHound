@@ -711,3 +711,15 @@ code {
       background-color 0.15s;
   }
 }
+
+.table-hint {
+  display: none;
+}
+@media (max-width: 640px) {
+  .table-hint {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin-block: 16px -10px;
+  }
+}
