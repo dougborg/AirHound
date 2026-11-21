@@ -41,6 +41,16 @@ pub struct WiFiEvent {
     pub security: heapless::String<64>,
 }
 
+/// Frame identity without receive-channel or signal-strength claims.
+#[derive(Debug, Clone)]
+pub struct WiFiIdentity {
+    pub mac: [u8; 6],
+    pub ssid: heapless::String<33>,
+    pub frame_type: FrameType,
+    #[cfg(not(feature = "esp32"))]
+    pub raw_ies: Vec<u8, 64>,
+}
+
 /// WiFi frame type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameType {
@@ -138,32 +148,48 @@ pub enum ScanEvent {
 ///
 /// Safe to call from ISR context (no allocation, no blocking).
 pub fn parse_wifi_frame(frame: &[u8], rssi: i8, channel: u8) -> Option<WiFiEvent> {
+    let identity = parse_wifi_identity(frame)?;
+    Some(WiFiEvent {
+        mac: identity.mac,
+        ssid: identity.ssid,
+        frame_type: identity.frame_type,
+        rssi,
+        channel,
+        #[cfg(not(feature = "esp32"))]
+        raw_ies: identity.raw_ies,
+        #[cfg(not(feature = "esp32"))]
+        security: heapless::String::new(),
+    })
+}
+
+/// Parse identity only; no receive metadata is invented for saved bare frames.
+pub fn parse_wifi_identity(frame: &[u8]) -> Option<WiFiIdentity> {
     let result = match_frames! {
         frame,
         beacon = BeaconFrame<'_> => {
             // Beacon tagged params start at offset 36:
             // 2 FC + 2 dur + 18 addr (3x6) + 2 seq + 8 ts + 2 interval + 2 capability
             let ies = if frame.len() > 36 { &frame[36..] } else { &[] };
-            build_wifi_event(
+            build_wifi_identity(
                 &beacon.header.transmitter_address.0,
                 beacon.body.ssid().unwrap_or(""),
-                rssi, channel, FrameType::Beacon, ies,
+                FrameType::Beacon, ies,
             )
         }
         probe_req = ProbeRequestFrame<'_> => {
-            build_wifi_event(
+            build_wifi_identity(
                 &probe_req.header.transmitter_address.0,
                 probe_req.body.ssid().unwrap_or(""),
-                rssi, channel, FrameType::ProbeRequest, &[],
+                FrameType::ProbeRequest, &[],
             )
         }
         probe_resp = ProbeResponseFrame<'_> => {
             // Probe response has same fixed header layout as beacon
             let ies = if frame.len() > 36 { &frame[36..] } else { &[] };
-            build_wifi_event(
+            build_wifi_identity(
                 &probe_resp.header.transmitter_address.0,
                 probe_resp.body.ssid().unwrap_or(""),
-                rssi, channel, FrameType::ProbeResponse, ies,
+                FrameType::ProbeResponse, ies,
             )
         }
     };
@@ -181,20 +207,18 @@ pub fn parse_wifi_frame(frame: &[u8], rssi: i8, channel: u8) -> Option<WiFiEvent
                 _ => FrameType::Other,
             };
             let mac: [u8; 6] = frame[10..16].try_into().ok()?;
-            Some(build_wifi_event(&mac, "", rssi, channel, frame_type, &[]))
+            Some(build_wifi_identity(&mac, "", frame_type, &[]))
         }
     }
 }
 
-/// Build a WiFiEvent from parsed frame components.
-fn build_wifi_event(
+/// Build a WiFiIdentity from parsed frame components.
+fn build_wifi_identity(
     mac: &[u8; 6],
     ssid: &str,
-    rssi: i8,
-    channel: u8,
     frame_type: FrameType,
     ies: &[u8],
-) -> WiFiEvent {
+) -> WiFiIdentity {
     let _ = &ies; // used only when raw_ies is present (not ESP32)
     let mut ssid_str = heapless::String::new();
     let _ = ssid_str.push_str(ssid);
@@ -204,16 +228,12 @@ fn build_wifi_event(
         v.extend(ies.iter().copied().take(64));
         v
     };
-    WiFiEvent {
+    WiFiIdentity {
         mac: *mac,
         ssid: ssid_str,
-        rssi,
-        channel,
         frame_type,
         #[cfg(not(feature = "esp32"))]
         raw_ies,
-        #[cfg(not(feature = "esp32"))]
-        security: heapless::String::new(),
     }
 }
 

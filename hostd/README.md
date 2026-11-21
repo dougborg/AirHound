@@ -52,6 +52,13 @@ or `scripts/monitor-firmware.py` for bounded serial validation. That script writ
 private captures and aggregate diagnostics; it does not feed hostd or export WiGLE.
 For no_std M5 firmware select `--baud 460800`; other firmware builds use 115200.
 
+## Saved Marauder / AWOK Wi-Fi captures
+
+The experimental source-build `airhound-marauder-import` tool imports saved
+v1.21.0-profile PCAP or binary serial captures through shared identity rules.
+It preserves raw packets and unknown radio metadata; hardware acceptance and live
+USB ingestion remain pending. See [usage, framing and limits](../docs/marauder-import.md).
+
 ## CatSniffer / Sniffle packet source
 
 Use `--sniffle-port` with the separate `scripts/sniffle-source.py` helper for live

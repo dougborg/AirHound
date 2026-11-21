@@ -41,3 +41,11 @@ External antennas, portable GPS/SD capture and two independently programmable ra
 Board-specific tracking issue #181: **“AWOK original Dual ESP32 v3: identify hardware and add passive observation-source support.”** Link #175 for transport and #79/#98 for GPS/source provenance and aggregation. Acceptance: exact variant recorded; both chips/USB identities inventoried; licensed/pinned upstream references; passive fixture set; source capability matrix; bounded decoder/adapter with malformed, reconnect and truncation tests; per-chip provenance; documented capture limitations. Keep its initial scope external-source bring-up. Add a native board-target follow-up only after identification, with memory budget, pin verification and two-radio validation gates.
 
 Do not duplicate generic ingestion (#175), payload evidence (#35), UUID preservation (#36), confidence/alert policy (#154), or source/geotag aggregation. Hardware support should consume the shared signature evidence contract, not invent device-specific matching policy.
+
+## Offline importer implementation
+
+The experimental [Marauder capture importer](marauder-import.md) now provides a
+bounded, fixture-tested v1.21.0 PCAP/binary serial profile and shared identity-only
+matching. This is source-build offline support, not a hardware acceptance result
+or validation of the unit’s previously observed v1.10.2 firmware. Live USB, BLE,
+reconnect handling and real capture fixtures remain follow-up work.
