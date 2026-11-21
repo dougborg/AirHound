@@ -113,6 +113,46 @@ fn walk(
     }
 }
 
+/// Validate the supported unfragmented, unprotected management layout before
+/// invoking the shared parser, whose IE iterator is intentionally lazy.
+/// Pinned Marauder passive callbacks remove the four-byte FCS for management
+/// frames. Do not guess at or strip another suffix here.
+fn supported_management(frame: &[u8]) -> bool {
+    let fixed_len = match frame.first() {
+        Some(0x80 | 0x50) => 36, // beacon/probe response: 24-byte header + fixed body
+        Some(0x40) => 24,        // probe request
+        _ => return false,
+    };
+    if frame.len() < fixed_len
+        // DS addressing, fragmentation, protection and optional HT-control are
+        // outside this importer profile. Retry/power/more-data do not change it.
+        || frame[1] & 0xc7 != 0
+        || frame[22] & 0x0f != 0
+    {
+        return false;
+    }
+    let mut ies = &frame[fixed_len..];
+    let mut ssid_seen = false;
+    while !ies.is_empty() {
+        if ies.len() < 2 {
+            return false;
+        }
+        let len = usize::from(ies[1]);
+        if ies.len() < 2 + len {
+            return false;
+        }
+        if ies[0] == 0 {
+            // Binary SSIDs remain raw-only rather than becoming empty text.
+            if ssid_seen || len > 32 || core::str::from_utf8(&ies[2..2 + len]).is_err() {
+                return false;
+            }
+            ssid_seen = true;
+        }
+        ies = &ies[2 + len..];
+    }
+    ssid_seen
+}
+
 /// Match only supported management-frame identities. Every raw packet remains
 /// available to callers; control/data frames are not guessed into AP identities.
 pub fn observation(
@@ -120,11 +160,9 @@ pub fn observation(
     source_id: &str,
     index: &airhound::mac_index::MacIndex,
 ) -> serde_json::Value {
-    let identity = record
-        .frame
-        .first()
-        .filter(|fc| matches!(**fc, 0x80 | 0x40 | 0x50))
-        .and_then(|_| airhound::scanner::parse_wifi_identity(record.frame))
+    let identity = supported_management(record.frame)
+        .then(|| airhound::scanner::parse_wifi_identity(record.frame))
+        .flatten()
         .filter(|i| {
             matches!(
                 i.frame_type,
@@ -357,5 +395,66 @@ mod tests {
             &index,
         );
         assert!(malformed["identity"].is_null());
+    }
+    #[test]
+    fn malformed_management_records_stay_raw_without_evidence() {
+        let index = airhound::mac_index::MacIndex::from_defaults();
+        for (subtype, fixed_len) in [(0x80, 36), (0x50, 36), (0x40, 24)] {
+            let mut base = vec![0u8; fixed_len];
+            base[0] = subtype;
+            base[10..16].copy_from_slice(&[0xb4, 0x1e, 0x52, 1, 2, 3]);
+            let mut valid = base.clone();
+            valid.extend([0, 12]);
+            valid.extend(b"Flock-ABCDEF");
+            // A complete unknown IE is allowed; the whole chain is walked.
+            valid.extend([221, 2, 0x12, 0x34]);
+            assert!(supported_management(&valid));
+            let mut bad = vec![
+                base.clone(), // missing SSID
+                [base.clone(), vec![0, 4, b'x']].concat(),
+                [valid.clone(), vec![3, 5, 1]].concat(), // reported repro
+                [valid.clone(), vec![3]].concat(),       // incomplete IE header
+                [valid.clone(), vec![0, 0]].concat(),    // duplicate SSID
+                [base.clone(), vec![0, 1, 0xff]].concat(), // binary SSID
+                [base.clone(), vec![0, 33], vec![b'x'; 33]].concat(),
+                [valid.clone(), vec![0xff; 4]].concat(), // no extra FCS stripping
+            ];
+            for flag in [1, 2, 4, 0x40, 0x80] {
+                let mut changed = valid.clone();
+                changed[1] = flag;
+                bad.push(changed);
+            }
+            let mut fragment = valid.clone();
+            fragment[22] = 1;
+            bad.push(fragment);
+            for end in 0..fixed_len {
+                bad.push(valid[..end].to_vec());
+            }
+            for frame in bad {
+                let value = observation(
+                    Record {
+                        timestamp_micros32: 0,
+                        frame: &frame,
+                    },
+                    "fixture",
+                    &index,
+                );
+                assert_eq!(value["frame_bytes"], serde_json::json!(frame));
+                assert!(value["identity"].is_null(), "{frame:?}");
+                assert!(value.get("detection").is_none(), "{frame:?}");
+            }
+            for flags in [0, 8, 0x10, 0x20] {
+                valid[1] = flags;
+                let value = observation(
+                    Record {
+                        timestamp_micros32: 0,
+                        frame: &valid,
+                    },
+                    "fixture",
+                    &index,
+                );
+                assert!(!value["detection"]["sig"].as_array().unwrap().is_empty());
+            }
+        }
     }
 }

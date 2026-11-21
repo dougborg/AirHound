@@ -26,6 +26,7 @@ The decoder follows upstream Marauder **v1.21.0**, commit
 - [PcapHeader.cpp](https://github.com/justcallmekoko/ESP32Marauder/blob/d9197cf063cede379104ca8673c2d952d66575a3/esp32_marauder/PcapHeader.cpp): little-endian classic PCAP 2.4, DLT105 (bare 802.11), zero time-zone/accuracy fields.
 - [configs.h](https://github.com/justcallmekoko/ESP32Marauder/blob/d9197cf063cede379104ca8673c2d952d66575a3/esp32_marauder/configs.h): supported snapshot lengths 1514, 2324, or 4096 bytes.
 - [Buffer.cpp](https://github.com/justcallmekoko/ESP32Marauder/blob/d9197cf063cede379104ca8673c2d952d66575a3/esp32_marauder/Buffer.cpp): packet header and payload appended atomically; chunks wrapped in `[BUF/BEGIN]` / `[BUF/CLOSE]` without escaping.
+- [WiFiScan.cpp](https://github.com/justcallmekoko/ESP32Marauder/blob/d9197cf063cede379104ca8673c2d952d66575a3/esp32_marauder/WiFiScan.cpp): `beaconSnifferCallback` removes four FCS bytes from management packets in passive AP/probe/raw capture modes. The importer does not heuristically remove another suffix.
 - [CommandLine.cpp](https://github.com/justcallmekoko/ESP32Marauder/blob/d9197cf063cede379104ca8673c2d952d66575a3/esp32_marauder/CommandLine.cpp): passive `sniffraw`, `sniffbeacon`, and `sniffprobe` accept `-serial`. `SavePCAP` must be enabled even for serial; an SD card is not inherently required for this path.
 
 Only complete records are accepted. Serial close markers are checked at record
@@ -49,9 +50,13 @@ the importer does not infer epoch time or unwrap ambiguous gaps. `rssi_dbm`,
 silently drop packets when both buffers fill, so a valid import is not proof of
 complete capture. A channel advertised in an IE is not receive-channel evidence.
 
-Parsed beacon, probe request and probe response identities use the shared
-identity-only matcher with silent alert policy. Unknown, unsupported and malformed
-frames remain raw packets without invented identity evidence. Full raw bytes are
+Supported beacon, probe request and probe response identities use the shared
+identity-only matcher with silent alert policy. The importer requires a complete
+fixed management header, an unfragmented/unprotected layout without DS or optional
+HT-control flags, and a fully bounded IE chain containing exactly one SSID of at
+most 32 UTF-8 bytes. Incomplete headers/IEs, duplicate/missing/binary SSIDs and
+unsupported layouts remain raw-only. Unknown IEs are length-checked rather than
+semantically interpreted; this is not a complete 802.11 conformance validator. Full raw bytes are
 preserved, but this initial tool does not add new vendor-payload, Remote ID or BLE
 decoding. `decoder_profile` identifies the parser contract;
 `firmware_version_verified: false` prevents mistaking it for observed firmware
