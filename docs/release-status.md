@@ -12,7 +12,7 @@ remain disabled.
 | --- | --- | --- |
 | M5StickC Plus2 / XIAO ESP32-S3 no_std | `airhound-m5stickc.bin`, `airhound-xiao.bin` | Merged images; Plus2 image is not for other M5 models |
 | ESP-IDF alternative runtime | `airhound-m5stickc-std.bin`, `airhound-xiao-std.bin` | Experimental merged images using their built ESP-IDF bootloader and partition table; hardware matrix incomplete |
-| Desktop macOS | `airhound-desktop-macos-arm64.tar.gz` | Apple Silicon, macOS 14+; CLI app bundle, ad-hoc signed, not Developer ID signed/notarized; default private Bluetooth address lookup enabled |
+| Desktop macOS | `airhound-desktop-macos-arm64.tar.gz` | Apple Silicon, macOS 15+; CLI app bundle, ad-hoc signed, not Developer ID signed/notarized; default private Bluetooth address lookup enabled |
 | Desktop Linux | `airhound-desktop-linux-x86_64.tar.gz` | Built on Ubuntu 22.04; glibc 2.35+, libdbus-1.so.3, libpcap.so.0.8; BlueZ for native BLE |
 | ALFA AWUS036ACHM / MT7610U receiver | `mt7610u-lab-macos-arm64.tar.gz`, `mt7610u-lab-linux-x86_64.tar.gz` | Separate experimental GPL-2.0-only userspace receiver, not an OS network driver; explicit USB permissions/ownership and separately acquired firmware required |
 | ALFA corresponding source | Matching `mt7610u-lab-*-source.tar.gz` archives | Exact driver and locked dependency sources, license notices and offline build instructions; each binary manifest names/hashes its source archive |
