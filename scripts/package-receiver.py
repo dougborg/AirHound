@@ -81,15 +81,16 @@ def archive(directory, destination):
 
 
 def build(output_dir):
-    if platform.system() != "Darwin":
-        raise ValueError("initial release candidates target macOS only")
+    if (platform.system(), platform.machine()) not in {("Darwin", "arm64"), ("Linux", "x86_64")}:
+        raise ValueError("release candidates target macOS arm64 or Linux x86_64")
     if run(["git", "status", "--porcelain", "--untracked-files=normal"], capture=True).strip():
         raise ValueError("commit the source tree before building a release candidate")
     # Never overwrite an earlier candidate or mingle provenance.
     output_dir.mkdir(parents=True, exist_ok=False)
     commit = run(["git", "rev-parse", "HEAD"], capture=True).strip()
     version = tomllib.loads((CRATE / "Cargo.toml").read_text())["package"]["version"]
-    name = f"mt7610u-lab-{version}-{commit[:12]}-macos-{platform.machine()}"
+    system = "macos" if platform.system() == "Darwin" else "linux"
+    name = f"mt7610u-lab-{system}-{platform.machine()}"
     with tempfile.TemporaryDirectory(prefix="receiver-package-") as temp:
         staging = Path(temp)
         source = staging / f"{name}-source"
@@ -104,7 +105,7 @@ def build(output_dir):
         (source / ".cargo/config.toml").write_text(vendor_config(config))
         (source / "BUILD-SOURCE.txt").write_text(
             "This is the source used for the accompanying experimental binary.\n"
-            "With stable Rust and macOS Command Line Tools installed, run:\n"
+            "With stable Rust, a C compiler and platform development tools installed, run:\n"
             "  cargo build --release --locked --offline\n"
             "Dependency sources and their license files are in vendor/.\n"
             "Firmware is not included. See FIRMWARE_LICENSE and README.md.\n")
@@ -113,8 +114,13 @@ def build(output_dir):
         run(["cargo", "build", "--release", "--locked", "--offline",
              "--target-dir", str(target)], cwd=source)
         binary = target / "release/mt7610u-lab"
-        links = run(["otool", "-L", str(binary)], capture=True)
-        check_macos_dependencies(links)
+        if system == "macos":
+            links = run(["otool", "-L", str(binary)], capture=True)
+            check_macos_dependencies(links)
+        else:
+            links = run(["ldd", str(binary)], capture=True)
+            if "not found" in links:
+                raise ValueError("unresolved Linux runtime dependency")
         run([str(binary), "--help"], capture=True)
         payload = staging / name
         (payload / "bin").mkdir(parents=True)
@@ -136,6 +142,7 @@ def build(output_dir):
         manifest = {
             "schema_version": 1, "status": "experimental_unsigned_candidate",
             "git_commit": commit, "version": version, "architecture": platform.machine(),
+            "platform": system, "build_os": platform.platform(),
             "rustc": run(["rustc", "--version"], capture=True).strip(),
             "binary_sha256": sha256(binary), "source_archive": source_archive.name,
             "source_sha256": sha256(source_archive), "source_built_offline": True,
@@ -143,9 +150,14 @@ def build(output_dir):
             "firmware_bundled": False,
             "release_gates": "See repository docs/receiver-release-gates.md; not approved for production",
         }
+        (payload / "runtime-libraries.txt").write_text(links)
         (payload / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         binary_archive = output_dir / f"{name}.tar.gz"
         archive(payload, binary_archive)
+        extracted = staging / "verify"
+        with tarfile.open(binary_archive) as tar:
+            tar.extractall(extracted, filter="data")
+        run([str(extracted / name / "bin/mt7610u-lab"), "--help"], capture=True)
         checksums = {path.name: sha256(path) for path in (binary_archive, source_archive)}
         (output_dir / "SHA256SUMS").write_text(
             "".join(f"{digest}  {name}\n" for name, digest in sorted(checksums.items())))

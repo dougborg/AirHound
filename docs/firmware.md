@@ -60,9 +60,10 @@ long-range reception.
 
 Check the assets on the [Releases](https://github.com/dougborg/AirHound/releases)
 page before downloading; a release tag alone does not imply flashable binaries.
-Build from source below when no binaries are attached. Future release binaries produced by this workflow
+Build from source below when no binaries are attached. Release binaries produced by this workflow
 are merged no_std images containing the bootloader, partition table and application.
-ESP-IDF builds are currently CI previews, not release assets.
+ESP-IDF preview assets have a `-std.bin` suffix; their live hardware validation
+remains incomplete. See the [full release inventory](release-status.md).
 
 Download the binary for your board and `SHA256SUMS` from the same release.
 Verify its checksum (`shasum -a 256 airhound-xiao.bin` on macOS or

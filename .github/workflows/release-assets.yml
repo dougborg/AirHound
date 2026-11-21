@@ -1,0 +1,153 @@
+name: Release packages
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - '.github/workflows/release*.yml'
+      - 'scripts/package-*.py'
+      - 'scripts/bundle-macos.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'hostd/**'
+      - 'firmware-std/**'
+      - 'drivers/mt7610u/**'
+      - 'docs/release-status.md'
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    container:
+      image: espressif/idf-rust:all_1.90.0.0
+      options: --user root
+      env:
+        RUSTUP_HOME: /home/esp/.rustup
+        CARGO_HOME: /home/esp/.cargo
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: m5stickc
+            chip: esp32
+            target: xtensa-esp32-none-elf
+            flavor: no_std
+            board: m5stickc
+          - name: xiao
+            chip: esp32s3
+            target: xtensa-esp32s3-none-elf
+            flavor: no_std
+            board: xiao
+          - name: m5stickc-std
+            chip: esp32
+            target: xtensa-esp32-espidf
+            flavor: std
+            board: m5stickc
+          - name: xiao-std
+            chip: esp32s3
+            target: xtensa-esp32s3-espidf
+            flavor: std
+            board: xiao
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Build and package firmware
+        shell: bash
+        env:
+          BOARD: ${{ matrix.board }}
+          CHIP: ${{ matrix.chip }}
+          TARGET: ${{ matrix.target }}
+          FLAVOR: ${{ matrix.flavor }}
+          ASSET: airhound-${{ matrix.name }}.bin
+        run: |
+          set -euo pipefail
+          export PATH="/home/esp/.cargo/bin:$PATH"
+          . /home/esp/export-esp.sh
+          if [ "$FLAVOR" = std ]; then
+            (cd firmware-std && MCU="$CHIP" cargo build --locked --no-default-features --features "$BOARD" --release --target "$TARGET" -Z build-std=std,panic_abort)
+            mapfile -t bootloaders < <(find "firmware-std/target/$TARGET/release/build" -path '*/out/build/bootloader/bootloader.bin')
+            mapfile -t partitions < <(find "firmware-std/target/$TARGET/release/build" -path '*/out/build/partition_table/partition-table.bin')
+            test "${#bootloaders[@]}" -eq 1
+            test "${#partitions[@]}" -eq 1
+            espflash save-image --merge --skip-padding --chip "$CHIP" --bootloader "${bootloaders[0]}" --partition-table "${partitions[0]}" "firmware-std/target/$TARGET/release/airhound-std" "$ASSET"
+          else
+            cargo build --locked --no-default-features --features "$BOARD" --release --target "$TARGET" -Z build-std=core,alloc
+            if [ "$BOARD" = m5stickc ]; then
+              python3 scripts/check-firmware-memory.py "target/$TARGET/release/airhound"
+            fi
+            espflash save-image --merge --skip-padding --chip "$CHIP" "target/$TARGET/release/airhound" "$ASSET"
+          fi
+          test -s "$ASSET"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-assets-${{ matrix.name }}
+          path: airhound-${{ matrix.name }}.bin
+          if-no-files-found: error
+
+  desktop:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libpcap-dev libudev-dev pkg-config
+      - name: Build desktop and package both executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path hostd/Cargo.toml --locked --release
+          python3 scripts/package-desktop.py --output-dir "$RUNNER_TEMP/desktop-package"
+          python3 scripts/package-receiver.py --output-dir "$RUNNER_TEMP/receiver-package"
+          mkdir "$RUNNER_TEMP/release-assets"
+          cp "$RUNNER_TEMP/desktop-package/"*.tar.gz "$RUNNER_TEMP/release-assets/"
+          cp "$RUNNER_TEMP/receiver-package/"*.tar.gz "$RUNNER_TEMP/release-assets/"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-assets-${{ matrix.platform }}
+          path: ${{ runner.temp }}/release-assets/*.tar.gz
+          if-no-files-found: error
+
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Package source, signatures, schemas and tools
+        run: git archive --format=tar.gz --prefix=airhound-source/ --output=airhound-source.tar.gz HEAD
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-assets-source
+          path: airhound-source.tar.gz
+          if-no-files-found: error
+
+  verify:
+    needs: [firmware, desktop, source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: release-assets-*
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - name: Check complete package set and corresponding source
+        run: python3 scripts/check-release-assets.py "$RUNNER_TEMP/release-assets"
