@@ -20,6 +20,7 @@ same physical device.
 | Run a portable detector | [ESP32 firmware](docs/firmware.md) | M5StickC Plus2 and XIAO ESP32-S3; [M5 controls](docs/m5-controls.md) |
 | Scan from macOS or Linux | [Desktop CLI](hostd/README.md) | Native BLE/WiFi, WiGLE CSV, NDJSON and optional gpsd location |
 | Use an external receiver | [Receivers and drivers](drivers/README.md) | CatSniffer/Sniffle BLE capture and experimental ALFA MT7610U integration |
+| Develop the Flipper companion | [Flipper prototype](companions/flipper/README.md) | Host-tested receiver and synthetic API87.1 FAP; no live UART yet |
 | Work on detection logic | [Shared core and source layout](src/README.md) | Parsing, signatures, rule evidence and alert policy |
 | Improve signatures | [Signature packs](signatures/README.md) | Canonical production pack, research candidates and admission policy |
 | Consume observations or send commands | [Schemas](schemas/README.md) | Firmware/desktop contracts, examples and transport limits |

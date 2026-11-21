@@ -1,0 +1,37 @@
+[package]
+name = "airhound-flipper"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[features]
+default = []
+fap = ["dep:flipperzero", "dep:flipperzero-rt", "dep:flipperzero-alloc"]
+
+[dependencies]
+heapless = { version = "0.9", features = ["serde"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde-json-core = "0.6"
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+flipperzero = { version = "=0.16.0", default-features = false, features = ["alloc"], optional = true }
+flipperzero-rt = { version = "=0.16.0", optional = true }
+flipperzero-alloc = { version = "=0.16.0", optional = true }
+
+[dev-dependencies]
+airhound = { path = "../..", default-features = false }
+serde_json = "1"
+
+[[bin]]
+name = "airhound-flipper"
+path = "src/bin/flipper.rs"
+required-features = ["fap"]
+test = false
+bench = false
+
+[profile.release]
+opt-level = "z"
+panic = "abort"

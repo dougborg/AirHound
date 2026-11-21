@@ -1,0 +1,50 @@
+name: Flipper companion
+
+on:
+  pull_request:
+    paths: ['companions/flipper/**', 'src/**', 'schemas/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/flipper.yml', 'release-please-config.json']
+  push:
+    branches: [main]
+    paths: ['companions/flipper/**', 'src/**', 'schemas/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/flipper.yml', 'release-please-config.json']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parser-and-fap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: companions/flipper
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: thumbv7em-none-eabihf
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --lib --tests -- -D warnings
+      - run: cargo build --locked --release --features fap --bin airhound-flipper --target thumbv7em-none-eabihf
+      - name: Audit API 87.1 manifest and imports against pinned Momentum
+        run: |
+          python -m pip install -r requirements-dev.txt
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/Next-Flip/Momentum-Firmware/e1784e7418d8b074e971983ceb6fef0f37e52ae4/targets/f7/api_symbols.csv \
+            -o target/momentum-api.csv
+          cp target/thumbv7em-none-eabihf/release/airhound-flipper target/airhound-flipper-demo.fap
+          python scripts/check-fap.py target/airhound-flipper-demo.fap target/momentum-api.csv > target/fap-audit.json
+          cat target/fap-audit.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: flipper-synthetic-demo-api87
+          path: |
+            companions/flipper/target/airhound-flipper-demo.fap
+            companions/flipper/target/fap-audit.json
+          retention-days: 14

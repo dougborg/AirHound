@@ -17,6 +17,7 @@ Install the platform prerequisites from the linked component guide first.
 | ESP-IDF firmware | [firmware-std/](../firmware-std/README.md) | Local `esp` toolchain, Cargo config, SDK config and `Cargo.lock` | Follow the board-specific build commands in the component README |
 | macOS/Linux desktop CLI | [hostd/](../hostd/README.md) | Local stable Rust; `hostd/Cargo.lock` | `just build-hostd`, `just test-hostd`, `just clippy-hostd` |
 | ALFA MT7610U userspace receiver | [drivers/mt7610u/](../drivers/mt7610u/README.md) | Independent stable Rust package/workspace and lockfile | In `drivers/mt7610u`: `cargo test --locked` |
+| Flipper companion prototype | [companions/flipper/](../companions/flipper/README.md) | Independent stable Rust package/lockfile; API87.1 FAP target | In `companions/flipper`: `cargo test --locked`; explicit ARM build in its guide |
 | Fuzz harnesses | `fuzz/`; [testing guide](testing.md) | Independent Cargo workspace/lockfile; explicitly select nightly for cargo-fuzz | `cargo +nightly fuzz run commands -- -max_total_time=30` |
 | Canonical signatures | [signatures/](../signatures/README.md) | JSON data; Python compiler/tests | `python3 scripts/compile-signatures.py --check` |
 | Public schemas/contracts | [schemas/](../schemas/README.md) | JSON Schema and examples | `just check-schemas` and `just check-examples` |
