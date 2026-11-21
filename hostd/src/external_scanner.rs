@@ -661,10 +661,12 @@ exit 3
         // assertion below; allow the production handshake budget plus burst I/O.
         timeout(Duration::from_secs(15), async {
             while !fake.directory.join("burst-complete").exists() {
-                assert!(
-                    !task.is_finished(),
-                    "supervisor exited before the burst completed"
-                );
+                if task.is_finished() {
+                    panic!(
+                        "supervisor exited before the burst completed: {:?}",
+                        (&mut task).await
+                    );
+                }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })

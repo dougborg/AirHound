@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/release*.yml'
       - 'scripts/package-*.py'
+      - 'scripts/check-release-assets.py'
+      - 'scripts/tests/test_release_assets.py'
       - 'scripts/bundle-macos.py'
       - 'Cargo.toml'
       - 'Cargo.lock'
