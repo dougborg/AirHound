@@ -6,6 +6,12 @@
 WiGLE CSV, and writes NDJSON to stdout. It has a CLI interface; the macOS `.app`
 bundle provides application identity and permission descriptions, not a GUI.
 
+Preview downloads include macOS Apple Silicon and Linux x86-64 archives. Check
+the [release asset inventory](../docs/release-status.md) for OS/runtime requirements,
+checksum verification, signing limitations, and separate receiver/source packages.
+Extract the archive and run `AirHound.app/Contents/MacOS/airhound-hostd --help`
+on macOS or `bin/airhound-hostd --help` on Linux from a terminal.
+
 ## Build and run
 
 Run the recipes below from the repository root with stable Rust and `just` installed.

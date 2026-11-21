@@ -228,7 +228,12 @@ with `--max-seconds` up to 24 hours. This leaves room for the actual eight-hour
 
 ## Release candidates
 
-`scripts/package-receiver.py` builds an unsigned macOS candidate from a clean
+Preview releases include separate binary and matching vendored-source archives.
+See the [release inventory](../../docs/release-status.md) for names and runtime
+requirements. The Linux binary is not RF-validated; prefer native mt76 with the
+desktop monitor-interface source for ordinary Linux operation.
+
+`scripts/package-receiver.py` builds a macOS arm64 or Linux x86-64 candidate from a clean
 committed tree, includes a corresponding-source archive with locked vendored
 dependencies, and rebuilds that source offline. It rejects non-system dynamic
 library dependencies and includes source/dependency license notices. Firmware

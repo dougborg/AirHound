@@ -18,6 +18,8 @@ out of commits and CI artifacts.
 | Capture passive Sniffle BLE packets | [sniffle-source.py](sniffle-source.py), separate GPL-3.0-only helper | [Live and replay source](../docs/sniffle-source.md) |
 | Replay saved BLE HCI data | [replay-hci-ble.py](replay-hci-ble.py) | [USB HCI investigation](../docs/usb-hci-receiver-investigation.md) |
 | Run receiver soak / compare captures | [receiver-soak.py](receiver-soak.py), [receiver-compare.py](receiver-compare.py) | [Receiver testing](../drivers/mt7610u/TESTING.md) |
+| Package a desktop binary and notices | [package-desktop.py](package-desktop.py) | [Release inventory](../docs/release-status.md) |
+| Verify complete release asset set | [check-release-assets.py](check-release-assets.py) | [Release inventory](../docs/release-status.md) |
 | Package an independent receiver candidate | [package-receiver.py](package-receiver.py) | [Release gates](../docs/receiver-release-gates.md) |
 
 Synthetic benchmarks measure parsing, matching and output throughput; they do

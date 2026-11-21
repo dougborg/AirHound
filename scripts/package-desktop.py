@@ -76,7 +76,7 @@ def build(output):
             f'AirHound {version} engineering preview ({target})\n\n'
             f'Run from a terminal: {launch} --help\n'
             'This is a CLI, not a graphical desktop interface.\n'
-            'macOS: Apple Silicon, macOS 14 or newer; grant Bluetooth/Location permissions.\n'
+            'macOS: Apple Silicon, macOS 15 or newer; grant Bluetooth/Location permissions.\n'
             'The app is ad-hoc signed, not Developer ID signed or notarized.\n'
             'Use the OS approval flow for downloaded software; do not disable Gatekeeper globally.\n'
             'Default macOS build includes private Bluetooth address lookup.\n'

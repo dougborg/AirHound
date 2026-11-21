@@ -1,5 +1,8 @@
 # AirHound
 
+[Preview downloads](https://github.com/dougborg/AirHound/releases) ·
+[Package inventory and validation status](docs/release-status.md)
+
 AirHound is a Rust toolkit for observing nearby WiFi and Bluetooth devices and
 matching their advertisements against device signatures. It includes ESP32
 firmware, a macOS/Linux desktop CLI, a portable `no_std` detection library, and
