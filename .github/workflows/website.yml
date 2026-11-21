@@ -1,0 +1,45 @@
+name: Website
+
+on:
+  pull_request:
+    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
+  push:
+    branches: [main]
+    paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run validate
+      - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: website-preview
+          path: website/dist
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: website-review
+          path: |
+            website/.impeccable/review
+            website/test-results
+          retention-days: 14

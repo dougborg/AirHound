@@ -1,0 +1,112 @@
+[
+  {
+    "id": "macos",
+    "name": "macOS native radios",
+    "platform": "macOS",
+    "status": "Integrated \u00b7 permission dependent",
+    "state": "experimental",
+    "limits": "CoreBluetooth BLE + CoreWLAN WiFi. UUID-only BLE fallback; optional private address lookup in the default build does not guarantee stable MACs or App Store suitability.",
+    "guide": "/reference/hostd/",
+    "evidence": "/reference/docs/ble-receivers/"
+  },
+  {
+    "id": "linux",
+    "name": "Linux native radios",
+    "platform": "Linux",
+    "status": "Integrated \u00b7 hardware acceptance pending",
+    "state": "experimental",
+    "limits": "BlueZ BLE and WiFi scanning. Monitor-interface capture needs a compatible configured interface; controller and driver capabilities vary.",
+    "guide": "/reference/hostd/",
+    "evidence": "/reference/docs/release-status/"
+  },
+  {
+    "id": "m5",
+    "name": "M5StickC Plus2",
+    "platform": "Embedded",
+    "status": "Integrated \u00b7 selected live checks",
+    "state": "experimental",
+    "limits": "ESP32 firmware with display, buttons and separate observation/match counts. no_std and ESP-IDF are distinct builds; check runtime-specific validation.",
+    "guide": "/reference/docs/firmware/",
+    "evidence": "/reference/docs/m5stickc-bringup/"
+  },
+  {
+    "id": "xiao",
+    "name": "XIAO ESP32-S3",
+    "platform": "Embedded",
+    "status": "Builds available \u00b7 live acceptance pending",
+    "state": "experimental",
+    "limits": "Board-specific firmware. M5 test results do not establish XIAO acceptance or enabled PSRAM.",
+    "guide": "/reference/docs/firmware/",
+    "evidence": "/reference/docs/release-status/"
+  },
+  {
+    "id": "catsniffer",
+    "name": "CatSniffer 3.2 / Sniffle",
+    "platform": "macOS / Linux",
+    "status": "Integrated \u00b7 limited live validation",
+    "state": "experimental",
+    "limits": "Passive BLE live stream and DLT256 replay. Fixed primary advertising channel; extended-chain reassembly and Coded PHY reception are not validated. External firmware/tools required.",
+    "guide": "/reference/docs/sniffle-source/",
+    "evidence": "/reference/docs/catsniffer-integration/"
+  },
+  {
+    "id": "alfa",
+    "name": "ALFA AWUS036ACHM",
+    "platform": "macOS / Linux",
+    "status": "Experimental userspace receiver",
+    "state": "experimental",
+    "limits": "MT7610U passive WiFi receiver, not an OS network driver. Endurance interrupted by calibration timeout; RF parity, RSSI calibration and fault recovery remain open.",
+    "guide": "/reference/drivers/mt7610u/",
+    "evidence": "/reference/docs/receiver-release-gates/"
+  },
+  {
+    "id": "gps",
+    "name": "gpsd location input",
+    "platform": "macOS / Linux",
+    "status": "Integrated \u00b7 stationary check",
+    "state": "experimental",
+    "limits": "Adds the receiver\u2019s position to observations. Moving-route accuracy and capture-time/fix association still need validation; not a device-location estimate.",
+    "guide": "/reference/docs/gnss-wardriving/",
+    "evidence": "https://github.com/dougborg/AirHound/issues/79"
+  },
+  {
+    "id": "csr",
+    "name": "CSR8510 A10",
+    "platform": "Research",
+    "status": "Research only",
+    "state": "research",
+    "limits": "Offline HCI tooling and investigation. No live macOS USB driver or production ingestion path.",
+    "guide": "/reference/docs/usb-hci-receiver-investigation/",
+    "evidence": "https://github.com/dougborg/AirHound/issues/176"
+  },
+  {
+    "id": "nordic",
+    "name": "Nordic nRF Sniffer",
+    "platform": "Research",
+    "status": "Research only",
+    "state": "research",
+    "limits": "USB presence/live upstream reports do not establish AirHound support. A separate DLT272 observation source is not implemented.",
+    "guide": "https://github.com/dougborg/AirHound/issues/188",
+    "evidence": "https://github.com/dougborg/AirHound/issues/188"
+  },
+  {
+    "id": "awok",
+    "name": "AWOK Dual ESP32 v3",
+    "platform": "Research",
+    "status": "Research only",
+    "state": "research",
+    "limits": "Exact board/firmware integration remains under investigation. No supported AirHound firmware or desktop ingestion.",
+    "guide": "/reference/docs/awok-integration/",
+    "evidence": "https://github.com/dougborg/AirHound/issues/181"
+  },
+  {
+    "id": "flipper",
+    "name": "Flipper Zero / sub-GHz",
+    "platform": "Research",
+    "status": "Research only",
+    "state": "research",
+    "limits": "Companion and additional-radio work is on the roadmap. No released Flipper or sub-GHz observation integration.",
+    "guide": "https://github.com/dougborg/AirHound/issues/34",
+    "evidence": "https://github.com/dougborg/AirHound/issues/42"
+  }
+]

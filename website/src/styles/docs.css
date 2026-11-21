@@ -1,0 +1,28 @@
+@import "@fontsource-variable/manrope";
+@import "@fontsource-variable/newsreader";
+:root {
+  --sl-font: "Manrope Variable", sans-serif;
+  --sl-color-accent-low: #412216;
+  --sl-color-accent: #d16639;
+  --sl-color-accent-high: #ffb592;
+}
+:root[data-theme="light"] {
+  --sl-color-bg: #f7f4ed;
+  --sl-color-bg-nav: #eeebe3;
+  --sl-color-accent-low: #f8d9c8;
+  --sl-color-accent: #ae3f16;
+  --sl-color-accent-high: #713019;
+}
+h1,
+h2 {
+  font-family: "Newsreader Variable", Georgia, serif;
+  font-weight: 500;
+}
+:focus-visible {
+  outline: 3px solid #bd5128;
+  outline-offset: 4px;
+}
+::selection {
+  background: #eed19e;
+  color: #262c27;
+}

@@ -1,0 +1,90 @@
+---
+import Site from "../layouts/Site.astro";
+---
+
+<Site
+  title="Contribute"
+  description="Contribute code, receiver validation, documentation or signature evidence to AirHound."
+>
+  <header class="page-header wrap">
+    <h1>
+      Bring evidence.
+      <br />
+      Build together.
+    </h1>
+    <p class="lead">
+      A reproducible observation, a clearer guide or a well-tested fix can all
+      move the project forward.
+    </p>
+  </header>
+  <div class="wrap content prose">
+    <ul class="toc-list">
+      <li>
+        <h3>
+          <a href="/reference/contributing/">
+            Contribute code or documentation
+          </a>
+        </h3>
+        <p>
+          Start with the repository contribution guide, check the{" "}
+          <a href="https://github.com/dougborg/AirHound/issues/160">roadmap</a>,
+          and run the relevant{" "}
+          <a href="/reference/docs/testing/">tests and quality checks</a>.
+        </p>
+      </li>
+      <li>
+        <h3>
+          <a href="/reference/docs/signature-packs/">Propose a signature</a>
+        </h3>
+        <p>
+          Provide source/provenance, reuse terms, exact matching fields,
+          device/model/state evidence and ordinary-device negative fixtures.
+          Review{" "}
+          <a href="/reference/docs/signature-research/">existing research</a>{" "}
+          before adding a candidate.
+        </p>
+      </li>
+      <li>
+        <h3>
+          <a href="/reference/docs/receiver-release-gates/">
+            Validate a receiver
+          </a>
+        </h3>
+        <p>
+          Record exact hardware, firmware, operating system and test conditions.
+          Distinguish parser replay from live RF reception; keep raw identifying
+          captures private.
+        </p>
+      </li>
+      <li>
+        <h3>
+          <a href="https://github.com/dougborg/AirHound/issues">
+            Report a problem
+          </a>
+        </h3>
+        <p>
+          Search existing issues, then include component/revision, expected and
+          observed behavior, and sanitized steps to reproduce. Do not post real
+          nearby MACs, SSIDs or GPS locations.
+        </p>
+      </li>
+    </ul>
+    <h2>Security reports</h2>
+    <p>
+      Private vulnerability reporting availability is a maintainer decision.
+      Check{" "}
+      <a href="https://github.com/dougborg/AirHound/security">
+        the repository Security page
+      </a>{" "}
+      for the currently available reporting route. Do not publish sensitive
+      exploit details or private captures in a public issue.
+    </p>
+    <h2>Component boundaries matter</h2>
+    <p>
+      The shared project is MIT licensed. The independent MT7610U receiver is
+      GPL-2.0-only; the Sniffle source helper is GPL-3.0-only. Keep notices and
+      corresponding-source requirements with each component.{" "}
+      <a href="/privacy/#licenses">Review the license links.</a>
+    </p>
+  </div>
+</Site>

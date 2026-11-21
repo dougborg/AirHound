@@ -1,0 +1,41 @@
+{
+  "name": "airhound-website",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "prepare-content": "node scripts/prepare-content.mjs",
+    "dev": "npm run prepare-content && astro dev --host 127.0.0.1",
+    "build": "npm run prepare-content && astro build",
+    "preview": "astro preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.mjs",
+    "check": "astro check",
+    "validate": "npm test && npm run build && node scripts/check-site.mjs",
+    "sync-releases": "node scripts/sync-releases.mjs",
+    "format": "prettier --write src scripts tests *.mjs *.ts *.json",
+    "format:check": "prettier --check src scripts tests *.mjs *.ts *.json",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@astrojs/starlight": "^0.43.1",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0",
+    "astro": "^7.4.13",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "typescript": "^6.0.3",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.2.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "cheerio": "^1.2.0",
+    "lighthouse": "^13.6.0",
+    "prettier": "^3.10.1",
+    "prettier-plugin-astro": "^1.1.2"
+  }
+}

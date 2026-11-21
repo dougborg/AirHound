@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+src/content/docs/reference/
+playwright-report/
+test-results/
+.impeccable/review/

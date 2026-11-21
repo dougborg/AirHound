@@ -1,0 +1,104 @@
+---
+import "../styles/site.css";
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+const navigation = [
+  ["Get started", "/start/"],
+  ["Downloads", "/downloads/"],
+  ["Hardware", "/hardware/"],
+  ["Docs", "/reference/docs/"],
+  ["Signatures", "/signatures/"],
+];
+const current = Astro.url.pathname;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title === 'AirHound' ? 'AirHound — Read the wireless world' : `${title} · AirHound`}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f7f4ed" />
+    <meta
+      name="robots"
+      content={
+        import.meta.env.SITE_PRODUCTION === "true"
+          ? "index,follow"
+          : "noindex,nofollow"
+      }
+    />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site)} />
+    <meta property="og:title" content={`${title} · AirHound`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site)} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#main">
+      Skip to content
+    </a>
+    <header class="masthead wrap">
+      <a href="/" class="wordmark" aria-label="AirHound home">
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 28 28"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M4 24 14 4l10 20M8 17h12M14 4v20"
+            stroke="currentColor"
+            stroke-width="2"
+          />
+          <circle cx="14" cy="17" r="3" fill="currentColor" />
+        </svg>
+        AirHound<span class="domain">.tools</span>
+      </a>
+      <nav aria-label="Main navigation">
+        {navigation.map(([label, href]) => (
+          <a
+            href={href}
+            aria-current={current.startsWith(href) ? "page" : undefined}
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+      <a class="source-link" href="https://github.com/dougborg/AirHound">
+        GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="wrap footer">
+      <div>
+        <a class="wordmark" href="/">
+          AirHound
+        </a>
+        <p>
+          Open tools. Observable signals.
+          <br />
+          Evidence you can inspect.
+        </p>
+      </div>
+      <nav aria-label="Project links">
+        <a href="/contribute/">Contribute</a>
+        <a href="https://github.com/dougborg/AirHound/issues/160">Roadmap</a>
+        <a href="/reference/changelog/">Changelog</a>
+        <a href="/privacy/">Privacy & licenses</a>
+      </nav>
+      <p class="footer-note">
+        Built in the open.
+        <br />
+        Experimental hardware is labeled throughout.
+      </p>
+    </footer>
+  </body>
+</html>
