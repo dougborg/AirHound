@@ -28,6 +28,12 @@ observation. Firmware BLE address type is currently unknown, so vendor-prefix
 inference is disabled there until the scanner preserves that metadata. Explicit
 watchlist matches still work; they represent user intent, not corroboration.
 
+UUID-list fields must contain a whole number of UUIDs. The firmware scanner
+and shared raw matcher reject an odd-length 16-bit list rather than retaining
+its recognizable prefix. A separately well-formed field can still contribute
+evidence; a truncated AD field contributes none. These framing checks do not
+establish device identity or extended-advertisement support.
+
 ## Current defaults
 
 - A Flock-like candidate requires a vendor clue **and** a corresponding name
