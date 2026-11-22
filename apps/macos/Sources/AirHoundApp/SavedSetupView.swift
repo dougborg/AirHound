@@ -110,7 +110,8 @@ struct SavedSetupView: View {
   }
   private func save() {
     guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-    saving = false
-    session.saveSetup(name: name, replacing: replace ? session.selectedSetupID : nil)
+    if session.saveSetup(name: name, replacing: replace ? session.selectedSetupID : nil) {
+      saving = false
+    }
   }
 }
