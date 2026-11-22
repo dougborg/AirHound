@@ -486,3 +486,31 @@ fn m5_and_gps_profile_round_trip_preserves_full_configuration_and_ownership() {
         .is_err());
     assert_eq!(store.load("m5-gps").unwrap().config, loaded.config);
 }
+
+#[test]
+fn flipper_profile_retains_explicit_port_and_requires_current_binding_review() {
+    let temp = Temp::new();
+    let store = temp.store();
+    let plan = json!({"version":1,"alert_policy":"silent","receivers":[{"id":"bridge","source":{"kind":"flipper_marauder","port":"/dev/cu.flipper-fixture"}}]});
+    let saved = store
+        .save(
+            "flipper".into(),
+            "Flipper bridge".into(),
+            plan.clone(),
+            &inventory(),
+            false,
+        )
+        .unwrap();
+    let loaded = store.load("flipper").unwrap();
+    assert_eq!(loaded.config, plan);
+    assert_eq!(saved.bindings[0].source_kind, "flipper_marauder");
+    assert_eq!(
+        saved.bindings[0].selector.as_deref(),
+        Some("/dev/cu.flipper-fixture")
+    );
+    assert_eq!(
+        check_bindings(&loaded, &inventory())["checks"][0]["state"],
+        "missing"
+    );
+    assert_eq!(loaded.validation_scope, "configuration_only");
+}

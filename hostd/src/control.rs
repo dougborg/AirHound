@@ -158,6 +158,16 @@ impl ScanControl {
             receiver.producer_identity = None;
         }
     }
+    pub fn set_bridge_identity(&self, identity: Option<serde_json::Value>) {
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            receiver.bridge_identity = identity;
+        }
+    }
+    pub fn set_bridge_status(&self, status: serde_json::Value) {
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            receiver.bridge_status = Some(status);
+        }
+    }
     pub fn set_receiver_availability(&self, availability: &'static str) {
         if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             receiver.availability = availability;

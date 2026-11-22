@@ -59,6 +59,8 @@ pub struct Candidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_identity: Option<crate::external_identity::Identity>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_identity: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration_hint: Option<Value>,
     /// A location provider belongs in SessionConfig.location, not receivers.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,6 +146,33 @@ impl Inventory {
                         status,
                     ) {
                         *candidate = identified;
+                        self.mode = "passive_with_active_metadata";
+                    }
+                    continue;
+                }
+                if candidate.kind == "flipper" {
+                    if let Some(owner) = receivers.iter().find(|owner| {
+                        let receiver = &owner["receiver"];
+                        receiver["backend"] == "flipper_marauder"
+                            && matches!(
+                                receiver["availability"].as_str(),
+                                Some("available" | "paused")
+                            )
+                            && receiver["bridge_identity"]["application"]["evidence"]
+                                == "ahfb_hello"
+                            && device.endpoints.iter().any(|endpoint| {
+                                endpoint.kind == "serial"
+                                    && receiver["adapter_id"].as_str().is_some_and(|path| {
+                                        serial_alias(path) == serial_alias(&endpoint.path)
+                                    })
+                            })
+                    }) {
+                        candidate.label = "AirHound Flipper bridge";
+                        candidate.support = "available";
+                        candidate.state = "in_use";
+                        candidate.bridge_identity =
+                            Some(owner["receiver"]["bridge_identity"].clone());
+                        candidate.evidence.push("Current owner received a bound AirHound bridge Hello; AWOK firmware remains unverified".into());
                         self.mode = "passive_with_active_metadata";
                     }
                     continue;
@@ -363,6 +392,7 @@ fn candidate(
         },
         identification: None,
         external_identity: None,
+        bridge_identity: None,
         configuration_hint: None,
         location_configuration_hint: None,
     }
@@ -494,7 +524,14 @@ fn classify(raw: &RawDevice, platform: &str, options: &Options) -> Vec<Candidate
                 result.push(candidate("usb_hci", "CSR8510-compatible Bluetooth dongle", "research", "unsupported", "USB identity alone does not establish an OS-supported adapter; direct USB HCI integration remains experimental research"));
             }
         }
-        (Some(0x0483), Some(0x5740)) => result.push(candidate("flipper", "STM32 CDC / Flipper candidate", "candidate", "needs_identification", "Shared STM32 USB CDC ID; not proof of Flipper hardware or compatible firmware. Live Flipper source integration is pending")),
+        (Some(0x0483), Some(0x5740)) => {
+            let mut c=candidate("flipper", "STM32 CDC / Flipper candidate", "candidate", "needs_identification", "Shared USB CDC ID is not hardware or firmware proof. Explicit capture requires the AirHound bridge FAP and firmware ABI87.1; passive inventory opens no port");
+            if let Some(endpoint)=serial {
+                c.configuration_hint=Some(json!({"kind":"flipper_marauder","port":endpoint.path}));
+            }
+            c.requirements.push(Requirement {name:"airhound_bridge_fap".into(),state:"unknown",detail:"Install the reviewed AirHound bridge application separately; capture validates its versioned Hello before any Start".into()});
+            result.push(c);
+        },
         (Some(0x10c4), Some(0xea60)) | (Some(0x1a86), Some(0x55d4 | 0x7523)) | (Some(0x0403), Some(0x6001)) => result.push(candidate("serial_unknown", "USB UART (possible M5/AWOK or other board)", "candidate", "needs_identification", "Generic bridge identity cannot identify the board, processor role or firmware; no serial port was opened")),
         _ if serial.is_some() => result.push(candidate("serial_unknown", "Unidentified serial device", "candidate", "needs_identification", "Serial endpoint only; firmware protocol unknown")),
         _ => {}

@@ -105,6 +105,9 @@ pub enum Source {
         port: String,
         baud: u32,
     },
+    FlipperMarauder {
+        port: String,
+    },
     Sniffle {
         port: String,
         python: PathBuf,
@@ -167,7 +170,7 @@ impl SessionConfig {
                 let source = &receiver["source"];
                 let fields: &[&str] = match source["kind"].as_str() {
                     Some("sniffle") => &["port", "python", "helper"],
-                    Some("airhound_serial") => &["port"],
+                    Some("airhound_serial" | "flipper_marauder") => &["port"],
                     Some("external_wifi") => &["executable", "firmware"],
                     Some("wifi_pcap" | "ble_pcap" | "marauder_capture") => &["path"],
                     _ => &[],
@@ -283,6 +286,19 @@ impl SessionConfig {
                     format!("ble:{}", adapter.as_deref().unwrap_or("default"))
                 }
                 Source::NativeWifi {} => "native_wifi".into(),
+                Source::FlipperMarauder { port } => {
+                    if !port.starts_with("/dev/")
+                        || port.len() > 1024
+                        || port.chars().any(char::is_control)
+                    {
+                        return Err(invalid(
+                            "Flipper bridge requires an explicit local /dev serial endpoint",
+                        ));
+                    }
+                    let canonical =
+                        std::fs::canonicalize(&*port).unwrap_or_else(|_| PathBuf::from(&*port));
+                    serial_resource(&canonical)
+                }
                 Source::AirhoundSerial { port, baud } => {
                     if port.is_empty()
                         || port.len() > 1024
@@ -406,6 +422,8 @@ impl Source {
     pub fn shutdown_budget(&self) -> std::time::Duration {
         std::time::Duration::from_secs(if matches!(self, Self::ExternalWifi { .. }) {
             40
+        } else if matches!(self, Self::FlipperMarauder { .. }) {
+            8
         } else {
             5
         })
@@ -423,6 +441,11 @@ impl Source {
                 "mode":"device_managed", "media":["wifi","ble"], "baud":baud,
                 "pause":"host_ingestion_only", "stop":"close_transport_only",
                 "port_open_may_reset_board":true
+            }),
+            Self::FlipperMarauder { .. } => serde_json::json!({
+                "mode":"device_managed", "media":["wifi"], "channel":null,
+                "operation":"passive_beacon", "pause":"requested_stop_with_observed_text",
+                "radio_loss":"unknown", "automatic_reconnect":false
             }),
             Self::Sniffle { channel, coded, .. } => {
                 serde_json::json!({"mode":"fixed_primary","channel":channel,"phy":if *coded {"coded"} else {"1m"},"secondary_following":true})
@@ -447,6 +470,35 @@ impl Source {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn flipper_live_source_is_explicit_fixed_contract_and_shares_serial_ownership() {
+        let plan = json!({"version":1,"receivers":[{"id":"bridge","source":{"kind":"flipper_marauder","port":"/dev/cu.flipper-fixture"}}]});
+        let config = SessionConfig::from_json(plan.clone())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert_eq!(serde_json::to_value(&config).unwrap(), plan);
+        assert_eq!(
+            config.receivers[0].source.assignment()["channel"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            config.receivers[0].source.assignment()["automatic_reconnect"],
+            false
+        );
+        for field in ["application", "command", "channel"] {
+            let mut unsupported = plan.clone();
+            unsupported["receivers"][0]["source"][field] = "unapproved".into();
+            assert!(SessionConfig::from_json(unsupported).is_err());
+        }
+        let mut collision = plan;
+        collision["receivers"].as_array_mut().unwrap().push(json!({"id":"sensor","source":{"kind":"airhound_serial","port":"/dev/tty.flipper-fixture","baud":115200}}));
+        assert!(SessionConfig::from_json(collision)
+            .unwrap()
+            .resolve()
+            .is_err());
+    }
 
     #[test]
     fn marauder_format_is_required_and_replay_cannot_claim_live_location() {

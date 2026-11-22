@@ -51,6 +51,8 @@ fn publish_identity(
         capability_query: "not_applicable_wifi",
         producer_identity: None,
         external_identity: Some(identity.clone()),
+        bridge_identity: None,
+        bridge_status: None,
     });
 }
 

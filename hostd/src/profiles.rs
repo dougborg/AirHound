@@ -336,7 +336,7 @@ fn bindings(config: &Value, inventory: &Inventory) -> Vec<Binding> {
             let source = &receiver["source"];
             let kind = source["kind"].as_str().unwrap_or("unknown");
             let selector = match kind {
-                "sniffle" | "airhound_serial" => source["port"].as_str(),
+                "sniffle" | "airhound_serial" | "flipper_marauder" => source["port"].as_str(),
                 "linux_wifi" => source["interface"].as_str(),
                 "external_wifi" => source["usb_selector"].as_str(),
                 "native_ble" => source["adapter"].as_str(),
@@ -347,7 +347,7 @@ fn bindings(config: &Value, inventory: &Inventory) -> Vec<Binding> {
                 .devices
                 .iter()
                 .filter(|device| match kind {
-                    "sniffle" | "airhound_serial" => device
+                    "sniffle" | "airhound_serial" | "flipper_marauder" => device
                         .endpoints
                         .iter()
                         .any(|ep| ep.kind == "serial" && Some(&ep.path) == selector.as_ref()),

@@ -27,6 +27,7 @@ mod serial_source;
 use airhound_hostd::external_wifi;
 mod observation;
 use control::ScanControl;
+mod flipper_source;
 #[cfg(target_os = "macos")]
 mod location_macos;
 mod marauder_replay;
@@ -981,6 +982,38 @@ async fn filter_task<W: Write, O: Write>(
             ScanEvent::BleSourceStatus(_)
             | ScanEvent::WifiReplayStatus(_)
             | ScanEvent::FirmwareStatus(_) => unreachable!(),
+            ScanEvent::MarauderLive {
+                packet,
+                app_instance,
+                ingestion_generation,
+                received_at,
+            } => {
+                let state = *control.subscribe().borrow();
+                let accepted = if state.shutdown {
+                    state.generation.wrapping_sub(1)
+                } else {
+                    state.generation
+                };
+                if ingestion_generation != accepted {
+                    continue;
+                }
+                let mut value = airhound_hostd::marauder::normalized_live_observation(
+                    airhound_hostd::marauder::Record {
+                        timestamp_micros32: packet.device_micros32,
+                        frame: &packet.frame,
+                    },
+                    source
+                        .as_ref()
+                        .map(|s| s.receiver_id.as_str())
+                        .unwrap_or("flipper-marauder"),
+                    &mac_index,
+                    cfg.alert_policy,
+                );
+                value["replay"] = false.into();
+                value["source"] = "flipper_marauder".into();
+                value["bridge"] = serde_json::json!({"protocol_version":1,"app_instance":format!("{app_instance:016x}"),"capture_generation":packet.generation,"app_uart_receive_uptime_ms":packet.app_uptime_ms,"device_clock_discontinuity":packet.clock_discontinuity,"host_received_at":received_at,"radio_loss":"unknown"});
+                observation::write_json(&mut output, &value)?;
+            }
             ScanEvent::MarauderReplay {
                 timestamp_micros32,
                 frame,

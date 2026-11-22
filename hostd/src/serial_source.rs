@@ -78,6 +78,8 @@ pub async fn scan(
                     firmware: None,
                     producer_identity: None,
                     external_identity: None,
+                    bridge_identity: None,
+                    bridge_status: None,
                     backend: "airhound_serial",
                     adapter_id: port.into(),
                     adapter_info: "AirHound firmware identity pending status".into(),
@@ -234,6 +236,8 @@ async fn consume<R: AsyncRead + Unpin>(
                     control.set_receiver(Receiver {
                         firmware: None,
                         external_identity: None,
+                        bridge_identity: None,
+                        bridge_status: None,
                         producer_identity: Some(crate::receiver::ProducerIdentity {
                             application: "AirHound",
                             version: version.clone(),
