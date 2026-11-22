@@ -155,3 +155,38 @@ fn final_transport_loss_after_stop_cannot_retain_clean_success() {
     assert_eq!(c.state, State::Failed);
     assert_eq!(c.evidence & 4, 4);
 }
+#[test]
+fn finish_after_pause_needs_fresh_request_scoped_stop_evidence() {
+    let mut c = running(0);
+    c.request(h(3, 42), Command::Pause, 100).unwrap();
+    c.feed(101, b"Stopping WiFi tran/recv\r\n");
+    c.poll(200);
+    assert_eq!(c.state, State::Paused);
+    assert_eq!(c.evidence, 7);
+    assert_eq!(
+        c.request(h(4, 42), Command::Stop, 210).unwrap().uart,
+        Some(UartAction::Stop)
+    );
+    assert_eq!(c.evidence, 3);
+    assert_eq!(c.request_id(), 4);
+    c.poll(310);
+    assert_eq!(c.state, State::Stopping);
+    c.feed(311, b"Stopping WiFi tran/recv\r\n");
+    c.poll(361);
+    assert_eq!(c.state, State::Stopped);
+    assert_eq!(c.evidence, 7);
+}
+#[test]
+fn pause_to_stop_escalation_and_repeated_stop_cannot_extend_deadline() {
+    let mut c = running(0);
+    c.request(h(3, 42), Command::Pause, 100).unwrap();
+    assert_eq!(
+        c.request(h(4, 42), Command::Stop, 900).unwrap().uart,
+        Some(UartAction::Stop)
+    );
+    assert_eq!(c.request_id(), 4);
+    assert_eq!(c.evidence, 3);
+    assert!(c.request(h(5, 42), Command::Stop, 1099).is_err());
+    c.poll(1100);
+    assert_eq!(c.state, State::Failed);
+}
