@@ -1,4 +1,5 @@
 """Cross-process UART ownership tests, using PTYs and synthetic upstream modules."""
+import fcntl
 import hashlib
 import importlib.util
 import os
@@ -64,6 +65,33 @@ class SniffleOwnershipTests(unittest.TestCase):
                 os.mkfifo(lock, 0o600)
                 with self.assertRaises(RuntimeError):
                     with helper.port_lease('/dev/fixture'): self.fail('acquired FIFO lock')
+
+    def test_borrowed_descriptor_preserves_parent_lock_and_rejects_wrong_inode(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / 'locks'
+            directory.mkdir(mode=0o700)
+            port = '/dev/borrowed-fixture'
+            lock = directory / (hashlib.sha256(helper.port_identity(port).encode()).hexdigest() + '.lock')
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(helper, 'LEASE_ROOT', directory):
+                    with helper.borrowed_port_lease(port, os.dup(fd)):
+                        with self.assertRaisesRegex(RuntimeError, 'already owned'):
+                            with helper.port_lease(port): self.fail('second owner')
+                    # Child close must never LOCK_UN the parent's shared description.
+                    with self.assertRaisesRegex(RuntimeError, 'already owned'):
+                        with helper.port_lease(port): self.fail('premature release')
+                    wrong = os.open(directory / 'wrong', os.O_RDWR | os.O_CREAT, 0o600)
+                    try:
+                        with self.assertRaises(helper.HelperError):
+                            with helper.borrowed_port_lease(port, wrong): self.fail('wrong inode')
+                    finally:
+                        os.close(wrong)
+            finally:
+                os.close(fd)
+            with patch.object(helper, 'LEASE_ROOT', directory):
+                with helper.port_lease(port): pass
 
     def _check_two_processes(self, first_identify):
         with tempfile.TemporaryDirectory() as root:

@@ -26,6 +26,8 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sniffle {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub helper_capabilities: Vec<String>,
     pub python: String,
     pub helper: String,
     pub module_path: String,
@@ -208,6 +210,17 @@ impl Manifest {
             relative(&s.module_path)?;
             contains(&format!("{}/sniffle/sniffle_hw.py", s.module_path))?;
             contains(&format!("{}/serial/__init__.py", s.module_path))?;
+            if s.helper_capabilities.len() > 16
+                || s.helper_capabilities.iter().any(|v| {
+                    v.is_empty()
+                        || v.len() > 64
+                        || !v
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                })
+            {
+                return Err(invalid("invalid helper capability identifiers"));
+            }
             if s.version != "1.11.0"
                 || s.pyserial_version != "3.5"
                 || s.source_revision != "18252f2c5a05f9ad906865b776652e31c61471c4"
