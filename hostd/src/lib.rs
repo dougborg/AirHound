@@ -11,4 +11,5 @@ pub mod discovery;
 pub mod profiles;
 pub mod service;
 
+pub mod device_stream;
 pub mod storage;

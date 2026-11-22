@@ -23,6 +23,7 @@ use health::{Phase, Scanner};
 mod ble_packet;
 mod ble_source;
 mod external_scanner;
+mod serial_source;
 use airhound_hostd::external_wifi;
 mod observation;
 use control::ScanControl;
@@ -916,8 +917,9 @@ async fn filter_task<W: Write, O: Write>(
             observation::write_json(&mut output, &value)?;
             continue;
         }
-        if let ScanEvent::BleSourceStatus(ref value) | ScanEvent::WifiReplayStatus(ref value) =
-            event
+        if let ScanEvent::BleSourceStatus(ref value)
+        | ScanEvent::WifiReplayStatus(ref value)
+        | ScanEvent::FirmwareStatus(ref value) = event
         {
             observation::write_json(&mut output, value)?;
             continue;
@@ -952,7 +954,20 @@ async fn filter_task<W: Write, O: Write>(
 
         match event {
             ScanEvent::Sourced { .. } => return Err(io::Error::other("nested receiver envelope")),
-            ScanEvent::BleSourceStatus(_) | ScanEvent::WifiReplayStatus(_) => unreachable!(),
+            ScanEvent::BleSourceStatus(_)
+            | ScanEvent::WifiReplayStatus(_)
+            | ScanEvent::FirmwareStatus(_) => unreachable!(),
+            ScanEvent::Firmware { record, generation } => {
+                let state = *control.subscribe().borrow();
+                let accepted = if state.shutdown {
+                    state.generation.wrapping_sub(1)
+                } else {
+                    state.generation
+                };
+                if generation == accepted {
+                    observation::write_json(&mut output, &record.output(&cfg, &mac_index))?;
+                }
+            }
             ScanEvent::Replay { .. } => return Err(io::Error::other("nested replay envelope")),
             ScanEvent::BlePacket(ref packet) => {
                 let state = *control.subscribe().borrow();

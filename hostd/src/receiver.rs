@@ -44,6 +44,16 @@ pub struct ControllerPhy {
     pub system_selected_mask: u32,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ProducerIdentity {
+    pub application: &'static str,
+    pub version: String,
+    pub board: String,
+    pub evidence: &'static str,
+    pub connection_generation: u64,
+    pub boot_generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Receiver {
     pub backend: &'static str,
     pub adapter_id: String,
@@ -60,6 +70,8 @@ pub struct Receiver {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller_phy: Option<ControllerPhy>,
     pub capability_query: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer_identity: Option<ProducerIdentity>,
 }
 
 pub fn backend() -> &'static str {
@@ -117,6 +129,7 @@ fn descriptor(
         "system".to_owned()
     };
     Ok(Receiver {
+        producer_identity: None,
         backend: platform,
         adapter_id,
         adapter_info: info,

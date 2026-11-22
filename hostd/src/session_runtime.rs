@@ -18,6 +18,8 @@ pub(crate) struct ReceiverTask {
     scanner: Scanner,
     assignment: serde_json::Value,
     shutdown_budget: Duration,
+    #[cfg_attr(any(not(target_os = "macos"), test), allow(dead_code))]
+    needs_macos_location: bool,
     start: Start,
 }
 
@@ -34,6 +36,7 @@ impl ReceiverTask {
             scanner: Scanner::Ble,
             assignment: serde_json::json!({"mode":"replay"}),
             shutdown_budget: Duration::from_millis(50),
+            needs_macos_location: false,
             start: Box::new(move |tx, control| Box::pin(start(tx, control))),
         }
     }
@@ -151,6 +154,7 @@ pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>
             } else {
                 Scanner::Wifi
             },
+            needs_macos_location: matches!(source, Source::NativeWifi {}),
             assignment: source.assignment(),
             shutdown_budget: source.shutdown_budget(),
             start: Box::new(move |tx, control| Box::pin(start_source(source, tx, control))),
@@ -188,6 +192,9 @@ async fn start_source(
                 let _ = (tx, control);
                 Err(io::Error::other("native WiFi unavailable"))
             }
+        }
+        Source::AirhoundSerial { port, baud } => {
+            crate::serial_source::scan(&port, baud, tx, control).await
         }
         Source::LinuxWifi { interface } => {
             #[cfg(target_os = "linux")]
@@ -322,7 +329,7 @@ where
     #[cfg(all(target_os = "macos", not(test)))]
     if receivers
         .iter()
-        .any(|receiver| receiver.assignment["mode"] != "replay")
+        .any(|receiver| receiver.needs_macos_location)
     {
         location_macos::start();
     }

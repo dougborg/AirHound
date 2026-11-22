@@ -16,9 +16,9 @@ must not count these two representations as two distinct devices.
 
 This expands the v1 schema to allow empty match arrays and adds `stream_stats`.
 Existing clients that assume every WiFi/BLE message is an alert must check match
-metadata instead. Strict validators need the updated schema. Desktop hostd's own
-scanner output is unchanged; connecting it to embedded sensors remains separate
-work. Examples are in `schemas/examples/*-observation.device.json`.
+metadata instead. Strict validators need the updated schema. Desktop hostd can ingest this stream through the explicit
+[AirHound serial source](airhound-serial-source.md); BLE GATT subscriber ingestion
+remains separate work. Examples are in `schemas/examples/*-observation.device.json`.
 
 ## Delivery and loss
 
