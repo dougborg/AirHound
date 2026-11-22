@@ -250,7 +250,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     struct Fixture(std::path::PathBuf);
     impl Fixture {
-        fn new(exit: bool) -> Self {
+        async fn new(exit: bool) -> Self {
             let root = std::env::temp_dir().join(format!(
                 "ah-gpsd-test-{}",
                 std::time::SystemTime::now()
@@ -259,8 +259,40 @@ mod tests {
                     .as_nanos()
             ));
             std::fs::create_dir(&root).unwrap();
+            // Resolve and initialize the test interpreter before measuring the
+            // native daemon's production readiness budget. On macOS /usr/bin/python3
+            // is an Xcode launcher, not necessarily the interpreter used by CI.
+            let began = std::time::Instant::now();
+            let output = tokio::time::timeout(
+                Duration::from_secs(10),
+                Command::new("python3")
+                    .args([
+                        "-I",
+                        "-c",
+                        "import sys,socket,json,datetime,pathlib; print(json.dumps({'executable':sys.executable,'version':sys.version}))",
+                    ])
+                    .stdin(Stdio::null())
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("fixture Python initialization exceeded 10 seconds")
+            .expect("fixture requires a working python3 on PATH");
+            assert!(output.status.success(), "fixture Python failed: {output:?}");
+            let interpreter: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            let executable = interpreter["executable"].as_str().unwrap();
+            assert!(Path::new(executable).is_absolute());
+            assert!(
+                !executable.chars().any(char::is_whitespace),
+                "fixture interpreter path must fit an unambiguous shebang"
+            );
+            eprintln!(
+                "managed gpsd fixture interpreter {interpreter}; initialization {:?}",
+                began.elapsed()
+            );
+            std::fs::write(root.join("interpreter"), output.stdout.as_slice()).unwrap();
             let script = format!(
-                r#"#!/usr/bin/python3
+                r#"#!{executable} -I
 import sys,time,os
 root_path=os.path.dirname(__file__)
 sys.stderr=open(os.path.join(root_path,'stderr'),'a',buffering=1)
@@ -325,7 +357,7 @@ time.sleep({})
         })
         .await
         .unwrap_or_else(|_| {
-            let files: Vec<_> = ["args", "pids", "stderr", "trace"]
+            let files: Vec<_> = ["interpreter", "args", "pids", "stderr", "trace"]
                 .into_iter()
                 .map(|name| (name, std::fs::read_to_string(fixture.0.join(name))))
                 .collect();
@@ -342,7 +374,7 @@ time.sleep({})
             .filter_level(log::LevelFilter::Warn)
             .is_test(true)
             .try_init();
-        let fixture = Fixture::new(false);
+        let fixture = Fixture::new(false).await;
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let control = crate::control::ScanControl::new(true);
         let source = Source::new(Some("/dev/null".into()));
@@ -396,7 +428,7 @@ time.sleep({})
         );
         assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
 
-        let fixture = Fixture::new(false);
+        let fixture = Fixture::new(false).await;
         // Keep the established stream alive until the replacement listener is
         // bound. Closing it first lets the supervisor reap this child before it
         // writes its marker, or restart before the test can claim the endpoint.
@@ -448,7 +480,7 @@ time.sleep(30)"#;
         );
         drop(replacement);
 
-        let fixture = Fixture::new(true);
+        let fixture = Fixture::new(true).await;
         let source = Source::new(Some("/dev/null".into()));
         let control = crate::control::ScanControl::new(true);
         let task = tokio::spawn(run(
