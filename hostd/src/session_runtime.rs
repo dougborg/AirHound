@@ -60,36 +60,34 @@ pub(crate) fn load(path: &std::path::Path) -> io::Result<SessionConfig> {
 
 /// The same load/prepare preflight used by a real session, without invoking any
 /// source future. File/USB permissions, firmware and RF capabilities are unverified.
+pub(crate) async fn preview(plan: SessionConfig) -> io::Result<serde_json::Value> {
+    let plan = plan.resolve()?;
+    let tasks = prepare(plan.clone()).await?;
+    let assignments: Vec<_> = tasks
+        .iter()
+        .map(|task| {
+            serde_json::json!({
+                "receiver_id": task.id,
+                "requested_assignment": task.assignment,
+                "shutdown_budget_ms": task.shutdown_budget.as_millis(),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "type": "session_validation", "schema_version": 1, "valid": true,
+        "validation_scope": "configuration_and_local_resource_metadata",
+        "readiness": "unverified", "resolved_config": plan,
+        "receivers": assignments,
+    }))
+}
+
 pub(crate) async fn write_preview(
     path: &std::path::Path,
     output: &mut impl Write,
 ) -> io::Result<()> {
-    let result = async {
-        let plan = load(path)?;
-        let tasks = prepare(plan.clone()).await?;
-        let assignments: Vec<_> = tasks
-            .iter()
-            .map(|task| {
-                serde_json::json!({
-                    "receiver_id": task.id,
-                    "requested_assignment": task.assignment,
-                    "shutdown_budget_ms": task.shutdown_budget.as_millis(),
-                })
-            })
-            .collect();
-        Ok::<_, io::Error>((plan, assignments))
-    }
-    .await;
+    let result = async { preview(load(path)?).await }.await;
     match result {
-        Ok((plan, assignments)) => observation::write_json(
-            output,
-            &serde_json::json!({
-                "type": "session_validation", "schema_version": 1, "valid": true,
-                "validation_scope": "configuration_and_local_resource_metadata",
-                "readiness": "unverified", "resolved_config": plan,
-                "receivers": assignments,
-            }),
-        ),
+        Ok(value) => observation::write_json(output, &value),
         Err(error) => {
             observation::write_json(
                 output,
