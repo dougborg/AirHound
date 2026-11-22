@@ -67,10 +67,13 @@ struct SessionView: View {
               session.hasPendingStart ? "Resolve Pending Start" : "Start Recording",
               systemImage: "record.circle"
             ) { session.start() }
-            .disabled(session.isActive && !session.hasPendingStart)
+            .disabled(session.startUnavailableReason != nil)
           }.disabled(
             !session.canSubmitAction || !session.captureEnabled
               || session.configText.isEmpty)
+          if let reason = session.startUnavailableReason {
+            Text(reason).font(.callout).foregroundStyle(.secondary)
+          }
           if let validation = session.validation {
             DisclosureGroup("Validation details") {
               Text(validation).font(.system(.caption, design: .monospaced)).textSelection(
