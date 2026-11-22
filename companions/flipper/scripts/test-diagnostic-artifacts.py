@@ -10,8 +10,10 @@ spec = importlib.util.spec_from_file_location('builder', Path(__file__).with_nam
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 folder = Path(sys.argv[1])
-debug = folder / 'airhound-uart-diagnostic.debug.elf'
-fap = folder / 'airhound-uart-diagnostic.fap'
+binary = sys.argv[2] if len(sys.argv) > 2 else 'airhound-uart-diagnostic'
+assert binary in ('airhound-uart-diagnostic', 'airhound-live-bridge')
+debug = folder / (binary + '.debug.elf')
+fap = folder / (binary + '.fap')
 assert builder.verify_pair(debug, fap)['dwarf_verified']
 
 def rejected(first, second):
