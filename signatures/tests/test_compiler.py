@@ -72,10 +72,14 @@ class CompilerTests(unittest.TestCase):
             self.setUp()
             self.rejects(mutation)
 
+    def test_company_zero_is_a_valid_contextual_manufacturer_id(self):
+        self.pack['signatures'][140]['match']['value'] = 0
+        text = compiler.render(self.pack, compiler.validate(self.pack))
+        self.assertIn('pub static BLE_MANUFACTURER_IDS: &[u16] = &[\n    0x0000,\n];', text)
+
     def test_bounds_context_and_provenance_are_enforced(self):
         for mutation in [
             lambda p: p['signatures'][141]['match'].update(exact_length=1),
-            lambda p: p['signatures'][140]['match'].update(value=0),
             lambda p: p['signatures'][117]['match'].update(suffix_length=32),
             lambda p: p['signatures'][119]['match'].update(value='é'*20),
             lambda p: p['signatures'][124]['match'].update(value='FLOCK'),

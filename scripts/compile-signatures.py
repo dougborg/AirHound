@@ -91,8 +91,6 @@ def validate(pack, revisions=None):
         if rank < previous_rank:
             raise ValueError('signature groups must follow the compiled profile order')
         previous_rank = rank
-        if m['kind'] == 'ble_manufacturer_id' and m['value'] == 0:
-            raise ValueError('company ID zero primitive needs embedded parser migration (#35)')
         if 'value' in m and isinstance(m['value'], str) and len(m['value'].encode()) > 32:
             raise ValueError('text predicate exceeds 32 UTF-8 bytes')
         if m['kind'].endswith('_contains'):

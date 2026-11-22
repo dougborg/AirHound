@@ -93,6 +93,13 @@ impl BleEvent {
     pub fn advertised_service_uuids(&self) -> impl Iterator<Item = crate::ble_data::Uuid> + '_ {
         crate::ble_data::AdStructures::new(&self.raw_ad).flat_map(|field| field.uuids())
     }
+    /// Complete manufacturer sections in retained AD order; ID zero is valid.
+    /// Like the UUID views, this cannot recover bytes beyond the raw buffer.
+    pub fn manufacturer_data(
+        &self,
+    ) -> impl Iterator<Item = crate::ble_data::ManufacturerData<'_>> + '_ {
+        crate::ble_data::AdStructures::new(&self.raw_ad).filter_map(|field| field.manufacturer())
+    }
     pub fn service_data(&self) -> impl Iterator<Item = crate::ble_data::ServiceData<'_>> + '_ {
         crate::ble_data::AdStructures::new(&self.raw_ad).filter_map(|field| field.service())
     }
