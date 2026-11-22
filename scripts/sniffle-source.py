@@ -67,17 +67,65 @@ def port_lease(port):
             os.close(fd)
 
 
+CAPABILITIES = {"type": "sniffle_helper_capabilities", "schema_version": 1,
+                "capabilities": ["borrowed_serial_lease_v1", "structured_errors_v1"]}
+
+
+class HelperError(RuntimeError):
+    def __init__(self, code, retryable):
+        super().__init__(code)
+        self.code, self.retryable = code, retryable
+
+
+@contextmanager
+def borrowed_port_lease(port, fd):
+    """Borrow the supervisor's open-file-description lock; never unlock it.
+
+    The exact private inode and endpoint binding must match before upstream can
+    open UART. Re-locking the inherited descriptor proves it is not blocked by
+    another owner; unlike a separate open, this preserves the parent's flock.
+    """
+    if fd < 3:
+        raise HelperError('invalid_borrowed_lease', False)
+    metadata = LEASE_ROOT.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise HelperError('invalid_borrowed_lease', False)
+    name = hashlib.sha256(port_identity(port).encode()).hexdigest() + '.lock'
+    expected = (LEASE_ROOT / name).lstat()
+    actual = os.fstat(fd)
+    if (not stat.S_ISREG(expected.st_mode) or not stat.S_ISREG(actual.st_mode)
+            or expected.st_uid != os.geteuid() or actual.st_uid != os.geteuid()
+            or stat.S_IMODE(expected.st_mode) != 0o600 or stat.S_IMODE(actual.st_mode) != 0o600
+            or (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino)):
+        raise HelperError('invalid_borrowed_lease', False)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.set_inheritable(fd, False)
+    try:
+        yield
+    finally:
+        # Parent owns release after child reaping, including cancellation paths.
+        os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--port', required=True)
+    parser.add_argument('--port')
+    parser.add_argument('--capabilities', action='store_true')
+    parser.add_argument('--lease-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--module-path', help='Directory containing upstream sniffle package')
     parser.add_argument('--channel', type=int, choices=(37, 38, 39), default=37)
     parser.add_argument('--coded', action='store_true')
     parser.add_argument('--identify-only', action='store_true',
                         help='Query firmware/API and exit without configuring or starting capture')
     args = parser.parse_args()
-    # SniffleHW's constructor writes a marker; ownership must precede construction.
-    with port_lease(args.port):
+    if args.capabilities:
+        print(json.dumps(CAPABILITIES), flush=True)
+        return
+    if not args.port:
+        parser.error('--port is required for identification or capture')
+    # SniffleHW's constructor writes a marker; ownership precedes construction.
+    lease = port_lease(args.port) if args.lease_fd is None else borrowed_port_lease(args.port, args.lease_fd)
+    with lease:
         run(args)
 
 
@@ -127,8 +175,10 @@ def run(args):
                   flush=True)
             if args.identify_only:
                 return
-        if version is None or (version.major, version.minor, version.revision, version.api_level) != (1, 11, 0, 0):
-            raise RuntimeError('requires verified Sniffle firmware 1.11.0 / API0')
+        if version is None:
+            raise HelperError('firmware_query_timeout', True)
+        if (version.major, version.minor, version.revision, version.api_level) != (1, 11, 0, 0):
+            raise HelperError('unsupported_firmware', False)
         print('Sniffle 1.11.0/API0: passive advertisements, fixed channel', args.channel,
               'coded' if args.coded else '1M', file=sys.stderr, flush=True)
         hw.setup_sniffer(mode=SnifferMode.PASSIVE_SCAN, chan=args.channel,
@@ -137,7 +187,7 @@ def run(args):
         sys.stdout.buffer.flush()
         while not stopped:
             if errors + decoder_errors.count >= 10:
-                raise RuntimeError('too many Sniffle transport/decode errors')
+                raise HelperError('transport_decode_errors', True)
             try:
                 packet = hw.recv_and_decode()
             except Exception as exc:
@@ -145,7 +195,7 @@ def run(args):
                 errors += 1
                 print('Sniffle transport/decode error:', type(exc).__name__, file=sys.stderr, flush=True)
                 if errors >= 10:
-                    raise RuntimeError('too many Sniffle transport/decode errors') from exc
+                    raise HelperError('transport_decode_errors', True) from exc
                 continue
             if isinstance(packet, PacketMessage):
                 writer.write_packet_message(packet)
@@ -160,5 +210,16 @@ if __name__ == '__main__':
     try:
         main()
     except (Exception, KeyboardInterrupt) as error:
-        print('Sniffle source failed:', type(error).__name__, str(error), file=sys.stderr)
+        if isinstance(error, HelperError):
+            code, retryable = error.code, error.retryable
+        elif isinstance(error, PermissionError):
+            code, retryable = 'serial_permission_denied', False
+        elif isinstance(error, OSError):
+            code, retryable = 'serial_transport_unavailable', True
+        elif isinstance(error, ImportError):
+            code, retryable = 'missing_python_dependency', False
+        else:
+            code, retryable = 'helper_configuration_or_protocol_error', False
+        print(json.dumps({'type': 'sniffle_error', 'schema_version': 1,
+                          'code': code, 'retryable': retryable}), file=sys.stderr, flush=True)
         sys.exit(1)

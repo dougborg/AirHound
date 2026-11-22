@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Stage explicitly selected LOCAL receiver assets for airhound-helper-setup.
 
-No downloads, hardware access, firmware updates, or code execution from inputs.
-The selected Python runtime is executed only for its version/base-prefix report.
+No downloads, hardware access, or firmware updates. The selected Python runtime
+reports its version/base-prefix and runs this repository's helper capability query
+(which never imports upstream modules or opens a device).
 This local-use bundle is not a redistributable release package (see #268).
 """
 import argparse
@@ -10,6 +11,9 @@ import hashlib
 import json
 from pathlib import Path
 import platform
+import os
+import select
+import time
 import shlex
 import shutil
 import subprocess
@@ -40,6 +44,44 @@ def tree(source, target):
             raise ValueError('source symlink is not supported: ' + str(file))
         if file.is_file() and file.suffix != '.pyc':
             copy(file, target / file.relative_to(source))
+
+
+def helper_capabilities(python, helper):
+    """Explicit setup inspection, bounded independently of untrusted output."""
+    process = subprocess.Popen([str(python), '-I', '-B', str(helper), '--capabilities'],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    output = bytearray()
+    deadline = time.monotonic() + 3
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError('helper capability query timed out')
+            if not select.select([process.stdout], [], [], remaining)[0]:
+                raise ValueError('helper capability query timed out')
+            chunk = os.read(process.stdout.fileno(), 4097 - len(output))
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > 4096:
+                raise ValueError('helper capability report exceeds limit')
+        if process.wait(timeout=max(.01, deadline-time.monotonic())) != 0:
+            raise ValueError('helper capability query failed')
+        report = json.loads(output)
+        required = {'borrowed_serial_lease_v1', 'structured_errors_v1'}
+        capabilities = report.get('capabilities')
+        if (report.get('type') != 'sniffle_helper_capabilities' or report.get('schema_version') != 1
+                or not isinstance(capabilities, list) or len(capabilities) > 16
+                or any(not isinstance(v, str) or not v or len(v) > 64 or not v.isascii()
+                       or any(not (c.isalnum() or c in '_-') for c in v) for v in capabilities)
+                or not required.issubset(capabilities)):
+            raise ValueError('helper lacks supervised recovery capabilities')
+        return capabilities
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=3)
+        process.stdout.close()
 
 
 def main():
@@ -86,6 +128,10 @@ def main():
     tree(packages[1], out / 'sniffle/modules/serial')
     tree(args.site_packages / 'pyserial-3.5.dist-info', out / 'sniffle/modules/pyserial-3.5.dist-info')
     copy(ROOT / 'scripts/sniffle-source.py', out / 'sniffle/sniffle-source.py')
+    capability_helper_hash = sha(out / 'sniffle/sniffle-source.py')
+    capabilities = helper_capabilities(python, out / 'sniffle/sniffle-source.py')
+    if sha(out / 'sniffle/sniffle-source.py') != capability_helper_hash:
+        raise ValueError('staged helper changed during capability query')
     copy(args.sniffle_source / 'LICENSE', out / 'sniffle/licenses/Sniffle-GPL-3.0.txt')
     copy(args.pyserial_license, out / 'sniffle/licenses/pyserial-BSD-3-Clause.txt')
     (out / 'sniffle/python').write_text('#!/bin/sh\nexec ' + shlex.quote(str(python)) + ' -I -B "$@"\n')
@@ -96,7 +142,7 @@ def main():
     manifest = {
         'schema_version': 1, 'platform': {'Darwin': 'macos', 'Linux': 'linux'}[platform.system()],
         'architecture': {'arm64': 'aarch64', 'aarch64': 'aarch64', 'x86_64': 'x86_64'}[platform.machine()],
-        'sniffle': {'python': 'sniffle/python', 'helper': 'sniffle/sniffle-source.py',
+        'sniffle': {'helper_capabilities': capabilities, 'python': 'sniffle/python', 'helper': 'sniffle/sniffle-source.py',
             'module_path': 'sniffle/modules', 'runtime_path': str(python),
             'runtime_sha256': sha(python), 'runtime_version': runtime['version'],
             'runtime_base_prefix': runtime['base_prefix'], 'source_revision': sniffle_revision,
@@ -107,6 +153,8 @@ def main():
             'licenses': ['alfa/source/LICENSE', 'alfa/source/FIRMWARE_LICENSE',
                          'alfa/source/THIRD_PARTY_NOTICES', 'alfa/licenses/libusb-LGPL-2.1.txt']}}
     executable = {'sniffle/python', 'alfa/mt7610u-lab'}
+    if sha(out / 'sniffle/sniffle-source.py') != capability_helper_hash:
+        raise ValueError('staged helper changed after capability query')
     manifest['files'] = [{'path': str(f.relative_to(out)), 'sha256': sha(f), 'bytes': f.stat().st_size,
                           'executable': str(f.relative_to(out)) in executable}
                          for f in sorted(out.rglob('*')) if f.is_file()]

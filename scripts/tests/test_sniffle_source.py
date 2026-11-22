@@ -14,6 +14,12 @@ SPEC.loader.exec_module(helper)
 
 
 class SniffleHelperTests(unittest.TestCase):
+    def test_capabilities_never_import_upstream_or_open_a_port(self):
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['helper', '--capabilities']), patch.object(sys, 'stdout', output), patch.object(helper, 'port_lease', side_effect=AssertionError('opened lease')):
+            helper.main()
+        self.assertIn('borrowed_serial_lease_v1', json.loads(output.getvalue())['capabilities'])
+
     def run_helper(self, version=(1, 11, 0, 0), errors=False, identify=False):
         state = {'writes': 0, 'closed': False, 'signals': {}}
 

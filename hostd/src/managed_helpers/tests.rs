@@ -49,6 +49,7 @@ fn fixture(dir: &Path) -> Manifest {
         architecture: std::env::consts::ARCH.into(),
         files,
         sniffle: Some(Sniffle {
+            helper_capabilities: Vec::new(),
             python: "sniffle/python".into(),
             helper: "sniffle/helper.py".into(),
             module_path: "sniffle/modules".into(),
@@ -210,4 +211,28 @@ fn dangling_current_pointer_requires_explicit_replacement() {
         io::ErrorKind::AlreadyExists
     );
     assert!(install(&root, &source, true).is_ok());
+}
+
+#[test]
+fn helper_capabilities_are_optional_bounded_and_never_inferred_from_firmware() {
+    let t = Temp::new();
+    let mut manifest = fixture(&t.0);
+    manifest.sniffle.as_mut().unwrap().runtime_path = "/usr/bin/python3".into();
+    let legacy = serde_json::to_value(&manifest).unwrap();
+    assert!(legacy["sniffle"].get("helper_capabilities").is_none());
+    let old: Manifest = serde_json::from_value(legacy).unwrap();
+    assert!(old.sniffle.unwrap().helper_capabilities.is_empty());
+    for values in [
+        vec!["x".repeat(65)],
+        vec!["valid".into(); 17],
+        vec!["bad/name".into()],
+    ] {
+        manifest.sniffle.as_mut().unwrap().helper_capabilities = values;
+        assert!(manifest.validate().is_err());
+    }
+    manifest.sniffle.as_mut().unwrap().helper_capabilities = vec![
+        "borrowed_serial_lease_v1".into(),
+        "structured_errors_v1".into(),
+    ];
+    assert!(manifest.validate().is_ok());
 }

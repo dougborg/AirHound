@@ -2,7 +2,7 @@
 //!
 //! Acquire before opening a serial transport or spawning its owner. Hold the
 //! returned guard until the transport/child is closed, including pause/recovery.
-//! A parent must not acquire on behalf of Sniffle: that helper owns its lease.
+//! Sniffle may borrow its supervisor's inherited descriptor; direct helpers acquire their own.
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -45,6 +45,17 @@ fn key(identity: &str) -> String {
 #[derive(Debug)]
 pub struct Lease {
     file: File,
+    identity: String,
+}
+impl Lease {
+    /// Inherit only into the owned helper, clearing CLOEXEC in its pre-exec hook.
+    pub fn raw_fd(&self) -> std::os::fd::RawFd {
+        self.file.as_raw_fd()
+    }
+    /// A reappearing configured path must still name the originally leased endpoint.
+    pub fn matches(&self, port: impl AsRef<Path>) -> io::Result<bool> {
+        Ok(canonical_identity(port.as_ref())? == self.identity)
+    }
 }
 impl Drop for Lease {
     fn drop(&mut self) {
@@ -100,7 +111,10 @@ fn acquire_in(directory: &Path, identity: &str, uid: u32) -> io::Result<Lease> {
             "serial endpoint is already owned by another AirHound source",
         ));
     }
-    Ok(Lease { file })
+    Ok(Lease {
+        file,
+        identity: identity.to_owned(),
+    })
 }
 
 #[cfg(test)]

@@ -46,6 +46,41 @@ following is enabled in Sniffle. `--sniffle-coded` selects Coded PHY for primary
 reception instead of 1M: it does not listen to both simultaneously. Do not infer
 all-channel coverage or better range from the option alone.
 
+## USB recovery and helper compatibility
+
+The receiver keeps ownership of its configured serial endpoint while recovering,
+including pauses. A missing endpoint or broken transport enters `recovering` and
+clears the last firmware identity. Retries back off for 1, 2, 4, then 8 seconds,
+with a 90-second outage budget. A valid packet resets that budget; a process start,
+firmware response, or PCAP header alone does not. Expiry reports a terminal error.
+Unsupported firmware, invalid configuration, and malformed PCAP fail without
+retrying. The receiver never searches for a substitute endpoint. If a symlink
+resolves to a different endpoint after reconnection, the plan needs explicit review.
+
+Pause terminates and reaps the owned capture helper, keeps the serial lease, and
+suspends the outage budget. Resume starts a fresh budget. Finish cancels pending
+reads or backoff and releases ownership only after the helper is reaped. A separate
+supervisor also retains the lease during cleanup if the async receiver is aborted.
+These are cooperative AirHound locks, not protection against unrelated tools.
+
+Supervised recovery requires helper capabilities `borrowed_serial_lease_v1` and
+`structured_errors_v1`. Explicit Start performs a bounded capability query without
+upstream imports or device access, before capture. Legacy helper paths fail with
+an instruction to install a current managed bundle and review the setup's helper
+path; they are never silently run without ownership or retried in a double-lock loop.
+Direct helper capture/identification still acquires its own shared lease.
+
+Managed setup records the actual helper's capability report alongside its file
+hash. Older manifests with no capability field remain readable by the new backend;
+absence means unknown, not support inferred from the Sniffle firmware version.
+Older backend versions reject manifests containing the new field, so install a
+compatible backend before selecting a new bundle. Existing immutable bundles and
+saved setups are not changed automatically. Update a setup explicitly, then validate
+and test it. Passive discovery never runs the helper capability query.
+
+The 20-second endpoint-loss and ownership checks use a synthetic PTY/helper. Actual
+CatSniffer unplug/replug acceptance remains tracked in [#290](https://github.com/dougborg/AirHound/issues/290).
+
 ## Replay
 
 ```sh
