@@ -80,6 +80,7 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
         let fixture = Fixture::new();
         let pcap = fixture.path("capture.pcap");
         let csv = fixture.path("out.csv");
+        let database = fixture.path("recording.sqlite");
         std::fs::write(&pcap, capture()).unwrap();
         let config = fixture.path("session.json");
         std::fs::write(&config,serde_json::to_vec(&serde_json::json!({"version":1,"alert_policy":"silent","receivers":[{"id":"recorded-wifi","source":{"kind":"wifi_pcap","path":pcap}}]})).unwrap()).unwrap();
@@ -96,6 +97,7 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
             ]);
         }
         args.extend([std::ffi::OsStr::new("--output"), csv.as_os_str()]);
+        args.extend([std::ffi::OsStr::new("--database"), database.as_os_str()]);
         let output = run(&args);
         assert!(
             output.status.success(),
@@ -107,6 +109,21 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
+        let reader = airhound_hostd::storage::Reader::open(&database).unwrap();
+        let runs = reader.runs(1).unwrap();
+        assert_eq!(runs[0].state, "finished");
+        assert_eq!(runs[0].mode, "replay");
+        assert_eq!(runs[0].record_count as usize, records.len());
+        let stored = reader.records(&runs[0].id, 0, 100).unwrap();
+        assert!(!stored.has_more);
+        assert_eq!(
+            stored
+                .records
+                .iter()
+                .map(|record| &record.payload)
+                .collect::<Vec<_>>(),
+            records.iter().collect::<Vec<_>>()
+        );
         let rows: Vec<_> = records
             .iter()
             .filter(|row| row["type"] == "wifi_observation")
@@ -210,5 +227,72 @@ fn replay_rejects_directories_and_fifos_without_waiting_for_a_writer() {
         ]);
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("regular saved PCAP file"));
+    }
+}
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn two_replay_sources_record_without_merging_identity_or_evidence() {
+    let fixture = Fixture::new();
+    let a = fixture.path("a.pcap");
+    let b = fixture.path("b.pcap");
+    std::fs::write(&a, capture()).unwrap();
+    std::fs::write(&b, capture()).unwrap();
+    let config = fixture.path("session.json");
+    std::fs::write(
+        &config,
+        serde_json::to_vec(&serde_json::json!({
+            "version":1,"alert_policy":"silent","receivers":[
+                {"id":"a","source":{"kind":"wifi_pcap","path":a}},
+                {"id":"b","source":{"kind":"wifi_pcap","path":b}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let database = fixture.path("recording.sqlite");
+    let csv = fixture.path("out.csv");
+    let output = run(&[
+        "--session-config".as_ref(),
+        config.as_os_str(),
+        "--database".as_ref(),
+        database.as_os_str(),
+        "--output".as_ref(),
+        csv.as_os_str(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let reader = airhound_hostd::storage::Reader::open(&database).unwrap();
+    let runs = reader.runs(1).unwrap();
+    assert_eq!(runs[0].state, "finished");
+    let stored = reader.records(&runs[0].id, 0, 100).unwrap();
+    assert_eq!(
+        stored
+            .records
+            .iter()
+            .map(|r| &r.payload)
+            .collect::<Vec<_>>(),
+        records.iter().collect::<Vec<_>>()
+    );
+    for source in ["a", "b"] {
+        for kind in ["wifi_observation", "detection"] {
+            let matching: Vec<_> = stored
+                .records
+                .iter()
+                .filter(|r| r.source_id == source && r.kind == kind)
+                .collect();
+            assert_eq!(matching.len(), 2);
+            assert!(matching
+                .iter()
+                .all(|r| r.payload["session_source"]["receiver_id"] == source));
+        }
     }
 }
