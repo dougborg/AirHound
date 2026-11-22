@@ -180,6 +180,10 @@ impl Controller {
             self.witness.feed(b)
         }
     }
+    /// Buffered ISR input is not quiet even if the main loop has not consumed it.
+    pub fn pending_input(&mut self, now: u32) {
+        self.last_rx = now;
+    }
     pub fn poll(&mut self, now: u32) -> Option<UartAction> {
         if self.nonce.is_some()
             && !matches!(self.state, State::Stopped | State::Failed | State::Stopping)

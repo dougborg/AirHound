@@ -67,6 +67,8 @@ def verify_pair(debug, fap):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('sdk_symbols', type=Path)
+    parser.add_argument('--binary', choices=['airhound-uart-diagnostic', 'airhound-live-bridge'],
+                        default='airhound-uart-diagnostic')
     args = parser.parse_args()
     sdk = args.sdk_symbols.resolve()
     spec = importlib.util.spec_from_file_location('fap_audit', ROOT / 'scripts/check-fap.py')
@@ -81,21 +83,27 @@ def main():
     env = dict(os.environ)
     env.pop('RUSTFLAGS', None)
     env['CARGO_ENCODED_RUSTFLAGS'] = '\x1f'.join(FLAGS)
+    revision = output('git', 'rev-parse', 'HEAD')
+    modified = bool(output('git', 'status', '--porcelain'))
+    if args.binary == 'airhound-live-bridge':
+        env['AIRHOUND_SOURCE_REVISION'] = revision
+        env['AIRHOUND_SOURCE_MODIFIED'] = '1' if modified else '0'
     # Isolated target path makes the exact output deterministic despite caller defaults.
-    env['CARGO_TARGET_DIR'] = str(ROOT / 'target/diagnostic-build')
+    artifact_dir = 'diagnostic' if args.binary == 'airhound-uart-diagnostic' else 'live-bridge'
+    env['CARGO_TARGET_DIR'] = str(ROOT / 'target' / (artifact_dir + '-build'))
     subprocess.run(['cargo', 'build', '--locked', '--release', '--features', 'fap',
-                    '--bin', 'airhound-uart-diagnostic', '--target', 'thumbv7em-none-eabihf'],
+                    '--bin', args.binary, '--target', 'thumbv7em-none-eabihf'],
                    cwd=ROOT, env=env, check=True)
-    folder = ROOT / 'target/diagnostic'
+    folder = ROOT / 'target' / artifact_dir
     folder.mkdir(parents=True, exist_ok=True)
-    debug = folder / 'airhound-uart-diagnostic.debug.elf'
-    fap = folder / 'airhound-uart-diagnostic.fap'
-    shutil.copyfile(Path(env['CARGO_TARGET_DIR']) / 'thumbv7em-none-eabihf/release/airhound-uart-diagnostic', debug)
+    debug = folder / (args.binary + '.debug.elf')
+    fap = folder / (args.binary + '.fap')
+    shutil.copyfile(Path(env['CARGO_TARGET_DIR']) / 'thumbv7em-none-eabihf/release' / args.binary, debug)
     subprocess.run([str(objcopy), '--strip-debug', f'--add-gnu-debuglink={debug}', str(debug), str(fap)], check=True)
     result = audit.audit(fap, sdk)
     result.update(verify_pair(debug, fap))
-    result.update(debug_elf_sha256=digest(debug), source_revision=output('git', 'rev-parse', 'HEAD'),
-                  source_modified=bool(output('git', 'status', '--porcelain')),
+    result.update(debug_elf_sha256=digest(debug), source_revision=revision,
+                  source_modified=modified,
                   rustc=output('rustc', '-vV'), rustflags=FLAGS,
                   source_hashes={str(p.relative_to(ROOT)): digest(p) for p in sorted(
                       [*ROOT.glob('src/**/*.rs'), ROOT / 'Cargo.toml', ROOT / 'Cargo.lock',

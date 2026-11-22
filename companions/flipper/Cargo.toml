@@ -43,3 +43,10 @@ bench = false
 [profile.release]
 opt-level = "z"
 panic = "abort"
+
+[[bin]]
+name = "airhound-live-bridge"
+path = "src/bin/live_bridge.rs"
+required-features = ["fap"]
+test = false
+bench = false
