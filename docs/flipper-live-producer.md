@@ -128,3 +128,38 @@ idle loader, unchanged bridge/original companion hashes, reacquired serial lease
 and released USB ownership. The user's default service and capture state were
 unchanged. This accepts one single-source service lifecycle, not Resume,
 watchdog fault injection, concurrent capture, endurance or native UI controls.
+
+
+## First Resume-stage failure and bounded drain follow-up
+
+A subsequent same-build attempt failed during its first Pause, **before Resume**.
+Its private run retained 63 packets / 176 records and remained failed. Stop text
+was observed 625 ms after the stopping transition, but UART bytes continued
+through the original shared one-second acknowledgment/drain deadline. Known loss
+counters were zero; that does not establish a completed drain or RF stop. The
+original terminal cause merely retained `user_pause`, so malformed framing versus
+incomplete/active drain cannot be resolved from that evidence. The default
+service was unchanged; post-run CLI, idle loader, hashes and USB release passed.
+This does not invalidate the earlier bounded success or accept Resume.
+
+Pinned upstream Marauder source `d9197cf` calls `StartScan(OFF)` before printing
+stop text (`CommandLine.cpp:379–397`), then the main loop calls `buffer_obj.save()`
+(`esp32_marauder.ino:557`). `Buffer.cpp:223–267` can serialize two pending buffers
+after that text. Source configuration selects two 3 KiB buffers normally, two
+2 KiB buffers under its reduced-memory profile, or two 8 KiB buffers with PSRAM
+(`configs.h:3373–3384`). Six KiB needs about 0.53 seconds at 115200 baud/8N1,
+exceeding the 0.375 seconds remaining after the observed acknowledgment; the
+16 KiB upper variant needs about 1.42 seconds. These source bounds support a
+queued-tail explanation, but neither the installed binary's precise buffer
+configuration nor the failed run's exact cause is proven.
+
+The follow-up retains a one-second acknowledgment budget and gives its first
+fresh acknowledgment a separate two-second drain budget, with an absolute
+three-second stop ceiling. Repeated acknowledgments, heartbeats and escalation
+cannot extend that ceiling. Quiet, complete framing and loss checks remain
+required. Specific terminal causes distinguish late/missing text, malformed
+framing, incomplete framing and drain expiry. Synthetic delayed-ack tests cover
+valid 6 KiB and 16 KiB tails, tick wrap, missing/late acknowledgments, malformed or
+endless tails and escalation. This follow-up requires independent review, a new
+artifact audit and separate device acceptance; the installed `40652e` artifact
+and both hardware results remain unchanged.

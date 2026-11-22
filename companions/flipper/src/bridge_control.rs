@@ -25,6 +25,8 @@ pub struct Controller {
     heartbeat: u32,
     since: u32,
     last_rx: u32,
+    stop_ack_since: u32,
+    stop_ack_at: Option<u32>,
     pub state: State,
     pub cause: u8,
     pub generation: u32,
@@ -46,6 +48,8 @@ impl Controller {
             heartbeat: now,
             since: now,
             last_rx: now,
+            stop_ack_since: now,
+            stop_ack_at: None,
             state: State::Ready,
             cause: 0,
             generation: 0,
@@ -148,6 +152,8 @@ impl Controller {
         }
         self.state = State::Stopping;
         self.since = now;
+        self.stop_ack_since = now;
+        self.stop_ack_at = None;
         self.stop_baseline = self.witness.stops;
         self.stop_attempts = 1;
         self.evidence &= !4;
@@ -223,25 +229,56 @@ impl Controller {
             State::Stopping => {
                 if self.witness.stops > self.stop_baseline {
                     self.evidence |= 4;
+                    // Only the first fresh acknowledgment starts the drain clock.
+                    // Repeated text/heartbeats cannot extend either stop bound.
+                    self.stop_ack_at.get_or_insert(now);
                 }
-                let acknowledged = self.evidence & 4 != 0
-                    && self.witness.outside()
-                    && now.wrapping_sub(self.last_rx) >= 50
+                let quiet = now.wrapping_sub(self.last_rx) >= 50;
+                let complete = self.witness.outside();
+                let acknowledged = self.stop_ack_at.is_some()
+                    && complete
+                    && quiet
                     && now.wrapping_sub(self.since) >= 100;
-                if acknowledged || now.wrapping_sub(self.since) >= 1000 {
-                    self.state =
-                        if acknowledged && !self.witness.malformed && matches!(self.cause, 1 | 2) {
-                            if self.pause_target {
-                                State::Paused
-                            } else {
-                                State::Stopped
-                            }
+                let ack_expired = self.stop_ack_at.map_or_else(
+                    || now.wrapping_sub(self.stop_ack_since) >= 1000,
+                    |at| at.wrapping_sub(self.stop_ack_since) >= 1000,
+                );
+                let drain_expired = self
+                    .stop_ack_at
+                    .is_some_and(|at| now.wrapping_sub(at) >= 2000);
+                let absolute_expired = now.wrapping_sub(self.since) >= 3000;
+                if acknowledged || ack_expired || drain_expired || absolute_expired {
+                    if acknowledged
+                        && !ack_expired
+                        && !drain_expired
+                        && !absolute_expired
+                        && !self.witness.malformed
+                        && matches!(self.cause, 1 | 2)
+                    {
+                        self.state = if self.pause_target {
+                            State::Paused
                         } else {
-                            State::Failed
+                            State::Stopped
                         };
-                } else if self.evidence & 4 == 0
+                    } else {
+                        self.state = State::Failed;
+                        // Preserve an earlier transport/watchdog/loss cause. For
+                        // user controls, report the actual terminal condition.
+                        if matches!(self.cause, 1 | 2) {
+                            self.cause = if self.witness.malformed {
+                                6
+                            } else if ack_expired || self.stop_ack_at.is_none() {
+                                10
+                            } else if !complete {
+                                11
+                            } else {
+                                12
+                            };
+                        }
+                    }
+                } else if self.stop_ack_at.is_none()
                     && self.stop_attempts == 1
-                    && now.wrapping_sub(self.since) >= 500
+                    && now.wrapping_sub(self.stop_ack_since) >= 500
                 {
                     self.stop_attempts = 2;
                     return Some(UartAction::Stop);
