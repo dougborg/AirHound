@@ -147,7 +147,10 @@ struct SessionView: View {
           if session.runs.isEmpty {
             ContentUnavailableView(
               "No recordings", systemImage: "waveform",
-              description: Text("Saved recordings appear here after the service is connected."))
+              description: Text(
+                session.connected
+                  ? "Start a recording to save observations here."
+                  : "Connect to view saved recordings."))
           }
         }
         if session.nextRun != nil {
