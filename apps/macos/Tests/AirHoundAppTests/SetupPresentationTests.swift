@@ -53,6 +53,7 @@ final class SetupPresentationTests: XCTestCase {
 
   func testReceiverIdentityRequiresMatchingActiveRunSource() throws {
     let session = SessionModel()
+    session.connected = true
     session.configText =
       #"{"version":1,"receivers":[{"id":"same-id","source":{"kind":"sniffle","port":"/dev/cu.one","python":"/python","helper":"/helper"}}]}"#
     session.capture = try JSONDecoder().decode(
@@ -83,6 +84,9 @@ final class SetupPresentationTests: XCTestCase {
     ]
     XCTAssertEqual(
       session.currentReceiverIdentity(id: "same-id")?["adapter_info"], .string("actual firmware"))
+    session.connected = false
+    XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
+    session.connected = true
     session.capture = .object(["active": .bool(false), "run_id": .string("run-1")])
     XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
   }

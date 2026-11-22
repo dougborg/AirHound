@@ -231,7 +231,7 @@ final class SessionModel: ObservableObject {
   }
 
   func currentReceiverIdentity(id: String) -> JSONValue? {
-    guard isActive, let activeID,
+    guard connected, isActive, let activeID,
       let planSource = plannedReceivers.first(where: { $0.id == id })?.source,
       let run = runs.first(where: { $0.id == activeID }),
       case .array(let configured) = run.config["session"]?["receivers"],
