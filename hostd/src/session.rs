@@ -6,6 +6,9 @@ use std::{collections::HashSet, io, path::PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct SessionConfig {
     pub version: u8,
+    /// Signature alert policy for this session; absence preserves the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_policy: Option<airhound::evidence::AlertPolicy>,
     pub receivers: Vec<ReceiverConfig>,
 }
 
@@ -263,6 +266,7 @@ mod tests {
     fn plan(sources: Vec<Source>) -> SessionConfig {
         SessionConfig {
             version: 1,
+            alert_policy: None,
             receivers: sources
                 .into_iter()
                 .enumerate()

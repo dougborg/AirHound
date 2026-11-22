@@ -58,6 +58,27 @@ The [multi-receiver guide](../docs/multi-receiver-sessions.md) includes configur
 examples, channel-assignment behavior, lifecycle and loss limits. This mode is
 source-build functionality and is not in the published 0.2.0 preview archives.
 
+## Signature alert policy
+
+Choose `--alert-policy rules_and_watchlist` (default), `watchlist_only`,
+`all_matches`, or `silent` before starting a desktop session. This controls
+signature alert decisions in detection metadata; it never changes evidence,
+matching, or observation retention. It does not enable OS notifications or mute
+an attached device's buzzer. Remote ID sightings are a separate path.
+
+Session files may instead contain top-level `"alert_policy":"silent"`.
+Supplying both an explicit CLI policy and a session-file policy is an error,
+even if they agree. Unknown policy values fail before radio startup. The selected
+policy appears in `scanner_health` and multi-receiver `session_started`; each
+observation's `detection.policy` and `detection.alert` describe its effective
+signature decision. External MT7610U observations and Marauder imports retain
+their forced `silent` policy because their matching is identity-only/unvalidated.
+
+This is session-start configuration, not a live policy command. Restart with a
+new selection to change it; nothing persists unless saved in a session file.
+Firmware configuration and its conservative defaults are unchanged. See the
+[multi-receiver guide](../docs/multi-receiver-sessions.md#signature-alert-policy).
+
 ## Receiving detector-device data
 
 `hostd` currently scans native host radios or supervises the external receiver

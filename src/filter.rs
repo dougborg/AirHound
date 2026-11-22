@@ -22,6 +22,8 @@ use crate::rules::{MatchCategory, RuleDb, SigMatchSet};
 pub struct FilterConfig {
     /// Minimum RSSI threshold (dBm). Signals weaker than this are ignored.
     pub min_rssi: i8,
+    /// Alert selection, independent of matching and observation retention.
+    pub alert_policy: AlertPolicy,
     /// Whether WiFi scanning is enabled
     pub wifi_enabled: bool,
     /// Whether BLE scanning is enabled
@@ -32,6 +34,7 @@ impl FilterConfig {
     pub const fn new() -> Self {
         Self {
             min_rssi: -90,
+            alert_policy: AlertPolicy::RulesAndWatchlist,
             wifi_enabled: true,
             ble_enabled: true,
         }

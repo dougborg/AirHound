@@ -1,7 +1,7 @@
 //! Bounded rule-local proof and independent alert policy. No heap allocation.
 use crate::rules::{ExprNode, RuleDb, SigIdx, SigMatchSet};
 use heapless::Vec;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Evidence records intentionally omit packet contents; IDs resolve in the pack.
 #[derive(Clone, Debug, Serialize)]
@@ -13,13 +13,26 @@ pub struct RuleEvidence {
     pub alert_eligible: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AlertPolicy {
+    #[default]
     RulesAndWatchlist,
     WatchlistOnly,
     AllMatches,
     Silent,
+}
+impl core::str::FromStr for AlertPolicy {
+    type Err = &'static str;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "rules_and_watchlist" => Ok(Self::RulesAndWatchlist),
+            "watchlist_only" => Ok(Self::WatchlistOnly),
+            "all_matches" => Ok(Self::AllMatches),
+            "silent" => Ok(Self::Silent),
+            _ => Err("expected rules_and_watchlist, watchlist_only, all_matches, or silent"),
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
