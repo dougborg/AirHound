@@ -153,7 +153,9 @@ mod tests {
             Command::Hello {},
             Command::Status {},
             Command::DevicesList { all: true },
-            Command::DevicesIdentify { config: serde_json::json!({"device_id":"fixture"}) },
+            Command::DevicesIdentify {
+                config: serde_json::json!({"device_id":"fixture"}),
+            },
             Command::SessionValidate {
                 config: serde_json::json!({"version":1}),
             },
