@@ -14,6 +14,14 @@ final class SessionModel: ObservableObject {
   @Published var selected = Set<String>()
   @Published var sourceOverrides: [String: JSONValue] = [:]
   @Published var configText = ""
+  @Published var setups: [SavedSetup] = []
+  @Published var selectedSetupID = ""
+  @Published var setupReview: SetupReview?
+  @Published var setupsAvailable = false
+  @Published var setupError: String?
+  @Published var locationProviders: [String] = []
+  @Published var backendBuild: String?
+  @Published var appliedSetupName: String?
   @Published var validation: String?
   @Published var capture: JSONValue?
   @Published var runs: [StoredRun] = []
@@ -73,6 +81,27 @@ final class SessionModel: ObservableObject {
       guard let client = self.client else { return }
       let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))
       self.captureEnabled = status["capture_control"] == .bool(true)
+      self.backendBuild = status["build"]?["display_version"]?.string
+      if case .array(let providers) = status["location_providers"] {
+        self.locationProviders = providers.compactMap(\.string)
+      } else {
+        self.locationProviders = []
+      }
+      if case .array(let methods) = status["methods"] {
+        self.setupsAvailable = methods.contains(.string("profiles.list"))
+      } else {
+        self.setupsAvailable = false
+      }
+      self.setups = []
+      self.selectedSetupID = ""
+      self.setupReview = nil
+      self.appliedSetupName = nil
+      self.setupError = nil
+      if self.setupsAvailable {
+        do { self.setups = try await client.setups() } catch {
+          self.setupError = error.localizedDescription
+        }
+      }
       self.leaveRecording()
       self.runs = []
       self.nextRun = nil
@@ -186,6 +215,111 @@ final class SessionModel: ObservableObject {
     source[field] = value
     sourceOverrides[key] = .object(source)
     useSelectedReceivers()
+  }
+
+  var canEditPlan: Bool { !isActive && !busy && !hasPendingStart }
+  var plannedReceivers: [PlanReceiver] {
+    guard let config = try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)) else {
+      return []
+    }
+    return (try? PlanEditing.receivers(in: config)) ?? []
+  }
+
+  func currentReceiverIdentity(id: String) -> JSONValue? {
+    guard isActive, case .array(let receivers) = capture?["receiver_health"]?["receivers"] else {
+      return nil
+    }
+    return receivers.first { $0["id"]?.string == id }?["receiver"]
+  }
+
+  private func editPlan(_ edit: (JSONValue) throws -> JSONValue) {
+    guard canEditPlan else { return }
+    do {
+      let config =
+        configText.isEmpty
+        ? JSONValue.object(["version": .integer(1), "receivers": .array([])])
+        : try JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8))
+      configText = String(decoding: try edit(config).data(pretty: true), as: UTF8.self)
+      validation = nil
+    } catch { self.error = error.localizedDescription }
+  }
+  func addReceiver(source: JSONValue) {
+    editPlan {
+      try PlanEditing.add(
+        $0, id: "receiver-" + UUID().uuidString.prefix(8).lowercased(), source: source)
+    }
+  }
+  func removeReceiver(id: String) { editPlan { try PlanEditing.remove($0, id: id) } }
+  func planSourceField(id: String, field: String, value: JSONValue) {
+    editPlan { try PlanEditing.change($0, receiverID: id, field: field, value: value) }
+  }
+  var planLocation: JSONValue? {
+    (try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)))?["location"]
+  }
+  func setLocation(_ value: JSONValue?) { editPlan { try PlanEditing.location($0, value: value) } }
+  func setLocationField(_ name: String, value: JSONValue) {
+    guard case .object(var location) = planLocation else { return }
+    location[name] = value
+    setLocation(.object(location))
+  }
+
+  func refreshDevices() {
+    perform {
+      guard let client = self.client else { return }
+      self.inventory = try await client.inventory()
+    }
+  }
+
+  func refreshSetups() {
+    perform {
+      guard let client = self.client else { return }
+      self.setups = try await client.setups()
+      self.setupError = nil
+    }
+  }
+  func reviewSetup() {
+    guard canEditPlan, !selectedSetupID.isEmpty else { return }
+    perform {
+      guard let client = self.client else { return }
+      self.setupReview = try await client.loadSetup(id: self.selectedSetupID)
+    }
+  }
+  func applySetup(_ review: SetupReview) {
+    guard canEditPlan else { return }
+    do {
+      configText = String(decoding: try review.config.data(pretty: true), as: UTF8.self)
+      selected = []
+      sourceOverrides = [:]
+      appliedSetupName = review.name
+      selectedSetupID = review.id
+      setupReview = nil
+      validation = nil
+      message = "Setup loaded. Review the receivers before starting."
+    } catch { self.error = error.localizedDescription }
+  }
+  func saveSetup(name: String, replacing id: String? = nil) {
+    guard canEditPlan else { return }
+    let config = Data(configText.utf8)
+    let selectedID = id ?? UUID().uuidString.lowercased()
+    perform {
+      guard let client = self.client else { return }
+      _ = try await client.saveSetup(id: selectedID, name: name, config: config, replace: id != nil)
+      self.setups = try await client.setups()
+      self.selectedSetupID = selectedID
+      self.appliedSetupName = name
+      self.message = "Setup saved on the backend."
+    }
+  }
+  func deleteSelectedSetup() {
+    guard canEditPlan, !selectedSetupID.isEmpty else { return }
+    let id = selectedSetupID
+    perform {
+      guard let client = self.client else { return }
+      try await client.deleteSetup(id: id)
+      self.setups = try await client.setups()
+      self.selectedSetupID = ""
+      self.message = "Saved setup removed. The current plan is unchanged."
+    }
   }
 
   func validate() {
