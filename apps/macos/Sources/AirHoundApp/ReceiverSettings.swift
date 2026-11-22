@@ -43,6 +43,22 @@ struct ReceiverSettings: View {
         "Opening the port may reset the board. Pause affects host ingestion; the device keeps scanning."
       )
       .font(.caption).foregroundStyle(.secondary)
+    case "marauder_capture":
+      field("Saved capture", "path", file: true)
+      Picker(
+        "File format",
+        selection: Binding(
+          get: { receiver.source["format"]?.string ?? "" },
+          set: { session.planSourceField(id: receiver.id, field: "format", value: .string($0)) })
+      ) {
+        Text("Choose format").tag("")
+        Text("PCAP").tag("pcap")
+        Text("Serial capture").tag("serial")
+      }
+      Text(
+        "Replays saved packets. Missing signal strength, channel and location stay unknown; device-relative timestamps are not wall-clock times."
+      )
+      .font(.caption).foregroundStyle(.secondary)
     case "linux_wifi": field("Monitor interface", "interface")
     case "ble_pcap", "wifi_pcap": field("Recording file", "path", file: true)
     case "native_ble":

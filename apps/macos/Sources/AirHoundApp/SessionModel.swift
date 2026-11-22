@@ -20,6 +20,7 @@ final class SessionModel: ObservableObject {
   @Published var setupsAvailable = false
   @Published var setupError: String?
   @Published var locationProviders: [String] = []
+  @Published var sessionSources: [String] = []
   @Published var backendBuild: String?
   @Published var appliedSetupName: String?
   @Published var validation: String?
@@ -85,6 +86,11 @@ final class SessionModel: ObservableObject {
       let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))
       self.captureEnabled = status["capture_control"] == .bool(true)
       self.backendBuild = status["build"]?["display_version"]?.string
+      if case .array(let sources) = status["session_sources"] {
+        self.sessionSources = sources.compactMap(\.string)
+      } else {
+        self.sessionSources = []
+      }
       if case .array(let providers) = status["location_providers"] {
         self.locationProviders = providers.compactMap(\.string)
       } else {
@@ -273,6 +279,25 @@ final class SessionModel: ObservableObject {
       try PlanEditing.add(
         $0, id: "receiver-" + UUID().uuidString.prefix(8).lowercased(), source: source)
     }
+  }
+  var canAddMarauderCapture: Bool {
+    connected && canEditPlan && sessionSources.contains("marauder_capture")
+  }
+  func addMarauderCapture(url: URL, format: String) {
+    guard canAddMarauderCapture else {
+      error =
+        "Connect to a backend with saved Marauder capture support and finish any active recording before editing the plan."
+      return
+    }
+    guard url.isFileURL, ["pcap", "serial"].contains(format) else {
+      error = "Choose a local file and an explicit PCAP or serial capture format."
+      return
+    }
+    addReceiver(
+      source: .object([
+        "kind": .string("marauder_capture"), "path": .string(url.path),
+        "format": .string(format),
+      ]))
   }
   func removeReceiver(id: String) { editPlan { try PlanEditing.remove($0, id: id) } }
   func planSourceField(id: String, field: String, value: JSONValue) {
