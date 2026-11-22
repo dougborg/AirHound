@@ -240,3 +240,8 @@ fn packet_must_fit_the_declared_global_snaplen() {
     assert!(w.malformed);
     assert_eq!(w.packets, 0);
 }
+
+#[test]
+fn default_device_selftest_runs_synthetic_framing_and_deadlines_only() {
+    assert!(airhound_flipper::diagnostic::synthetic_self_test());
+}

@@ -319,3 +319,35 @@ pub fn persist(bytes: &[u8], output: &mut impl Output) -> Persisted {
     let closed = output.close();
     Persisted { written, closed }
 }
+
+/// Entirely synthetic engine replay for the UART-free device load/exit gate.
+/// Four arbitrary payload bytes exercise framing; this is not an 802.11 fixture
+/// or an observation/capture acceptance claim.
+pub fn synthetic_self_test() -> bool {
+    let mut run = Run::new(0);
+    run.feed(1, b"Stopping WiFi tran/recv\r\n");
+    if run.poll(60, false, false) != Some(Command::Start) {
+        return false;
+    }
+    run.feed(
+        61,
+        b"StartingBeacon sniff. Stop with stopscan\r\n[BUF/BEGIN]",
+    );
+    run.feed(
+        62,
+        &[
+            0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 105, 0, 0, 0,
+        ],
+    );
+    run.feed(
+        63,
+        &[0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 1, 2, 3, 4],
+    );
+    run.feed(64, b"[BUF/CLOSE]");
+    if run.poll(2060, false, false) != Some(Command::Stop) {
+        return false;
+    }
+    run.feed(2070, b"Stopping WiFi tran/recv\r\n");
+    run.poll(2160, false, false);
+    run.raw_ready(0, 0, 0) && run.witness.packets == 1
+}
