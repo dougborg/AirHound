@@ -38,9 +38,15 @@ impl Handle {
     }
 }
 pub(crate) fn spawn(database: PathBuf) -> (Handle, JoinHandle<io::Result<()>>) {
+    spawn_with_active(database, None)
+}
+fn spawn_with_active(
+    database: PathBuf,
+    initial: Option<Active>,
+) -> (Handle, JoinHandle<io::Result<()>>) {
     let (tx, mut rx) = mpsc::channel::<Request>(8);
     let task = tokio::spawn(async move {
-        let mut active: Option<Active> = None;
+        let mut active = initial;
         let mut last: Option<Value> = None;
         while let Some(request) = rx.recv().await {
             if active.as_ref().is_some_and(|run| run.task.is_finished()) {
@@ -231,6 +237,13 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
     })
     .await
     .map_err(io::Error::other)??;
+    Ok(launch(receivers, filter, writer))
+}
+fn launch(
+    receivers: Vec<session_runtime::ReceiverTask>,
+    filter: FilterConfig,
+    writer: Writer,
+) -> Active {
     let id = writer.run_id.clone();
     let (output, recording) = storage::output::attach(io::sink(), writer);
     let control = ScanControl::new(true);
@@ -262,10 +275,151 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
             .map_err(io::Error::other)??;
         result
     });
-    Ok(Active {
+    Active {
         id,
         control,
         recording,
         task,
-    })
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    };
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "ah-actor-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+        fn path(&self) -> PathBuf {
+            self.0.join("capture.sqlite")
+        }
+        fn actor(
+            &self,
+            receiver: session_runtime::ReceiverTask,
+        ) -> (Handle, JoinHandle<io::Result<()>>, String) {
+            let writer = Writer::start(
+                self.path(),
+                RecordingMode::Replay,
+                json!({}),
+                vec![
+                    ("fixture".into(), json!({})),
+                    (storage::output::SESSION_SOURCE.into(), json!({})),
+                ],
+            )
+            .unwrap();
+            let id = writer.run_id.clone();
+            let active = launch(vec![receiver], FilterConfig::new(), writer);
+            let (handle, task) = spawn_with_active(self.path(), Some(active));
+            (handle, task, id)
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_pause_request_still_commits_and_resume_and_finish_drain() {
+        let f = Fixture::new();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let cleanup = cleaned.clone();
+        let (state_tx, mut state_rx) = mpsc::unbounded_channel();
+        let receiver = session_runtime::ReceiverTask::fixture(move |tx, control| async move {
+            let mut state = control.subscribe();
+            loop {
+                let current = *state.borrow_and_update();
+                if current.shutdown {
+                    break;
+                }
+                if current.enabled {
+                    tx.send(crate::observation::ScanEvent::BleSourceStatus(
+                        json!({"type":"fixture_observation","address":null}),
+                    ))
+                    .await
+                    .map_err(io::Error::other)?;
+                }
+                state_tx.send(current.enabled).unwrap();
+                state.changed().await.map_err(io::Error::other)?;
+            }
+            cleanup.store(true, Ordering::Relaxed);
+            Ok(())
+        });
+        let (handle, actor, id) = f.actor(receiver);
+        assert_eq!(state_rx.recv().await, Some(true));
+        let (reply, cancelled) = oneshot::channel();
+        handle
+            .0
+            .send(Request {
+                action: Action::Pause(id.clone()),
+                reply,
+            })
+            .await
+            .unwrap();
+        drop(cancelled);
+        let status = handle.request(Action::Status).await.unwrap();
+        assert_eq!(status["state"], "paused");
+        assert_eq!(state_rx.recv().await, Some(false));
+        let reader = storage::Reader::open(&f.path()).unwrap();
+        assert_eq!(reader.runs(1).unwrap()[0].state, "paused");
+        assert_eq!(
+            handle.request(Action::Pause(id.clone())).await.unwrap()["state"],
+            "paused"
+        );
+        assert_eq!(
+            handle.request(Action::Resume(id.clone())).await.unwrap()["state"],
+            "recording"
+        );
+        assert_eq!(state_rx.recv().await, Some(true));
+        assert!(handle
+            .request(Action::Finish("wrong-run".into()))
+            .await
+            .is_err());
+        let finish = handle.request(Action::Finish(id.clone())).await.unwrap();
+        assert_eq!(finish["state"], "finished");
+        assert!(cleaned.load(Ordering::Relaxed));
+        assert_eq!(reader.runs(1).unwrap()[0].state, "finished");
+        assert_eq!(
+            reader
+                .records(&id, 0, 100)
+                .unwrap()
+                .records
+                .iter()
+                .filter(|r| r.kind == "fixture_observation")
+                .count(),
+            2
+        );
+        handle.request(Action::Shutdown).await.unwrap();
+        actor.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn receiver_failure_is_durable_and_service_shutdown_reports_failure() {
+        let f = Fixture::new();
+        let receiver = session_runtime::ReceiverTask::fixture(|_tx, _control| async {
+            Err(io::Error::other("fixture receiver disconnected"))
+        });
+        let (handle, actor, id) = f.actor(receiver);
+        let finished = handle.request(Action::Finish(id)).await.unwrap();
+        assert_eq!(finished["state"], "failed");
+        assert_eq!(
+            storage::Reader::open(&f.path()).unwrap().runs(1).unwrap()[0].state,
+            "failed"
+        );
+        handle.request(Action::Shutdown).await.unwrap();
+        assert!(actor.await.unwrap().is_err());
+    }
 }

@@ -21,6 +21,24 @@ pub(crate) struct ReceiverTask {
     start: Start,
 }
 
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+impl ReceiverTask {
+    pub(crate) fn fixture<F, Fut>(start: F) -> Self
+    where
+        F: FnOnce(mpsc::Sender<ScanEvent>, ScanControl) -> Fut + Send + 'static,
+        Fut: Future<Output = io::Result<()>> + Send + 'static,
+    {
+        Self {
+            id: "fixture".into(),
+            scanner: Scanner::Ble,
+            assignment: serde_json::json!({"mode":"replay"}),
+            shutdown_budget: Duration::from_millis(50),
+            start: Box::new(move |tx, control| Box::pin(start(tx, control))),
+        }
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub(crate) struct EventSource {
     session_id: String,
