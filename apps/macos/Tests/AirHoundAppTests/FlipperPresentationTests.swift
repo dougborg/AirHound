@@ -7,6 +7,103 @@ import XCTest
 
 @MainActor
 final class FlipperPresentationTests: XCTestCase {
+  func testRealBackendFlipperSetupRoundtripAndMissingBindingWithoutCapture() async throws {
+    guard let backend = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
+      throw XCTSkip("Set AIRHOUND_TEST_BACKEND for private Flipper setup integration")
+    }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ah-flipper-ui-" + UUID().uuidString.prefix(8))
+    try LocalFiles.privateDirectory(root)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pcap = root.appendingPathComponent("empty.pcap")
+    try Data([
+      0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 127, 0, 0, 0,
+    ]).write(to: pcap)
+    let database = root.appendingPathComponent("records.sqlite")
+    let replay = Process()
+    replay.executableURL = URL(fileURLWithPath: backend)
+    replay.arguments = [
+      "--wifi-pcap", pcap.path, "--database", database.path,
+      "--output", root.appendingPathComponent("empty.csv").path,
+    ]
+    replay.standardOutput = FileHandle.nullDevice
+    replay.standardError = FileHandle.nullDevice
+    try replay.run()
+    replay.waitUntilExit()
+    XCTAssertEqual(replay.terminationStatus, 0)
+    let socket = root.appendingPathComponent("control.sock")
+    let server = Process()
+    server.executableURL = URL(fileURLWithPath: backend)
+    // History-only service: even an accidental Start cannot open a receiver.
+    server.arguments = ["serve", "--socket", socket.path, "--database", database.path]
+    server.standardOutput = FileHandle.nullDevice
+    server.standardError = FileHandle.nullDevice
+    try server.run()
+    defer {
+      if server.isRunning {
+        server.terminate()
+        server.waitUntilExit()
+      }
+    }
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket.path) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let suite = "flipper-integration-" + UUID().uuidString
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let model = SessionModel(preferences: preferences)
+    model.socketPath = socket.path
+    model.connect(executable: URL(fileURLWithPath: backend))
+    defer { model.disconnect() }
+    func idle() async throws {
+      for _ in 0..<100 {
+        if !model.busy { return }
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      XCTFail("Private backend operation did not complete")
+    }
+    try await idle()
+    XCTAssertTrue(model.connected, model.error ?? model.message)
+    XCTAssertFalse(model.captureEnabled)
+    XCTAssertTrue(model.canAddFlipperBridge, "Capability must come from the actual backend")
+    model.configText = #"{"version":1,"alert_policy":"silent","receivers":[]}"#
+    let missingPort = "/dev/cu.airhound-missing-" + UUID().uuidString
+    model.addFlipperBridge(port: missingPort)
+    let original = try JSONDecoder().decode(JSONValue.self, from: Data(model.configText.utf8))
+    let receiver = try XCTUnwrap(model.plannedReceivers.first)
+    XCTAssertTrue(model.saveSetup(name: "Private Flipper fixture"))
+    try await idle()
+    XCTAssertNil(model.error)
+    model.configText = #"{"version":1,"receivers":[]}"#
+    model.reviewSetup()
+    try await idle()
+    let review = try XCTUnwrap(model.setupReview)
+    XCTAssertEqual(review.config, original)
+    XCTAssertTrue(
+      review.checks.contains { $0.label == receiver.id && $0.detail.contains("missing") })
+    XCTAssertEqual(review.raw["applied"], .bool(false))
+    XCTAssertTrue(model.plannedReceivers.isEmpty)
+    model.applySetup(review)
+    model.planSourceField(id: receiver.id, field: "port", value: .string(missingPort + "-edited"))
+    XCTAssertEqual(model.plannedReceivers.first?.source["port"], .string(missingPort + "-edited"))
+    XCTAssertTrue(model.saveSetup(name: "Edited Flipper fixture", replacing: review.id))
+    try await idle()
+    model.reviewSetup()
+    try await idle()
+    let editedReview = try XCTUnwrap(model.setupReview)
+    XCTAssertEqual(
+      try PlanEditing.receivers(in: editedReview.config).first?.source["port"],
+      .string(missingPort + "-edited"))
+    model.planSourceField(id: receiver.id, field: "port", value: .string("not-a-local-device"))
+    model.validate()
+    try await idle()
+    XCTAssertTrue(
+      model.error?.contains("explicit local /dev serial endpoint") == true,
+      model.error ?? "Missing backend validation error")
+    XCTAssertFalse(model.isActive)
+    XCTAssertEqual(model.runs.count, 1, "Only the empty replay fixture may exist")
+  }
+
   func testFlipperSetupGatesBackendAndPreservesPlanWithoutStarting() throws {
     let suite = "flipper-setup-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -80,6 +177,51 @@ final class FlipperPresentationTests: XCTestCase {
     ).lines
     XCTAssertTrue(missing.contains("AirHound Live Bridge identity unreported"))
     XCTAssertFalse(missing.contains { $0.contains("guessed") })
+  }
+
+  func testBoundFlipperIdentityPresentationRejectsAnotherPortAndHistoricalRun() throws {
+    let suite = "flipper-identity-" + UUID().uuidString
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let model = SessionModel(preferences: preferences)
+    model.connected = true
+    model.configText =
+      #"{"version":1,"receivers":[{"id":"bridge","source":{"kind":"flipper_marauder","port":"/dev/cu.fixture"}}]}"#
+    model.runs = [
+      try JSONDecoder().decode(
+        StoredRun.self,
+        from: Data(
+          #"{"id":"fixture-run","state":"recording","mode":"live","started_at_us":0,"record_count":0,"config":{"session":{"receivers":[{"id":"bridge","source":{"kind":"flipper_marauder","port":"/dev/cu.fixture"}}]}}}"#
+            .utf8))
+    ]
+    model.capture = .object([
+      "active": .bool(true), "run_id": .string("fixture-run"),
+      "receiver_health": .object([
+        "receivers": .array([
+          .object([
+            "id": .string("bridge"),
+            "receiver": .object([
+              "backend": .string("flipper_marauder"), "bridge_identity": identity,
+            ]),
+          ])
+        ])
+      ]),
+    ])
+    let actual = try XCTUnwrap(model.currentReceiverIdentity(id: "bridge")?["bridge_identity"])
+    let lines = FlipperBridgeIdentityPresentation(identity: actual).lines
+    XCTAssertTrue(lines.contains("Flipper firmware: mntm-test"))
+    XCTAssertTrue(lines.contains("AirHound Live Bridge: 0.1.0"))
+    XCTAssertTrue(lines.contains("AWOK radio firmware unverified"))
+    model.configText = model.configText.replacingOccurrences(
+      of: "/dev/cu.fixture", with: "/dev/cu.other")
+    XCTAssertNil(model.currentReceiverIdentity(id: "bridge"))
+    model.configText = model.configText.replacingOccurrences(
+      of: "/dev/cu.other", with: "/dev/cu.fixture")
+    model.connected = false
+    XCTAssertNil(model.currentReceiverIdentity(id: "bridge"))
+    model.connected = true
+    model.capture = .object(["active": .bool(false), "run_id": .string("fixture-run")])
+    XCTAssertNil(model.currentReceiverIdentity(id: "bridge"))
   }
 
   func testRenderFlipperPrototypeRequirementsAndProvenance() throws {
