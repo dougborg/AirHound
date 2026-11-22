@@ -44,10 +44,11 @@ final class SessionModel: ObservableObject {
   private var hasPresentedWindow = false
   private weak var observationApp: AppModel?
   private var client: BackendClient?
+  private var connectionEpoch = UUID()
   private var pollTask: Task<Void, Never>?
   private var polling = false
-  private var pendingSetupMutation: (() async throws -> Void)?
-  @Published private(set) var setupMutationQueued = false
+  private var pendingUserAction: (() async throws -> Void)?
+  @Published private(set) var userActionQueued = false
   private var requestID = UUID().uuidString
   @Published private(set) var pendingConfig: Data?
   private var pendingSocket: String?
@@ -77,6 +78,7 @@ final class SessionModel: ObservableObject {
 
   func connect(executable: URL?) {
     guard let executable, !busy else { return }
+    connectionEpoch = UUID()
     connected = false
     pollTask?.cancel()
     preferences.set(socketPath, forKey: "serviceSocket")
@@ -226,8 +228,10 @@ final class SessionModel: ObservableObject {
     useSelectedReceivers()
   }
 
+  var canSubmitAction: Bool { connected && (!busy || polling) && !userActionQueued }
+
   var canEditPlan: Bool {
-    !isActive && (!busy || polling) && !setupMutationQueued && !hasPendingStart
+    !isActive && (!busy || polling) && !userActionQueued && !hasPendingStart
   }
   var plannedReceivers: [PlanReceiver] {
     guard let config = try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)) else {
@@ -410,16 +414,25 @@ final class SessionModel: ObservableObject {
   }
 
   // Keep one explicit user action while an in-flight status refresh completes.
-  // The closure captures the submitted plan/ID, not later editor selection.
+  // Callers capture the submitted plan, backend and run ID before queuing.
   @discardableResult
   func submitSetupMutation(_ operation: @escaping () async throws -> Void) -> Bool {
     guard connected, canEditPlan else {
       error = "The setup cannot be changed right now. Wait for the current operation and try again."
       return false
     }
+    return submitUserAction(operation)
+  }
+
+  @discardableResult
+  private func submitUserAction(_ operation: @escaping () async throws -> Void) -> Bool {
+    guard canSubmitAction else {
+      error = "Wait for the current operation or reconnect, then try again."
+      return false
+    }
     if polling {
-      pendingSetupMutation = operation
-      setupMutationQueued = true
+      pendingUserAction = operation
+      userActionQueued = true
     } else {
       perform(operation)
     }
@@ -433,25 +446,33 @@ final class SessionModel: ObservableObject {
   func finishBackgroundRefresh() {
     polling = false
     busy = false
-    let operation = pendingSetupMutation
-    pendingSetupMutation = nil
-    setupMutationQueued = false
+    let operation = pendingUserAction
+    pendingUserAction = nil
+    userActionQueued = false
     if let operation { perform(operation) }
   }
 
   func validate() {
-    perform {
-      guard let client = self.client else { return }
-      let value = try await client.validate(config: Data(self.configText.utf8))
+    guard let client else { return }
+    let config = Data(configText.utf8)
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      let value = try await client.validate(config: config)
       self.validation = String(decoding: try value.data(pretty: true), as: UTF8.self)
       self.message = "Plan validated. Receiver readiness is checked when capture starts."
     }
   }
 
   func start() {
-    perform {
-      guard let client = self.client else { return }
-      let config = Data(self.configText.utf8)
+    guard let client else { return }
+    let config = Data(configText.utf8)
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      guard self.captureEnabled, !self.isActive || self.hasPendingStart else {
+        throw ModelError.invalid("The recording state changed. Review it before starting.")
+      }
       if let pending = self.pendingConfig,
         pending != config || self.pendingSocket != client.socket.path
       {
@@ -460,6 +481,7 @@ final class SessionModel: ObservableObject {
         )
       }
       if self.pendingConfig == nil { _ = try await client.validate(config: config) }
+      try self.requireCurrent(client, epoch: connection)
       let store = PendingStartStore(socket: client.socket)
       let pending = try store.prepare(socket: client.socket, config: config)
       self.pendingConfig = pending.config
@@ -475,10 +497,27 @@ final class SessionModel: ObservableObject {
     }
   }
 
-  func control(_ action: CaptureControl) {
-    guard let id = activeID else { return }
-    perform {
-      guard let client = self.client else { return }
+  struct ControlTarget {
+    fileprivate let runID: String
+    fileprivate let client: BackendClient
+    fileprivate let connection: UUID
+  }
+
+  func controlTarget() -> ControlTarget? {
+    guard connected, isActive, let id = activeID, let client else { return nil }
+    return ControlTarget(runID: id, client: client, connection: connectionEpoch)
+  }
+
+  func control(_ action: CaptureControl, target: ControlTarget? = nil) {
+    guard let target = target ?? controlTarget() else { return }
+    let id = target.runID
+    let client = target.client
+    let connection = target.connection
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      guard self.isActive, self.activeID == id else {
+        throw ModelError.invalid("The active recording changed. Review it before continuing.")
+      }
       let result = try await client.control(action, runID: id)
       if result["state"]?.string == "failed" {
         self.error =
@@ -486,6 +525,15 @@ final class SessionModel: ObservableObject {
       }
       self.runs = []
       try await self.update()
+    }
+  }
+
+  private func requireCurrent(_ submitted: BackendClient, epoch: UUID) throws {
+    guard connected, connectionEpoch == epoch, let current = client,
+      current.socket == submitted.socket,
+      current.executable == submitted.executable
+    else {
+      throw ModelError.invalid("The service changed. Reconnect and review before continuing.")
     }
   }
 
@@ -665,6 +713,7 @@ final class SessionModel: ObservableObject {
     }
   }
   func disconnect() {
+    connectionEpoch = UUID()
     recordingEpoch = UUID()
     pollTask?.cancel()
     pollTask = nil
