@@ -320,8 +320,16 @@ file, zero reported UART drops/errors/unread bytes. Because that build did not
 retain preflight bytes, silence versus line mismatch remains unknown. A subsequent
 stop-only recovery returned two stop acknowledgments in 85 hash-verified bytes,
 ending in `stopscan` with idle loader and released transport. No RF retry occurred.
-The follow-up retains bounded preflight bytes and adds a mode that cannot emit
-Start, so transport diagnosis precedes another capture attempt.
+The `aace44e` follow-up passed UART-free synthetic load/exit (52,392 bytes free
+heap loaded; 127,824 after exit). Its explicit stop-only mode cannot emit Start.
+That mode timed out after 1,500 ms with 18 hash-verified bytes: five `0xf3` bytes
+preceded the echoed `stopscan` on the same line, followed by a prompt, without
+the required acknowledgment. It reported zero drops/errors/unread bytes and
+OTG disabled; the owned dialog closed and loader returned idle. This establishes
+received console data, not the cause of the prefix bytes. The next narrow change
+adds the same leading CRLF as the working JS stop path to terminate stale input,
+while retaining exact acknowledgment matching. Its device stop-only validation
+is pending; no baud, power, firmware, or capture-duration change was made.
 
 ## Remaining acceptance
 
@@ -337,7 +345,7 @@ Start, so transport diagnosis precedes another capture attempt.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Validate the isolated diagnostic's new stop-only preflight mode, then its
+- Validate the isolated diagnostic's console-line resynchronization in stop-only mode, then its
   bounded passive acquisition and a genuine complete capture/import. The earlier
   revision passed UART-free load/exit and measured headroom only.
   Fresh identity/control and displayed beacon text do not replace a complete

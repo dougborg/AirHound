@@ -1,5 +1,22 @@
 use airhound_flipper::diagnostic::{Command, Phase, Run, Witness, write_complete};
 
+#[test]
+fn stop_starts_at_a_fresh_console_line_without_weakening_ack_matching() {
+    use airhound_flipper::diagnostic::{START, STOP};
+    assert_eq!(STOP, b"\r\nstopscan\r\n");
+    assert_eq!(START, b"sniffbeacon -serial\r\n");
+    let mut run = Run::preflight(0);
+    // Actual failed diagnostic bytes: a dirty line was echoed, not an ack.
+    run.feed(1, b"#\xf3\xf3\xf3\xf3\xf3stopscan\r\n> ");
+    assert_eq!(run.poll(60, false, false), None);
+    assert!(!run.evidence.preflight_stop_text_ack);
+    run.feed(61, b"\r\nStopping WiFi tran/recv\r\n");
+    assert_eq!(run.poll(111, false, false), None);
+    assert_eq!(run.phase, Phase::Done);
+    assert!(run.preflight_ready(0, 0, 0));
+    assert!(!run.evidence.start_sent);
+}
+
 fn global() -> Vec<u8> {
     let mut g = vec![0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0];
     g.extend([0; 8]);

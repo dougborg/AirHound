@@ -2,7 +2,9 @@
 //! Text acknowledgments are observations, not authenticated proof of RF state.
 
 pub const START: &[u8] = b"sniffbeacon -serial\r\n";
-pub const STOP: &[u8] = b"stopscan\r\n";
+// Finish any stale console input before the fixed stop command. This matches
+// the verified JS stop path; acknowledgment matching remains strict.
+pub const STOP: &[u8] = b"\r\nstopscan\r\n";
 pub const CAPACITY: usize = 48 * 1024;
 const BEGIN: &[u8; 11] = b"[BUF/BEGIN]";
 const CLOSE: &[u8; 11] = b"[BUF/CLOSE]";
