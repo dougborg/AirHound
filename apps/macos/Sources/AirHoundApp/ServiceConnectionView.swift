@@ -56,13 +56,13 @@ struct ServiceConnectionView: View {
           .disabled(session.connected)
         Button("Start Local Service") { session.startService(executable: app.executable) }
           .disabled(session.connected)
-      }.disabled(session.busy)
+      }.disabled(session.isPerformingUserAction || session.userActionQueued)
       HStack {
         Button("Choose Backend…") { app.chooseBackend() }
         if session.connected {
           Button("Disconnect Client") { session.disconnect() }
         }
-      }.disabled(session.busy)
+      }.disabled(session.isPerformingUserAction || session.userActionQueued)
       Text(session.message).font(.callout).foregroundStyle(.secondary)
       if let error = session.error {
         Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)

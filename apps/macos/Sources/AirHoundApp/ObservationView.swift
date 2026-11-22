@@ -212,10 +212,10 @@ struct RecordNavigation: View {
         Toggle("Follow new records", isOn: $session.followLive).toggleStyle(.checkbox)
         Spacer()
         Button("From Beginning") { session.rewindRecords() }
-          .disabled(session.busy || !session.connected)
+          .disabled(!session.canSubmitAction)
         Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
           session.loadMoreRecords()
-        }.disabled(session.busy || !session.connected)
+        }.disabled(!session.canSubmitAction)
       }.padding(12)
       Divider()
     }

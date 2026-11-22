@@ -75,6 +75,16 @@ final class SessionModel: ObservableObject {
   var activeID: String? { capture?["run_id"]?.string }
   var state: String { capture?["state"]?.string ?? capture?["last"]?["state"]?.string ?? "idle" }
   var isActive: Bool { capture?["active"] == .bool(true) }
+  var isPerformingUserAction: Bool { busy && !polling }
+  var receiverStatusIsCurrent: Bool { connected && isActive }
+  var recordingStateLabel: String {
+    guard connected else { return "Disconnected" }
+    return isActive ? state.capitalized : "Idle"
+  }
+  var receiverStatusHeading: String {
+    if receiverStatusIsCurrent { return "Receiver status" }
+    return state == "idle" ? "Receiver status" : "Last recording · \(state.capitalized)"
+  }
 
   func connect(executable: URL?) {
     guard let executable, !busy else { return }
@@ -354,26 +364,42 @@ final class SessionModel: ObservableObject {
   }
 
   func refreshDevices() {
-    perform {
-      guard let client = self.client else { return }
-      self.inventory = try await client.inventory()
+    guard let client else { return }
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      let inventory = try await client.inventory()
+      try self.requireCurrent(client, epoch: connection)
+      self.inventory = inventory
     }
   }
 
   func refreshSetups() {
-    perform {
-      guard let client = self.client else { return }
-      self.setups = try await client.setups()
+    guard let client else { return }
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      let setups = try await client.setups()
+      try self.requireCurrent(client, epoch: connection)
+      self.setups = setups
       self.setupError = nil
     }
   }
   func reviewSetup() {
-    guard canEditPlan, !selectedSetupID.isEmpty else { return }
-    perform {
-      guard let client = self.client else { return }
-      self.setupReview = try await client.loadSetup(id: self.selectedSetupID)
+    guard canEditPlan, !selectedSetupID.isEmpty, let client else { return }
+    let id = selectedSetupID
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      let review = try await client.loadSetup(id: id)
+      try self.requireCurrent(client, epoch: connection)
+      guard self.canEditPlanAfterDispatch else {
+        throw ModelError.invalid("The recording changed. Review the setup again after it finishes.")
+      }
+      self.setupReview = review
     }
   }
+  private var canEditPlanAfterDispatch: Bool { !isActive && !hasPendingStart }
   func applySetup(_ review: SetupReview) {
     guard canEditPlan else { return }
     do {
@@ -552,10 +578,15 @@ final class SessionModel: ObservableObject {
   }
 
   func refreshHistory(more: Bool = false) {
-    perform {
-      guard let client = self.client else { return }
-      let page = try await client.recordings(before: more ? self.nextRun : nil)
-      self.runs = more ? self.runs + page.runs : page.runs
+    guard let client else { return }
+    let connection = connectionEpoch
+    let before = more ? nextRun : nil
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      let page = try await client.recordings(before: before)
+      try self.requireCurrent(client, epoch: connection)
+      let existing = Set(self.runs.map(\.id))
+      self.runs = more ? self.runs + page.runs.filter { !existing.contains($0.id) } : page.runs
       self.nextRun = page.hasMore ? page.nextBefore : nil
     }
   }
@@ -569,31 +600,45 @@ final class SessionModel: ObservableObject {
   }
 
   func open(_ run: StoredRun, app: AppModel) {
-    guard !busy else { return }
+    guard canSubmitAction, let client else { return }
+    let connection = connectionEpoch
     app.beginRecordingSelection()
-    browsingRun = run.id
-    observationApp = app
-    window = RecordWindow()
-    recordingEpoch = UUID()
-    hasPresentedWindow = false
-    followLive = isActive && activeID == run.id
-    app.selectedTab = "observations"
-    app.recordingRevision = UUID()
-    loadMoreRecords()
+    let selection = app.recordingSelection
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      guard app.recordingSelection == selection else { return }
+      self.browsingRun = run.id
+      self.observationApp = app
+      self.window = RecordWindow()
+      self.recordingEpoch = UUID()
+      self.hasPresentedWindow = false
+      self.followLive = self.isActive && self.activeID == run.id
+      app.selectedTab = "observations"
+      app.recordingRevision = UUID()
+      try await self.fetchRecords()
+    }
   }
 
-  func loadMoreRecords() {
-    perform { try await self.fetchRecords() }
-  }
+  func loadMoreRecords() { submitRecordRead(rewind: false) }
+  func rewindRecords() { submitRecordRead(rewind: true) }
 
-  func rewindRecords() {
-    guard !busy else { return }
-    window = RecordWindow()
-    recordingEpoch = UUID()
-    hasPresentedWindow = false
-    followLive = false
-    observationApp?.recordingRevision = UUID()
-    loadMoreRecords()
+  private func submitRecordRead(rewind: Bool) {
+    guard let client, let app = observationApp else { return }
+    let connection = connectionEpoch
+    let epoch = recordingEpoch
+    let selection = app.recordingSelection
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      guard self.recordingEpoch == epoch, app.recordingSelection == selection else { return }
+      if rewind {
+        self.window = RecordWindow()
+        self.recordingEpoch = UUID()
+        self.hasPresentedWindow = false
+        self.followLive = false
+        app.recordingRevision = UUID()
+      }
+      try await self.fetchRecords()
+    }
   }
 
   private func fetchRecords() async throws {
@@ -643,15 +688,24 @@ final class SessionModel: ObservableObject {
     hasPresentedWindow = false
   }
 
-  func export() {
-    let panel = NSSavePanel()
-    panel.title = "Export recording archive"
-    panel.nameFieldStringValue = "AirHound-\(Int(Date().timeIntervalSince1970)).sqlite"
-    panel.message = "Exports a consistent snapshot of all recordings. Choose a new filename."
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    perform {
-      guard let client = self.client else { return }
+  func export(to destination: URL? = nil) {
+    guard canSubmitAction, let client else { return }
+    let connection = connectionEpoch
+    let url: URL
+    if let destination {
+      url = destination
+    } else {
+      let panel = NSSavePanel()
+      panel.title = "Export recording archive"
+      panel.nameFieldStringValue = "AirHound-\(Int(Date().timeIntervalSince1970)).sqlite"
+      panel.message = "Exports a consistent snapshot of all recordings. Choose a new filename."
+      guard panel.runModal() == .OK, let selected = panel.url else { return }
+      url = selected
+    }
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
       _ = try await client.export(to: url)
+      try self.requireCurrent(client, epoch: connection)
       self.message = "Archive exported to \(url.path)"
     }
   }

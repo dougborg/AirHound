@@ -52,3 +52,9 @@ presents backend binding/resource checks before applying the plan. GPSD location
 settings are a separate form section because a location provider is not a radio
 receiver. These are presentation adapters to the shared Rust client; readiness,
 validation, persistence and device ownership remain backend responsibilities.
+
+Capture actions stay in a fixed native control row above both panes, so scrolling
+receiver and GPS settings cannot hide Start, Pause/Resume or Finish. Background
+status polling does not flash controls disabled or display a recording-operation
+spinner. Completed-run health is labeled historical while the live service state
+reads Idle; replaying stored health must not imply that a receiver is still running.

@@ -67,6 +67,35 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertEqual(session.configText, valid, "The active plan cannot be edited")
   }
 
+  func testHistoricalHealthAndPollingDoNotImplyActiveCapture() {
+    let session = SessionModel()
+    session.connected = true
+    session.captureEnabled = true
+    session.configText = "{}"
+    session.capture = .object([
+      "active": .bool(false), "last": .object(["state": .string("finished")]),
+    ])
+    XCTAssertEqual(session.recordingStateLabel, "Idle")
+    XCTAssertEqual(session.receiverStatusHeading, "Last recording · Finished")
+    XCTAssertFalse(session.receiverStatusIsCurrent)
+    session.beginBackgroundRefresh()
+    XCTAssertFalse(
+      session.isPerformingUserAction, "Status polling must not show a capture-operation spinner")
+    XCTAssertTrue(session.canSubmitAction, "Polling must not flash the controls disabled")
+    session.finishBackgroundRefresh()
+    session.busy = true
+    XCTAssertTrue(session.isPerformingUserAction)
+    XCTAssertFalse(session.canSubmitAction)
+    session.busy = false
+    session.capture = .object(["active": .bool(true), "state": .string("paused")])
+    XCTAssertEqual(session.recordingStateLabel, "Paused")
+    XCTAssertTrue(session.receiverStatusIsCurrent)
+    session.connected = false
+    XCTAssertEqual(session.recordingStateLabel, "Disconnected")
+    XCTAssertFalse(
+      session.receiverStatusIsCurrent, "Cached receiver state is not current after disconnect")
+  }
+
   func testStartExplanationMatchesConnectionPlanAndOperationGates() {
     let session = SessionModel()
     XCTAssertEqual(session.startUnavailableReason, "Connect to the service to start a recording.")
@@ -267,9 +296,15 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertNil(session.error)
     XCTAssertEqual(session.setups.count, 1)
     session.configText = #"{"version":1,"receivers":[]}"#
+    let submittedID = session.selectedSetupID
+    session.beginBackgroundRefresh()
     session.reviewSetup()
+    XCTAssertTrue(session.userActionQueued)
+    session.selectedSetupID = "changed-after-click"
+    session.finishBackgroundRefresh()
     try await idle()
     let review = try XCTUnwrap(session.setupReview)
+    XCTAssertEqual(review.id, submittedID, "Queued Load uses the setup selected at click time")
     XCTAssertEqual(session.plannedReceivers.count, 0, "Review must not apply automatically")
     session.applySetup(review)
     XCTAssertEqual(
@@ -280,12 +315,54 @@ final class SetupPresentationTests: XCTestCase {
     try await idle()
     XCTAssertTrue(session.setups.isEmpty)
     XCTAssertEqual(session.plannedReceivers.map(\.id), ["custom-m5"])
+    session.beginBackgroundRefresh()
+    session.refreshHistory()
+    XCTAssertTrue(session.userActionQueued)
+    session.finishBackgroundRefresh()
+    try await idle()
+    XCTAssertFalse(session.runs.isEmpty)
+    let archive = root.appendingPathComponent("queued-export.sqlite")
+    session.beginBackgroundRefresh()
+    session.export(to: archive)
+    XCTAssertTrue(session.userActionQueued)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: archive.path))
+    session.finishBackgroundRefresh()
+    try await idle()
+    XCTAssertTrue(FileManager.default.fileExists(atPath: archive.path))
+    XCTAssertNil(session.error)
     let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(
       String.init)
     XCTAssertTrue(arguments.contains("profiles"))
+    XCTAssertTrue(arguments.contains("export"))
     for command in ["list", "save", "load", "delete"] { XCTAssertTrue(arguments.contains(command)) }
     XCTAssertFalse(arguments.contains("start"))
     XCTAssertFalse(arguments.contains("finish"))
+    session.beginBackgroundRefresh()
+    session.refreshSetups()
+    XCTAssertTrue(session.userActionQueued)
+    session.disconnect()
+    session.finishBackgroundRefresh()
+    try await idle()
+    XCTAssertTrue(session.error?.contains("service changed") == true)
+    XCTAssertEqual(
+      try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init),
+      arguments,
+      "A queued refresh must not reach an old backend after disconnect")
+    session.connect(executable: wrapper)
+    try await idle()
+    let beforeExport = try String(contentsOf: log, encoding: .utf8)
+    let staleArchive = root.appendingPathComponent("stale-export.sqlite")
+    session.beginBackgroundRefresh()
+    session.export(to: staleArchive)
+    XCTAssertTrue(session.userActionQueued)
+    session.disconnect()
+    session.finishBackgroundRefresh()
+    try await idle()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: staleArchive.path))
+    XCTAssertEqual(
+      try String(contentsOf: log, encoding: .utf8), beforeExport,
+      "A queued export must not reach an old backend after disconnect")
+
   }
 
   /// Optional bounded screenshot fixture. Never connects to a service or opens radios.
@@ -300,6 +377,15 @@ final class SetupPresentationTests: XCTestCase {
     session.setupsAvailable = true
     session.locationProviders = ["gpsd"]
     session.backendBuild = "git fixture (synthetic preview)"
+    session.capture = .object([
+      "active": .bool(false), "last": .object(["state": .string("finished")]),
+    ])
+    let historical = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        #"{"receiver_health":{"receivers":[{"id":"cat","scanners":{"ble":{"state":"running"}}}]}}"#
+          .utf8))
+    session.receiverStatuses = ReceiverStatus.decode(historical, sourceEvents: [:])
     session.configText =
       #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/cu.example-gps"},"receivers":[{"id":"system-ble","source":{"kind":"native_ble"}},{"id":"m5","source":{"kind":"airhound_serial","port":"/dev/cu.example-m5","baud":460800}},{"id":"cat","source":{"kind":"sniffle","port":"/dev/cu.example-cat","python":"/example/python","helper":"/example/sniffle-source.py","channel":37}}]}"#
     let decoder = JSONDecoder()
@@ -316,7 +402,7 @@ final class SetupPresentationTests: XCTestCase {
       ("dark", ColorScheme.dark, NSAppearance.Name.darkAqua),
     ] {
       let window = NSWindow(
-        contentRect: NSRect(x: -3000, y: -3000, width: 1280, height: 820), styleMask: [.titled],
+        contentRect: NSRect(x: -3000, y: -3000, width: 1020, height: 600), styleMask: [.titled],
         backing: .buffered, defer: false)
       window.isReleasedWhenClosed = false
       window.appearance = NSAppearance(named: appearance)

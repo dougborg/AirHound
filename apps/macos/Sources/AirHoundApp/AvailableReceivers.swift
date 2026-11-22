@@ -67,7 +67,7 @@ struct AvailableReceivers: View {
           Text(diagnostic.message).font(.caption).foregroundStyle(.secondary)
         }
         Button("Refresh Devices") { session.refreshDevices() }
-          .disabled(!session.connected || session.busy)
+          .disabled(!session.canSubmitAction)
         Text("Discovery lists candidates. Adding one does not verify reception or open its radio.")
           .font(.caption).foregroundStyle(.secondary)
       } else {
