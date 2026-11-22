@@ -119,7 +119,8 @@ not evidence that the service has disconnected.
 
 ## Observation performance
 
-The native table caches its filtered/sorted rows until the recording or query
+The native AppKit table reuses fixed-height cells inside the SwiftUI shell. It
+caches its filtered/sorted rows until the recording or query
 changes. Scrolling, selection and inspector visibility do not rerun the query.
 Live pages decode off the main actor; retained rows keep their database cursor
 IDs and are decoded once. Empty polls do not publish a replacement table. The
@@ -130,6 +131,7 @@ Run the synthetic presentation microbenchmark without touching radios:
 
 ```sh
 sh apps/macos/benchmark-observations.sh
+sh apps/macos/benchmark-table.sh
 ```
 
 On the development Apple Silicon Mac, reading a representative 1,000-record
@@ -140,3 +142,11 @@ measured about 9.7 ms; rendering no longer performs those passes. These are
 optimized-build CPU measurements, not a claim of a measured scrolling frame rate.
 The script reports the uncached sort baseline as a comparison and does not gate
 CI on machine-dependent timing.
+
+The table benchmark compares the previous SwiftUI table with the AppKit table
+using 1,000 synthetic observations, a 1,000 × 600 viewport and 300 scroll,
+layout and display steps in an off-screen window. A local optimized run took
+4.22 s for SwiftUI versus 1.43 s for AppKit, with 7,341 versus 469 instantiated
+views after the traversal. This reproduces the row-hosting/layout cost seen in
+the running app's main-thread profile. It includes run-loop waits, is not an FPS
+measurement, and does not replace checking trackpad scrolling in the real app.
