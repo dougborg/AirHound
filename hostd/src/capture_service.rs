@@ -247,6 +247,7 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
         storage::output::SESSION_SOURCE.into(),
         json!({"kind":"session_control"}),
     ));
+    let gps = plan.location.as_ref().map(crate::gpsd::Options::from);
     let receivers = session_runtime::prepare(plan).await?;
     let writer = tokio::task::spawn_blocking(move || {
         Writer::start_request(
@@ -263,12 +264,13 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
     })
     .await
     .map_err(io::Error::other)??;
-    Ok(launch(receivers, filter, writer))
+    Ok(launch(receivers, filter, writer, gps))
 }
 fn launch(
     receivers: Vec<session_runtime::ReceiverTask>,
     filter: FilterConfig,
     writer: Writer,
+    gps: Option<crate::gpsd::Options>,
 ) -> Active {
     let id = writer.run_id.clone();
     let (output, recording) = storage::output::attach(io::sink(), writer);
@@ -283,7 +285,7 @@ fn launch(
             (filter, capture_control),
             csv,
             output,
-            None,
+            gps,
             |_, _, _| async {},
             async move {
                 loop {
@@ -347,7 +349,7 @@ mod tests {
             )
             .unwrap();
             let id = writer.run_id.clone();
-            let active = launch(vec![receiver], FilterConfig::new(), writer);
+            let active = launch(vec![receiver], FilterConfig::new(), writer, None);
             let (handle, task) = spawn_with_active(self.path(), Some(active));
             (handle, task, id)
         }
@@ -356,6 +358,116 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn configured_gpsd_fix_is_retained_with_live_observations_and_shutdown_closes_it() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let version =
+                json!({"class":"VERSION","release":"fixture","proto_major":16,"proto_minor":1});
+            let fix = json!({"class":"TPV","device":"fixture-gps","mode":3,"time":chrono::Utc::now().to_rfc3339(),"lat":10.,"lon":20.,"altMSL":15.,"eph":2.});
+            socket
+                .write_all(format!("{version}\n{fix}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut commands = Vec::new();
+            socket.read_to_end(&mut commands).await.unwrap();
+            assert_eq!(commands, b"?WATCH={\"enable\":true,\"json\":true};\n");
+        });
+        let receiver = session_runtime::ReceiverTask::fixture(|tx, control| async move {
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while control.external_location_evidence().is_none() {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .map_err(io::Error::other)?;
+            tx.send(crate::observation::ScanEvent::WiFi(
+                airhound::scanner::WiFiEvent {
+                    mac: [0x34; 6],
+                    ssid: "fixture".try_into().unwrap(),
+                    rssi: -50,
+                    channel: 6,
+                    frequency_mhz: Some(2437),
+                    frame_type: airhound::scanner::FrameType::Beacon,
+                    raw_ies: Default::default(),
+                    security: Default::default(),
+                },
+            ))
+            .await
+            .map_err(io::Error::other)?;
+            let mut state = control.subscribe();
+            while !state.borrow().shutdown {
+                state.changed().await.map_err(io::Error::other)?;
+            }
+            Ok(())
+        });
+        let fixture = Fixture::new();
+        let writer = Writer::start(
+            fixture.path(),
+            RecordingMode::Live,
+            json!({"location":{"kind":"gpsd","endpoint":endpoint,"device":"fixture-gps"}}),
+            vec![
+                ("fixture".into(), json!({})),
+                (storage::output::SESSION_SOURCE.into(), json!({})),
+            ],
+        )
+        .unwrap();
+        let id = writer.run_id.clone();
+        let active = launch(
+            vec![receiver],
+            FilterConfig::new(),
+            writer,
+            Some(crate::gpsd::Options {
+                endpoint,
+                device: Some("fixture-gps".into()),
+            }),
+        );
+        let (handle, actor) = spawn_with_active(fixture.path(), Some(active));
+        let reader = storage::Reader::open(&fixture.path()).unwrap();
+        let observation = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(record) = reader
+                    .records(&id, 0, 100)
+                    .unwrap()
+                    .records
+                    .into_iter()
+                    .find(|record| record.kind == "wifi_observation")
+                {
+                    break record.payload;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(observation["receiver_location"]["latitude"], 10.);
+        assert_eq!(observation["receiver_location"]["device"], "fixture-gps");
+        assert_eq!(
+            observation["receiver_location"]["association"],
+            "host_processing_time"
+        );
+        assert_eq!(observation["session_source"]["receiver_id"], "fixture");
+        let status = handle.request(Action::Status).await.unwrap();
+        assert_eq!(
+            status["receiver_health"]["location"]["daemon"]["version"],
+            "fixture"
+        );
+        assert_eq!(
+            handle.request(Action::Finish(id.clone())).await.unwrap()["state"],
+            "finished"
+        );
+        assert_eq!(reader.runs(1).unwrap()[0].state, "finished");
+        handle.request(Action::Shutdown).await.unwrap();
+        actor.await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

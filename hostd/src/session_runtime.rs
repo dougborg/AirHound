@@ -97,6 +97,8 @@ pub(crate) async fn preview(plan: SessionConfig) -> io::Result<serde_json::Value
         "validation_scope": "configuration_and_local_resource_metadata",
         "readiness": "unverified", "resolved_config": plan,
         "receivers": assignments,
+        "location": plan.location,
+        "location_readiness": "not_connected",
     }))
 }
 
@@ -505,6 +507,7 @@ pub(crate) struct SourceWriter<'a, W> {
     source: Option<&'a EventSource>,
     pending: Vec<u8>,
     pub replay: Option<&'a crate::wifi_pcap::Metadata>,
+    pub receiver_location: Option<serde_json::Value>,
 }
 impl<'a, W: Write> SourceWriter<'a, W> {
     pub fn new(output: &'a mut W, source: Option<&'a EventSource>) -> Self {
@@ -513,12 +516,13 @@ impl<'a, W: Write> SourceWriter<'a, W> {
             source,
             pending: Vec::new(),
             replay: None,
+            receiver_location: None,
         }
     }
 }
 impl<W: Write> Write for SourceWriter<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.source.is_none() && self.replay.is_none() {
+        if self.source.is_none() && self.replay.is_none() && self.receiver_location.is_none() {
             return self.output.write(bytes);
         }
         for chunk in bytes.split_inclusive(|b| *b == b'\n') {
@@ -544,6 +548,15 @@ impl<W: Write> Write for SourceWriter<'_, W> {
                         "capture".into(),
                         serde_json::to_value(replay).map_err(io::Error::other)?,
                     );
+                }
+                // A receiver position is not the transmitter's position or proof
+                // that producer timestamps are synchronized with the host.
+                if self.replay.is_none()
+                    && object.get("replay") != Some(&serde_json::Value::Bool(true))
+                {
+                    if let Some(location) = &self.receiver_location {
+                        object.insert("receiver_location".into(), location.clone());
+                    }
                 }
                 observation::write_json(self.output, &value)?;
                 self.pending.clear();

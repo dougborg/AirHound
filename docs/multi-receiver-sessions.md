@@ -54,6 +54,13 @@ Do not combine `--session-config` with individual source-selection flags such as
 such as `--output`, `--rssi`, verbosity and `--gpsd` still apply. Existing files
 remain protected unless `--output` and `--overwrite` are both supplied.
 
+For service-controlled runs, an optional top-level `location` field selects an
+already-running gpsd provider independently of capture receivers. For example,
+`"location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/gps"}`.
+Do not combine this with `--gpsd`. Live records retain receiver/rig coordinates
+with explicit processing-time provenance, while replay records never acquire the
+host's current location. See [GNSS session setup and evidence](gnss-wardriving.md).
+
 ## Receiver kinds
 
 | `source.kind` | Configuration | Scope |
