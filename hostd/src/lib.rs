@@ -6,7 +6,9 @@ pub mod marauder;
 
 pub mod session;
 
+pub mod build_info;
 pub mod discovery;
+pub mod profiles;
 pub mod service;
 
 pub mod storage;

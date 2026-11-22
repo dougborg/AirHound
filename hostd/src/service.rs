@@ -27,6 +27,14 @@ const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
 pub type BackendResult = Pin<Box<dyn Future<Output = Result<Value, ApiError>> + Send>>;
 pub trait Backend: Send + Sync + 'static {
+    fn profiles(&self, _command: Command) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "saved profiles are not configured",
+            ))
+        })
+    }
     fn export_recordings(&self, _destination: String) -> BackendResult {
         Box::pin(async {
             Err(ApiError::new(
@@ -153,7 +161,10 @@ pub async fn serve(
                 .unwrap_or_default()
                 .as_nanos()
         ),
-        build_version: env!("CARGO_PKG_VERSION").into(),
+        build_version: crate::build_info::current()["display_version"]
+            .as_str()
+            .unwrap_or("source revision unknown")
+            .into(),
         max_frame_bytes: MAX_FRAME_BYTES,
         methods: METHODS.iter().map(|s| (*s).into()).collect(),
         mode: if backend.capture_enabled() {
@@ -271,9 +282,23 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 "send hello before other commands",
             )),
             Command::Status {} => Ok(
-                json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS}),
+                json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS, "build":crate::build_info::current()}),
             ),
             Command::Capture { action } => bounded(backend.capture(action)).await,
+            command @ (Command::ProfilesList {}
+            | Command::ProfilesLoad { .. }
+            | Command::ProfilesDelete { .. }
+            | Command::ProfilesSave { .. }) => {
+                if matches!(&command, Command::ProfilesSave { config, .. } if serde_json::to_vec(config).map_or(true, |bytes| bytes.len() > MAX_CONFIG_BYTES))
+                {
+                    Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "profile config exceeds 64 KiB",
+                    ))
+                } else {
+                    bounded(backend.profiles(command)).await
+                }
+            }
             Command::RecordingExport { destination } => {
                 bounded(backend.export_recordings(destination)).await
             }
@@ -371,6 +396,9 @@ mod tests {
     }
     struct Fake;
     impl Backend for Fake {
+        fn profiles(&self, command: Command) -> BackendResult {
+            Box::pin(async move { Ok(serde_json::to_value(command).unwrap()) })
+        }
         fn devices(&self, all: bool) -> BackendResult {
             Box::pin(async move {
                 Ok(json!({"schema_version":1,"mode":"passive","devices":[],"all":all}))
@@ -412,6 +440,39 @@ mod tests {
         let mut b = connect(&path).await;
         assert_eq!(a.hello.instance_id, b.hello.instance_id);
         assert_eq!(a.devices(true).await.unwrap()["all"], true);
+        assert_eq!(a.list_profiles().await.unwrap()["method"], "profiles.list");
+        let saved = a
+            .save_profile(
+                "fixture".into(),
+                "Fixture".into(),
+                json!({"version":1}),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved["method"], "profiles.save");
+        assert_eq!(saved["params"]["replace"], false);
+        assert_eq!(
+            a.load_profile("fixture".into()).await.unwrap()["params"]["id"],
+            "fixture"
+        );
+        assert_eq!(
+            a.delete_profile("fixture".into()).await.unwrap()["method"],
+            "profiles.delete"
+        );
+        assert!(matches!(
+            a.save_profile(
+                "large".into(),
+                "Large".into(),
+                json!({"padding":"x".repeat(MAX_CONFIG_BYTES)}),
+                false
+            )
+            .await,
+            Err(airhound_client::ClientError::Remote(ApiError {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }))
+        ));
         assert!(matches!(
             a.validate(json!({"version":1,"padding":"x".repeat(MAX_CONFIG_BYTES)}))
                 .await,

@@ -338,6 +338,10 @@ Hardware/driver compatibility and RF loss still need live validation.
 
 ## Shared local control API
 
+The shared service also provides [saved receiver setups](../docs/device-profiles.md)
+through `client --socket PATH profiles list|save|load|delete`. Profiles retain
+complete plans and helper paths; loading rechecks resources without starting capture.
+
 The source-built `serve --socket PATH` and `client --socket PATH` commands expose
 passive device inventory, status and session validation through a shared Rust
 client. By default they do not start scans. See the [control API guide](../docs/shared-backend-api.md)

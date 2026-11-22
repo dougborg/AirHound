@@ -11,6 +11,10 @@ pub const METHODS: &[&str] = &[
     "status",
     "devices.list",
     "devices.identify",
+    "profiles.list",
+    "profiles.save",
+    "profiles.load",
+    "profiles.delete",
     "session.validate",
     "recordings.list",
     "recordings.records",
@@ -36,6 +40,20 @@ pub enum Command {
     },
     #[serde(rename = "devices.identify")]
     DevicesIdentify { config: Value },
+    #[serde(rename = "profiles.list")]
+    ProfilesList {},
+    #[serde(rename = "profiles.save")]
+    ProfilesSave {
+        id: String,
+        name: String,
+        config: Value,
+        #[serde(default)]
+        replace: bool,
+    },
+    #[serde(rename = "profiles.load")]
+    ProfilesLoad { id: String },
+    #[serde(rename = "profiles.delete")]
+    ProfilesDelete { id: String },
     #[serde(rename = "session.validate")]
     SessionValidate { config: Value },
     #[serde(rename = "recordings.list")]
@@ -153,6 +171,19 @@ mod tests {
             Command::Hello {},
             Command::Status {},
             Command::DevicesList { all: true },
+            Command::ProfilesList {},
+            Command::ProfilesSave {
+                id: "fixture".into(),
+                name: "Fixture".into(),
+                config: serde_json::json!({"version":1}),
+                replace: false,
+            },
+            Command::ProfilesLoad {
+                id: "fixture".into(),
+            },
+            Command::ProfilesDelete {
+                id: "fixture".into(),
+            },
             Command::DevicesIdentify {
                 config: serde_json::json!({"device_id":"fixture"}),
             },
