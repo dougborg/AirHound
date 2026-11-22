@@ -232,7 +232,10 @@ pub(super) fn run(
     let stop = super::cancellation_flag()?;
     let (commands, input_outcome) = command_reader(stop.clone());
     let out = Output::with_rotation(std::io::stdout(), rotation);
-    out.send(&json!({"type":"hello","protocol_version":1}), false)?;
+    out.send(
+        &json!({"type":"hello","protocol_version":1,"helper_build":crate::build_info::current()}),
+        false,
+    )?;
     let mut selection = mt7610u_lab::selection::Selection::new(selector);
     let hardware = Hardware::new(
         firmware,

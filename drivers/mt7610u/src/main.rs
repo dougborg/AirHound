@@ -1,4 +1,5 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+mod build_info;
 mod capture;
 use capture::capture;
 mod recording;
@@ -33,6 +34,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Report this executable build without opening USB or firmware.
+    BuildInfo,
     /// List matching USB descriptors/topology without opening device handles.
     ListDevices,
     /// Bounded live child protocol with pause/resume/stop commands on stdin.
@@ -82,7 +85,10 @@ fn main() -> Result<()> {
     let args = Args::parse();
     if matches!(
         args.command,
-        Command::ListDevices | Command::InspectFirmware { .. } | Command::Replay { .. }
+        Command::BuildInfo
+            | Command::ListDevices
+            | Command::InspectFirmware { .. }
+            | Command::Replay { .. }
     ) {
         ensure!(
             args.usb_selector.is_none(),
@@ -90,6 +96,7 @@ fn main() -> Result<()> {
         );
     }
     match args.command {
+        Command::BuildInfo => write_json(&mut std::io::stdout().lock(), &build_info::current())?,
         Command::ListDevices => write_json(
             &mut std::io::stdout().lock(),
             &serde_json::to_value(mt7610u_lab::selection::list()?)?,

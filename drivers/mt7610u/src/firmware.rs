@@ -61,6 +61,12 @@ impl<'a> Firmware<'a> {
         })
     }
 
+    /// Metadata of the supplied file; this alone does not identify a running MCU.
+    pub fn image_metadata(&self) -> serde_json::Value {
+        serde_json::json!({"version":self.version,"build_version":self.build_version,
+            "build_time":self.build_time.trim_end_matches('\0'),"sha256":self.sha256})
+    }
+
     pub fn require_reference(&self) -> Result<()> {
         ensure!(self.sha256 == REFERENCE_SHA256, "Unvalidated firmware SHA256 {}; this experiment accepts only the pinned reference image", self.sha256);
         Ok(())
