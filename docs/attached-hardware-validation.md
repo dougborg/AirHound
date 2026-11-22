@@ -75,7 +75,7 @@ that opening the port is nondisruptive.
 | CatSniffer + managed GPSD, 20 seconds | 1,356 BLE packets; 1,346 had fresh receiver/rig location, ten startup packets correctly unlocated; finished | Setup save/load and owned daemon startup/finish passed. gpsd 3.27.5/protocol 16.1 and Sniffle 1.11.0/API 0 reported; daemon/private service exited and endpoints released. Native form remains to be checked in the actual final GUI |
 | Assembled M5 + CatSniffer + ALFA + managed GPS, 65.72 seconds | 6,191 observations: M5 467 WiFi + 26 BLE, Cat 2,693, ALFA 3,005; 6,062 fresh receiver-location associations | Pause/resume, M5 connection/boot continuity, one owned Cat helper failure and bounded recovery, and clean finish passed. All configured ALFA channels 1/6/11 received observations |
 | Same saved setup after backend restart, 30.09 seconds | 3,475 observations: M5 263 WiFi + 15 BLE, Cat 1,646, ALFA 1,551; 3,326 fresh receiver-location associations | Saved plan reloaded unchanged, actual producer identities verified again, all three ALFA channels received observations, clean finish |
-| Actual GUI-launched service, native WiFi + BLE, 35 seconds | Zero observations; **failed** terminal state | GUI Start Local Service launch and authenticated connection were verified. CoreWLAN reported redacted addresses; CoreBluetooth initialization timed out. The test recording was stopped, the service stayed running, and existing recordings/profiles were preserved |
+| Actual GUI-launched service, bounded native WiFi + BLE attempt | Zero observations; **failed** terminal state | GUI Start Local Service launch and authenticated connection were verified. CoreWLAN reported redacted addresses; CoreBluetooth initialization timed out. The test recording was stopped, the service stayed running, and existing recordings/profiles were preserved |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
 
@@ -161,6 +161,14 @@ This used bounded visual interaction after confirming the exact frontmost proces
 and window frame; accessibility enumeration returned no windows. No capture was
 started and no operating-system permission prompt was approved. This verifies the
 installed GUI launch/connection path, not native-radio permission or reception.
+
+The subsequent bounded native attempt failed while Bluetooth and Location
+authorization prompts were still outstanding. Read-only diagnostics confirmed
+both prompts existed for the installed launch. A prior successful service run
+reported the same `FailedUnavailable` registration state before user approval,
+then changed to `AllowedAlways` without an application lifecycle change. The
+current evidence does not establish an AppKit lifecycle defect; permission
+approval and a same-binary retry remain necessary.
 
 ## Remaining acceptance
 
