@@ -52,6 +52,11 @@ pub async fn scan(
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
 ) -> io::Result<()> {
+    // Coordinate with every updated AirHound serial source before opening UART.
+    // Keep the guard across pause/recovery; the transport closes before release.
+    let _lease = airhound_hostd::serial_lease::acquire(port).inspect_err(|_| {
+        health(&control, Phase::Unavailable, "serial_endpoint_unavailable");
+    })?;
     let mut state = control.subscribe();
     let mut stats = Stats::default();
     let mut failures = 0;
@@ -306,6 +311,44 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
     const WIFI:&[u8]=b"{\"type\":\"wifi\",\"mac\":\"02:00:00:00:00:01\",\"ssid\":\"test\",\"rssi\":-40,\"ch\":1,\"frame\":\"beacon\",\"ts\":1}\n";
+    #[tokio::test]
+    async fn shared_lease_denies_reader_before_serial_open() {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        let (mut master, mut slave) = (-1, -1);
+        let mut name = [0i8; 128];
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    name.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0
+        );
+        let (_master, _slave) =
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+        let port = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
+            .to_str()
+            .unwrap();
+        let lease = airhound_hostd::serial_lease::acquire(port).unwrap();
+        let control = ScanControl::new(true);
+        let (tx, mut rx) = mpsc::channel(16);
+        let error = scan(port, 115200, tx, control.clone()).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(control.health().wifi.state, Phase::Unavailable);
+        assert_eq!(control.health().ble.state, Phase::Unavailable);
+        assert!(
+            rx.recv().await.is_none(),
+            "denied source must emit no producer records"
+        );
+        assert!(airhound_hostd::serial_lease::acquire(port).is_err());
+        drop(lease);
+        assert!(airhound_hostd::serial_lease::acquire(port).is_ok());
+    }
+
     #[tokio::test]
     async fn reconnect_while_paused_preserves_both_health_states() {
         let (mut writer, mut reader) = tokio::io::duplex(8192);
