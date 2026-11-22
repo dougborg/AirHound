@@ -230,6 +230,20 @@ final class SessionModel: ObservableObject {
 
   var canSubmitAction: Bool { connected && (!busy || polling) && !userActionQueued }
 
+  var startUnavailableReason: String? {
+    if !connected { return "Connect to the service to start a recording." }
+    if !captureEnabled {
+      return "This service provides recording history only. Connect to a capture-enabled service."
+    }
+    if isActive && !hasPendingStart {
+      return "A recording is already running. Finish it before starting another."
+    }
+    if userActionQueued { return "Your action is waiting for the current status update." }
+    if busy && !polling { return "Wait for the current operation to finish." }
+    if configText.isEmpty { return "Load a saved setup or select receivers to create a scan plan." }
+    return nil
+  }
+
   var canEditPlan: Bool {
     !isActive && (!busy || polling) && !userActionQueued && !hasPendingStart
   }

@@ -67,6 +67,27 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertEqual(session.configText, valid, "The active plan cannot be edited")
   }
 
+  func testStartExplanationMatchesConnectionPlanAndOperationGates() {
+    let session = SessionModel()
+    XCTAssertEqual(session.startUnavailableReason, "Connect to the service to start a recording.")
+    session.connected = true
+    XCTAssertTrue(session.startUnavailableReason?.contains("history only") == true)
+    session.captureEnabled = true
+    XCTAssertTrue(session.startUnavailableReason?.contains("scan plan") == true)
+    session.configText = "{}"
+    XCTAssertNil(session.startUnavailableReason)
+    session.busy = true
+    XCTAssertEqual(session.startUnavailableReason, "Wait for the current operation to finish.")
+    session.busy = false
+    session.beginBackgroundRefresh()
+    XCTAssertNil(session.startUnavailableReason, "Polling must not disable Start")
+    XCTAssertTrue(session.submitSetupMutation {})
+    XCTAssertEqual(
+      session.startUnavailableReason, "Your action is waiting for the current status update.")
+    session.capture = .object(["active": .bool(true), "run_id": .string("active")])
+    XCTAssertTrue(session.startUnavailableReason?.contains("already running") == true)
+  }
+
   func testSetupIntentWaitsForPollingAndRunsOnce() async throws {
     let session = SessionModel()
     session.connected = true
