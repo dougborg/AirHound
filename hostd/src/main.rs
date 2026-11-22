@@ -15,6 +15,7 @@ mod control;
 mod gpsd;
 mod health;
 mod receiver;
+mod service_cli;
 mod session_resources;
 mod session_runtime;
 use health::{Phase, Scanner};
@@ -207,6 +208,18 @@ fn prepare_output(args: &Args) -> io::Result<WigleWriter<std::fs::File>> {
 
 #[derive(clap::Subcommand)]
 enum DiscoveryCommand {
+    /// Serve passive control operations over an owned private Unix socket
+    Serve {
+        #[arg(long)]
+        socket: PathBuf,
+    },
+    /// Attach to an existing service using the shared Rust client
+    Client {
+        #[arg(long)]
+        socket: PathBuf,
+        #[command(subcommand)]
+        command: service_cli::ClientCommand,
+    },
     /// Inspect supported receiver candidates without opening devices
     Devices {
         #[command(subcommand)]
@@ -276,6 +289,12 @@ impl Args {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+    if let Some(DiscoveryCommand::Serve { ref socket }) = args.command {
+        return service_cli::serve(socket).await;
+    }
+    if let Some(DiscoveryCommand::Client { socket, command }) = args.command {
+        return service_cli::client(&socket, command).await;
+    }
     if let Some(DiscoveryCommand::Session {
         command: SessionCommand::Validate { ref config },
     }) = args.command

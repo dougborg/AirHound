@@ -75,6 +75,13 @@ impl Client<UnixStream> {
         let stream = tokio::time::timeout(timeout, UnixStream::connect(path))
             .await
             .map_err(|_| ClientError::Timeout)??;
+        // Authenticate the local peer before sending configuration bytes. A future
+        // remote transport must provide its own authentication before handshake.
+        if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+            return Err(ClientError::Protocol(
+                "backend has a different effective user".into(),
+            ));
+        }
         Self::handshake(stream, timeout).await
     }
 }
