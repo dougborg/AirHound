@@ -173,6 +173,9 @@ target/audit-env/bin/python scripts/build-diagnostic.py target/momentum-api.csv
 ```
 
 `target/diagnostic/` contains the FAP, its matching DWARF debug ELF and `audit.json`.
+A diagnostic-only copy of the MIT SDK linker script removes its explicit DWARF
+discard; the ordinary demo layout remains unchanged. The build rejects missing
+DWARF, mismatched allocated code/data sections, and a bad debuglink CRC.
 The audit records source hashes, revision/dirty state, toolchain/flags, SDK pin,
 artifact hashes, imports and static footprint. CI builds these as clearly untested
 development artifacts. This script neither downloads firmware nor installs or
