@@ -144,11 +144,55 @@ impl Child {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    struct Endpoint {
+        _master: std::fs::File,
+        _slave: std::fs::File,
+        path: String,
+    }
+    impl Endpoint {
+        fn new() -> Self {
+            use std::os::fd::{AsRawFd, FromRawFd};
+            let (mut master, mut slave) = (0, 0);
+            let mut name = [0i8; 1024];
+            assert_eq!(
+                unsafe {
+                    libc::openpty(
+                        &mut master,
+                        &mut slave,
+                        name.as_mut_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            let master = unsafe { std::fs::File::from_raw_fd(master) };
+            let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+            for file in [&master, &slave] {
+                assert_eq!(
+                    unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) },
+                    0
+                );
+            }
+            Self {
+                _master: master,
+                _slave: slave,
+                path: unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            }
+        }
+        fn path(&self) -> &str {
+            &self.path
+        }
+    }
     #[tokio::test]
     async fn cancelled_caller_keeps_ownership_until_child_exit_and_reap() {
-        let _test = TEST_LOCK.lock().await;
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+        // This fake device is private to this test, including parallel GPS tests.
+        // Helpers inherit only its lease; no physical serial device is opened.
+        let endpoint = Endpoint::new();
+        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
         let mut command = Command::new("python3");
         command.args([
             "-c",
@@ -164,12 +208,12 @@ mod tests {
         .unwrap()
         .unwrap();
         let pid: i32 = line.trim().parse().unwrap();
-        assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_err());
+        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
         drop(lease);
         drop(child); // Simulates a caller future being cancelled without Finish.
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if let Ok(guard) = airhound_hostd::serial_lease::acquire("/dev/null") {
+                if let Ok(guard) = airhound_hostd::serial_lease::acquire(endpoint.path()) {
                     assert_eq!(
                         unsafe { libc::kill(pid, 0) },
                         -1,
@@ -183,28 +227,30 @@ mod tests {
         })
         .await
         .unwrap();
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
         let command = Command::new("/nonexistent/airhound-helper");
         assert!(Child::spawn(command, lease.clone(), true).await.is_err());
         drop(lease);
-        assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_ok());
+        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_ok());
     }
     #[tokio::test]
     async fn startup_failure_and_finish_release_supervisor_ownership_before_notification() {
-        let _test = TEST_LOCK.lock().await;
+        // This fake device is private to this test, including parallel GPS tests.
+        // Helpers inherit only its lease; no physical serial device is opened.
+        let endpoint = Endpoint::new();
         // Neither completion path may require polling for a later thread-scope
         // destructor. Repeat to exercise notification scheduling on CI workers.
         for _ in 0..32 {
-            let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
             let mut child =
                 Child::start(Command::new("/nonexistent/airhound-helper"), lease, true).unwrap();
             assert!(child.ready().await.is_err());
-            let guard = airhound_hostd::serial_lease::acquire("/dev/null")
+            let guard = airhound_hostd::serial_lease::acquire(endpoint.path())
                 .expect("failed startup must release ownership before ready returns");
             child.finish().await.unwrap();
             drop(guard);
 
-            let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
             let mut command = Command::new("/bin/sh");
             command.args(["-c", "echo $$; exec sleep 30"]);
             let mut child = Child::spawn(command, lease, true).await.unwrap();
@@ -218,7 +264,7 @@ mod tests {
             .unwrap();
             let pid: i32 = line.trim().parse().unwrap();
             child.finish().await.unwrap();
-            let _guard = airhound_hostd::serial_lease::acquire("/dev/null")
+            let _guard = airhound_hostd::serial_lease::acquire(endpoint.path())
                 .expect("Finish must release ownership before returning");
             assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
         }
@@ -229,12 +275,14 @@ mod tests {
             fd::AsRawFd,
             unix::{net::UnixStream, process::CommandExt},
         };
-        let _test = TEST_LOCK.lock().await;
+        // This fake device is private to this test, including parallel GPS tests.
+        // Helpers inherit only its lease; no physical serial device is opened.
+        let endpoint = Endpoint::new();
         let (parent, gate) = UnixStream::pair().unwrap();
         parent.set_nonblocking(true).unwrap();
         let mut parent = tokio::net::UnixStream::from_std(parent).unwrap();
         let gate_fd = gate.as_raw_fd();
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
         let mut command = Command::new("python3");
         command.args(["-c", "import time;time.sleep(30)"]);
         // The startup handshake cannot complete until this controlled pre-exec
@@ -261,11 +309,11 @@ mod tests {
         let pid = i32::from_ne_bytes(bytes);
         drop(child); // Cancel while Command::spawn is still waiting for exec.
         drop(lease);
-        assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_err());
+        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
         parent.write_all(b"x").await.unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if let Ok(guard) = airhound_hostd::serial_lease::acquire("/dev/null") {
+                if let Ok(guard) = airhound_hostd::serial_lease::acquire(endpoint.path()) {
                     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
                     drop(guard);
                     break;
