@@ -255,6 +255,7 @@ mod tests {
 import sys,socket,time,json,datetime,os
 from pathlib import Path
 root=Path(__file__).parent
+sys.stderr=(root/'stderr').open('a', buffering=1)
 with (root/'args').open('a') as f: f.write(json.dumps(sys.argv[1:])+'\n')
 with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -281,6 +282,13 @@ time.sleep({})
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
+            if std::thread::panicking() {
+                for name in ["args", "pids", "stderr"] {
+                    if let Ok(text) = std::fs::read_to_string(self.0.join(name)) {
+                        eprintln!("managed gpsd fixture {name}: {text}");
+                    }
+                }
+            }
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
@@ -303,6 +311,10 @@ time.sleep({})
     // One test serializes /dev/null leases; no real serial device is opened.
     #[tokio::test]
     async fn owned_helper_lifecycle_refuses_conflicts_and_clears_fixes() {
+        let _ = env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Warn)
+            .is_test(true)
+            .try_init();
         let fixture = Fixture::new(false);
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let control = crate::control::ScanControl::new(true);
