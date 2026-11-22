@@ -32,9 +32,12 @@ The external verifier using macOS Python's SQLite library failed to reopen the
 WAL database read-only after the writer exited, twice. AirHound's own shared
 history reader succeeded. The acceptance result above uses that product reader;
 final SQL inspection used immutable mode only after shutdown and verification
-that the WAL was absent or empty. The external-reader compatibility limitation
-remains to be investigated; it is not evidence that all SQLite consumers can
-read a live recording without additional handling.
+that the WAL was absent or empty. A synthetic, fully checkpointed database reproduced the same error with macOS
+Python SQLite 3.54.0 when WAL sidecars were absent: `mode=ro` failed, while
+`mode=ro&immutable=1` and `mode=rw` worked. This isolates the external-reader
+compatibility condition independently of AirHound capture. Do not use immutable
+mode against an active database, or copy only the main file while recording.
+A supported consistent snapshot/export command remains future work.
 
 ## Concurrent ALFA and CatSniffer acceptance
 

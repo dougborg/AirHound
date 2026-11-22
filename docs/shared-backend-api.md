@@ -1,13 +1,12 @@
 # Shared backend control API
 
-The first implemented slice is a passive local Unix-socket service. It supports
-`hello`, `status`, `devices.list` and `session.validate` through shared Rust API
-and client crates. The [TUI](../clients/tui/README.md) and
-[MCP adapter](../clients/mcp/README.md) use this same client for passive queries.
-Capture/session control, event subscriptions, remote phone access (#246) and
-automotive displays (#247) are subsequent slices.
-The sections marked **planned** describe that direction, not existing behavior.
-The recording/inventory SwiftUI app does not yet attach through this API.
+The local Unix-socket service supports passive inventory/validation, durable
+recording history and opt-in service-owned capture through shared Rust API and
+client crates. The [TUI](../clients/tui/README.md) and
+[MCP adapter](../clients/mcp/README.md) currently use the passive query subset.
+The CLI also exposes history and capture controls. Event subscriptions, remote
+phone access (#246), automotive displays (#247), and native UI attachment remain
+subsequent work. Sections marked **planned** describe those future capabilities.
 
 ## Run the passive service
 
@@ -41,15 +40,18 @@ configuration at 64 KiB, an incoming frame (including idle wait) at 30 seconds,
 a backend operation at 15 seconds and response writes at 5 seconds. The CLI uses
 a 20-second request deadline. The shared client poisons/closes a connection after
 cancellation, timeout or protocol mismatch, preventing late response confusion;
-callers reconnect and repeat only these passive operations. No automatic mutation
-retry policy is implemented.
+callers reconnect before further requests. Capture start requires a durable
+application-level request ID, separate from the per-connection envelope ID. Retry
+with the same ID and configuration to retrieve the original run. The client does
+not automatically retry mutations.
 
 Ctrl-C/SIGTERM shuts down passive requests and removes only the socket inode
 created by that service. An existing path, including a stale socket, is never
 unlinked automatically. After a crash, establish that no service owns the socket
 before removing it manually. Disconnecting one client does not stop the service.
-No radio operation, capture cleanup, persistence/autostart, TCP listener or
-network authentication is implemented in this slice.
+Without `--capture`, the service cannot start radios. Capture-enabled shutdown
+stops owned receivers and drains recording before exit. Installation/autostart,
+TCP listeners and network authentication remain unimplemented.
 
 ### Current wire contract
 
@@ -63,11 +65,12 @@ Send hello first; request IDs must be nonzero and strictly increasing per
 connection. Replies contain `version`, matching `request_id` and exactly one of
 `result` or `error`. Errors have typed `code`, `message` and `retryable` fields.
 A malformed frame without a usable request ID may receive error ID zero or be
-closed. Unsupported methods (including capture controls) return
+closed. Unsupported methods and capture requests on a passive service return
 `unsupported_method`, never an implicit fallback. Unknown fields are rejected.
 
 The shared client exposes `Client::connect(path, deadline)`, `hello`, and async
-`status()`, `devices(all)`, `validate(config)` calls. Framing is generic over
+`status()`, `devices(all)`, `validate(config)`, `recordings(before, limit)`,
+`recording_records(run_id, after, limit)` and `capture(action)` calls. Framing is generic over
 asynchronous IO; only Unix-stream connection is implemented. Future remote
 transports must add authentication and authorization before exposing this API;
 a phone/web/CarPlay/Android Auto view must remain a client of backend state, not
@@ -82,7 +85,62 @@ TUI/MCP do not grow independent semantic interpretations. Their schema evolution
 must remain compatible with the existing passive CLI payloads.
 
 
-## Planned capture ownership
+## Durable capture and history
+
+Use `serve --capture --database PATH --socket ABSOLUTE_PATH` to enable explicit
+capture requests. Attaching alone starts nothing. One active run can contain
+multiple configured receivers. Without `--capture`, `--database` exposes only
+read-only history and never recovers or changes an active run.
+
+The `capture` method accepts a typed `action`:
+
+| Action | Parameters | Result |
+| --- | --- | --- |
+| `start` | `request_id`, `config` | Durable run ID; acceptance does not imply receiver readiness |
+| `status` | None | Active run/requested state and receiver health, or last completed result |
+| `pause` / `resume` | `run_id` | Requested state, acknowledged after its database transaction |
+| `finish` | `run_id` | Terminal result after receiver cleanup and recording commit |
+
+For example, the start command inside a framed request is:
+
+```json
+{"method":"capture","params":{"action":{"action":"start","request_id":"trip-2026-11-22","config":{"version":1,"receivers":[{"id":"ble","source":{"kind":"native_ble"}}]}}}}
+```
+
+The nested action discriminator is part of the typed `CaptureAction` contract.
+The envelope still supplies its own increasing numeric `request_id` and version.
+Start IDs are persisted with the original configuration. Reusing one with changed
+configuration fails; reuse after a lost reply or service restart returns the
+original run rather than starting radios again. A capture-enabled service recovers
+abandoned runs as interrupted on startup; it does not resume them automatically.
+
+Requests are serialized by a bounded service-owned actor. Cancelling a client
+request does not cancel an accepted action. After timeout, query state/history:
+cleanup may still be running. Repeated pause/resume of the same requested state
+is harmless, and repeating finish for the most recently completed run returns
+its result. Finish for older/non-owned runs is rejected; durable history remains
+available. A failed capture returns terminal `state: failed`; inspect the result
+instead of interpreting a successful RPC exchange as successful RF capture.
+
+Pause means a requested scan pause; individual receiver health/acknowledgements
+supply readiness evidence. Stop drains accepted output, but does not establish
+zero RF loss. Queue overflow fails recording explicitly. Normalized observations,
+evidence, source tags and available loss counters are retained without inferring
+missing identities or timestamps.
+
+`recordings.list` uses `before`/`limit` and returns `runs`, `next_before`,
+`has_more`. `recordings.records` uses `run_id`/`after`/`limit` and returns
+`records`, `next_after`, `has_more`. Continue only while `has_more` is true.
+Run limits are 1–100; record limits are 1–500, with independent byte bounds.
+History readers do not own receivers or recover runs. The service capture path
+currently writes SQLite, not a parallel CSV or live stdout stream; the standalone
+capture CLI can retain SQLite alongside its JSON/CSV output. Explicit gpsd
+configuration through the service and live event subscriptions remain future work.
+
+See [hostd commands](../hostd/README.md#durable-recording) and the
+[acceptance record](storage-acceptance.md) for tested scope and remaining gates.
+
+## Capture ownership and remaining frontend work
 
 One Rust backend instance owns radio transports, resource reservations, session
 plans, channel allocation, detection/evidence, alert policy, location association,
@@ -110,7 +168,7 @@ workspace migration or dependency changes to the no_std firmware package:
 | --- | --- | --- |
 | Typed protocol crate | `hostd/crates/airhound-api` | Versioned request/response envelopes, error codes and hello; result DTOs/events are planned. No transport, radios or policy implementation. |
 | Shared client crate | `hostd/crates/airhound-client` | Unix-socket framing, handshake, request correlation, deadlines and typed errors; subscriptions/gap detection are planned. Depends on api; no frontend rendering or hardware. |
-| Backend service modules | `hostd/src/service.rs` and `service_cli.rs` | Passive connections, permissions and request dispatch; canonical preview/discovery calls. Capture state, reservations and events are planned. |
+| Backend service modules | `hostd/src/service.rs`, `service_cli.rs`, `capture_service.rs` and `storage/` | Connections, permissions and dispatch; canonical preview/discovery, capture actor and durable history. Live event subscriptions are planned. |
 | CLI adapter | Existing hostd CLI first, optional `airhound` binary later | Arguments, typed client calls, human/JSON rendering and exit codes. |
 | TUI adapter | `clients/tui` (independent Cargo root) | Terminal state and views consuming the same client. No process scraping. |
 | MCP adapter | `clients/mcp` (independent Cargo root) | MCP tool/resource schemas, explicit operation calls, summaries and subscriptions through the same client. No duplicated radio/session logic. |
@@ -182,9 +240,10 @@ does not mean radios are ready or stopped. `session.stop` is idempotent and can
 preempt ordinary command work; telemetry queues cannot prevent stop handling.
 
 On a lost connection after sending a mutation, the client must query the backend
-before retrying. Scope a bounded idempotency cache to backend instance UUID,
-client UUID and request ID. A backend restart invalidates cached operations;
-the client must handshake and resynchronize rather than replay Start blindly.
+before retrying. The implemented Start receipt is durable across backend restarts and keyed by
+application request ID plus exact configuration. Additional mutation revisions,
+operation IDs and subscription resynchronization remain planned; clients must
+handshake and query authoritative state after reconnect.
 
 ## Planned capability-based nodes and phone gateways
 
