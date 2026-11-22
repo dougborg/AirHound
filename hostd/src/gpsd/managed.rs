@@ -49,10 +49,19 @@ async fn owns_listener(pid: u32, port: u16) -> io::Result<bool> {
             "gpsd listener ownership check timed out",
         )
     })??;
-    Ok(output.stdout.len() <= 16_384
+    let owns = output.stdout.len() <= 16_384
         && String::from_utf8_lossy(&output.stdout)
             .lines()
-            .any(|line| line == format!("n127.0.0.1:{port}")))
+            .any(|line| line == format!("n127.0.0.1:{port}"));
+    #[cfg(test)]
+    if !owns {
+        eprintln!(
+            "gpsd listener probe pid={pid} port={port} status={} stdout={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(16_384)])
+        );
+    }
+    Ok(owns)
 }
 #[cfg(target_os = "linux")]
 async fn owns_listener(pid: u32, port: u16) -> io::Result<bool> {
@@ -252,14 +261,23 @@ mod tests {
             std::fs::create_dir(&root).unwrap();
             let script = format!(
                 r#"#!/usr/bin/python3
-import sys,socket,time,json,datetime,os
+import sys,time,os
+root_path=os.path.dirname(__file__)
+sys.stderr=open(os.path.join(root_path,'stderr'),'a',buffering=1)
+def trace(stage):
+    with open(os.path.join(root_path,'trace'),'a') as f:
+        f.write(str(time.monotonic())+' '+stage+' pid='+str(os.getpid())+' executable='+sys.executable+'\n')
+trace('python_entered')
+import socket,json,datetime
 from pathlib import Path
 root=Path(__file__).parent
-sys.stderr=(root/'stderr').open('a', buffering=1)
+trace('imports_complete')
 with (root/'args').open('a') as f: f.write(json.dumps(sys.argv[1:])+'\n')
 with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+trace('before_bind')
 s.bind(('127.0.0.1',int(sys.argv[sys.argv.index('-S')+1]))); s.listen()
+trace('listening')
 c,_=s.accept(); c.recv(4096)
 c.sendall((json.dumps({{'class':'VERSION','proto_major':16,'release':'fixture'}})+'\n').encode())
 c.sendall((json.dumps({{'class':'TPV','device':sys.argv[-1],'mode':3,'time':datetime.datetime.now(datetime.timezone.utc).isoformat(),'lat':10,'lon':20}})+'\n').encode())
@@ -299,14 +317,23 @@ time.sleep({})
             .unwrap()
             .port()
     }
-    async fn until(source: &Source, expected: &str) {
+    async fn until(source: &Source, expected: &str, fixture: &Fixture) {
         tokio::time::timeout(Duration::from_secs(12), async {
             while source.health()["state"] != expected {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("expected {expected}, got {}", source.health()));
+        .unwrap_or_else(|_| {
+            let files: Vec<_> = ["args", "pids", "stderr", "trace"]
+                .into_iter()
+                .map(|name| (name, std::fs::read_to_string(fixture.0.join(name))))
+                .collect();
+            panic!(
+                "expected {expected}, got {}; fixture evidence: {files:?}",
+                source.health()
+            );
+        });
     }
     // One test serializes /dev/null leases; no real serial device is opened.
     #[tokio::test]
@@ -344,7 +371,7 @@ time.sleep({})
             source.clone(),
             control.subscribe(),
         ));
-        until(&source, "fix").await;
+        until(&source, "fix", &fixture).await;
         let args: serde_json::Value = serde_json::from_str(
             std::fs::read_to_string(fixture.0.join("args"))
                 .unwrap()
@@ -393,7 +420,7 @@ time.sleep(30)"#;
             source.clone(),
             control.subscribe(),
         ));
-        until(&source, "fix").await;
+        until(&source, "fix", &fixture).await;
         tokio::time::timeout(Duration::from_secs(3), async {
             while !fixture.0.join("listener_released").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -429,8 +456,8 @@ time.sleep(30)"#;
             source.clone(),
             control.subscribe(),
         ));
-        until(&source, "fix").await;
-        until(&source, "managed_child_exited").await;
+        until(&source, "fix", &fixture).await;
+        until(&source, "managed_child_exited", &fixture).await;
         assert!(source.location().is_none());
         assert!(source.health()["daemon"].is_null());
         tokio::time::timeout(Duration::from_secs(12), task)
