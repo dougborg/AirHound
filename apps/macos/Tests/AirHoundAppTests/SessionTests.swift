@@ -252,6 +252,81 @@ final class SessionTests: XCTestCase {
     XCTAssertNil(latePresentation.recording, "An in-flight page must not publish after leaving")
 
   }
+  func testQueuedSetupActionsPersistSubmittedPlanAndDeleteSubmittedID() async throws {
+    guard let path = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
+      throw XCTSkip("Set AIRHOUND_TEST_BACKEND for private setup persistence tests.")
+    }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ah-setup-" + UUID().uuidString.prefix(8))
+    try LocalFiles.privateDirectory(root)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let socket = root.appendingPathComponent("control.sock")
+    let pcap = root.appendingPathComponent("empty.pcap")
+    try Data([
+      0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 127, 0, 0, 0,
+    ]).write(to: pcap)
+    let replay = Process()
+    replay.executableURL = URL(fileURLWithPath: path)
+    replay.arguments = [
+      "--wifi-pcap", pcap.path, "--database", root.appendingPathComponent("runs.sqlite").path,
+      "--output", root.appendingPathComponent("empty.csv").path,
+    ]
+    replay.standardOutput = FileHandle.nullDevice
+    replay.standardError = FileHandle.nullDevice
+    try replay.run()
+    replay.waitUntilExit()
+    XCTAssertEqual(replay.terminationStatus, 0)
+    let service = Process()
+    service.executableURL = URL(fileURLWithPath: path)
+    service.arguments = [
+      "serve", "--socket", socket.path, "--database",
+      root.appendingPathComponent("runs.sqlite").path,
+    ]
+    service.standardOutput = FileHandle.nullDevice
+    service.standardError = FileHandle.nullDevice
+    try service.run()
+    defer {
+      if service.isRunning {
+        service.terminate()
+        service.waitUntilExit()
+      }
+    }
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket.path) {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let suite = "AirHound-queued-setup-" + UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let model = SessionModel(preferences: defaults)
+    model.socketPath = socket.path
+    model.connect(executable: URL(fileURLWithPath: path))
+    defer { model.disconnect() }
+    try await waitIdle(model)
+    XCTAssertTrue(model.connected, model.error ?? model.message)
+    model.configText =
+      #"{"version":1,"receivers":[{"id":"submitted","source":{"kind":"native_ble"}}]}"#
+    model.beginBackgroundRefresh()
+    XCTAssertTrue(model.saveSetup(name: "Submitted kit"))
+    model.configText = #"{"version":1,"receivers":[]}"#
+    model.finishBackgroundRefresh()
+    try await waitIdle(model)
+    XCTAssertNil(model.error)
+    let id = model.selectedSetupID
+    XCTAssertFalse(id.isEmpty)
+    let client = BackendClient(executable: URL(fileURLWithPath: path), socket: socket)
+    let loaded = try await client.loadSetup(id: id)
+    XCTAssertEqual(try PlanEditing.receivers(in: loaded.config).first?.id, "submitted")
+    model.beginBackgroundRefresh()
+    XCTAssertTrue(model.deleteSelectedSetup())
+    model.selectedSetupID = "later-selection"
+    model.finishBackgroundRefresh()
+    try await waitIdle(model)
+    XCTAssertNil(model.error)
+    let remaining = try await client.setups()
+    XCTAssertTrue(remaining.isEmpty)
+    XCTAssertEqual(model.selectedSetupID, "later-selection")
+  }
+
   private func waitIdle(_ model: SessionModel) async throws {
     for _ in 0..<200 {
       if !model.busy { return }
