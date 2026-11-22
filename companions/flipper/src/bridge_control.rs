@@ -118,11 +118,18 @@ impl Controller {
                 self.begin_stop(now, 1, true)
             }
             Command::Stop => {
-                if matches!(self.state, State::Stopped | State::Failed) {
+                if matches!(self.state, State::Stopped | State::Failed)
+                    || (self.state == State::Stopping && self.cause != 1)
+                {
                     return Err(1);
                 }
                 self.lifecycle_request = h.request_id;
-                self.begin_stop(now, 2, false)
+                let old_deadline = (self.state == State::Stopping).then_some(self.since);
+                let action = self.begin_stop(now, 2, false);
+                if let Some(since) = old_deadline {
+                    self.since = since;
+                }
+                action
             }
         };
         self.heartbeat = now;
