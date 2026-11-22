@@ -40,6 +40,15 @@ Linux needs BlueZ, D-Bus development headers and libpcap headers (Ubuntu:
 externally configured monitor-mode interface with capture permission. Linux
 location is available through the optional gpsd provider. The default Linux configuration scans BLE only.
 
+## Discover attached devices
+
+Run `airhound-hostd devices list` for a passive hardware inventory, or add
+`--json` for structured output. Discovery groups OS-visible endpoints and identifies
+candidate backends without opening serial ports or starting scans. A candidate
+is not proof of compatible firmware, permissions or working reception. See the
+[discovery guide](../docs/device-discovery.md) for identities, requirements and
+how to turn an inventory entry into an explicit receiver configuration.
+
 ## Multiple receivers
 
 Use `--session-config session.json` to run several explicitly selected native,

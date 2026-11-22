@@ -65,10 +65,13 @@ use wigle::{Location, WigleWriter};
 #[derive(Parser)]
 #[command(
     name = "airhound-hostd",
-    about = "AirHound host daemon — WiFi/BLE scanner with WiGLE CSV output"
+    about = "AirHound host daemon — WiFi/BLE scanner with WiGLE CSV output",
+    args_conflicts_with_subcommands = true
 )]
 #[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner"]))))]
 struct Args {
+    #[command(subcommand)]
+    command: Option<DiscoveryCommand>,
     /// Concurrent receivers described by a versioned JSON session file
     #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "no_ble", "no_wifi"])]
     #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
@@ -188,6 +191,34 @@ fn prepare_output(args: &Args) -> io::Result<WigleWriter<std::fs::File>> {
     Ok(writer)
 }
 
+#[derive(clap::Subcommand)]
+enum DiscoveryCommand {
+    /// Inspect supported receiver candidates without opening devices
+    Devices {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+}
+#[derive(clap::Subcommand)]
+enum DeviceCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        external_scanner: Option<PathBuf>,
+        #[arg(long)]
+        external_firmware: Option<PathBuf>,
+        #[arg(long)]
+        sniffle_python: Option<PathBuf>,
+        #[arg(long)]
+        sniffle_helper: Option<PathBuf>,
+        #[arg(long)]
+        sniffle_module_path: Option<PathBuf>,
+    },
+}
+
 impl Args {
     fn filter_config(&self) -> FilterConfig {
         FilterConfig {
@@ -201,6 +232,38 @@ impl Args {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+    if let Some(DiscoveryCommand::Devices {
+        command:
+            DeviceCommand::List {
+                json,
+                all,
+                external_scanner,
+                external_firmware,
+                sniffle_python,
+                sniffle_helper,
+                sniffle_module_path,
+            },
+    }) = args.command
+    {
+        let inventory = airhound_hostd::discovery::discover(&airhound_hostd::discovery::Options {
+            all,
+            external_scanner,
+            external_firmware,
+            sniffle_python,
+            sniffle_helper,
+            sniffle_module_path,
+        })
+        .await;
+        return if json {
+            observation::write_json(
+                &mut io::stdout(),
+                &serde_json::to_value(inventory).map_err(io::Error::other)?,
+            )
+        } else {
+            airhound_hostd::discovery::write_text(&inventory, io::stdout().lock())
+        };
+    }
+
     let level = match args.verbose {
         0 => "info",
         1 => "debug",

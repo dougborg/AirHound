@@ -32,6 +32,7 @@ objc2-core-location = { version = "0.3", features = ["CLLocationManager", "CLLoc
 objc2-foundation = { version = "0.3", features = ["NSObject"] }
 objc2 = "0.6"
 objc2-core-bluetooth = { version = "0.3", default-features = false, features = ["std", "CBCentralManager", "CBManager"] }
+plist = "1.10.4"
 
 [dev-dependencies]
 libc = "0.2"

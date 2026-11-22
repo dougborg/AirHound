@@ -38,6 +38,8 @@ are labeled separately.
 
 ## Hardware setup and validation
 
+- [Discover attached receivers and location devices](device-discovery.md)
+
 - [Flipper Zero and AWOK Marauder setup, firmware and test status](flipper-marauder.md)
 
 - [M5 backup, flashing and bring-up](m5stickc-bringup.md), [buttons and sound](m5-controls.md), [streaming experiments](m5-stream-performance.md)
