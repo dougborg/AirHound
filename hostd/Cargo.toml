@@ -6,11 +6,18 @@ license = "MIT"
 default-run = "airhound-hostd"
 description = "AirHound host daemon — BLE surveillance detection for Mac/Linux"
 
+[workspace]
+members = ["crates/airhound-api", "crates/airhound-client"]
+default-members = [".", "crates/airhound-api", "crates/airhound-client"]
+resolver = "2"
+
 [features]
 default = ["macos-private-addresses"]
 macos-private-addresses = ["dep:corebluetooth-address"]
 
 [dependencies]
+airhound-api = { path = "crates/airhound-api" }
+airhound-client = { path = "crates/airhound-client" }
 airhound = { path = "..", default-features = false, features = ["board-host"] }
 btleplug = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process", "io-util", "net", "fs"] }
