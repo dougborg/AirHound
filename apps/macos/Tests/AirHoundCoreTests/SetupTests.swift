@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 @testable import AirHoundCore
@@ -71,6 +72,61 @@ final class SetupTests: XCTestCase {
     XCTAssertNil(inventory.receiverChoices[0].candidate.supportIssue)
   }
 
+  private func waitForExit(_ process: Process, seconds: TimeInterval) -> Bool {
+    let deadline = ProcessInfo.processInfo.systemUptime + seconds
+    while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    return !process.isRunning
+  }
+
+  private func stopOwned(_ process: Process, grace: TimeInterval = 2) -> Bool {
+    guard process.isRunning else { return true }
+    process.terminate()
+    // Foundation waitUntilExit can remain in its run loop after the child has
+    // exited on a Swift async test worker. Poll its state with a fixed deadline.
+    if waitForExit(process, seconds: grace) { return true }
+    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+    return waitForExit(process, seconds: 2)
+  }
+
+  func testProfileFixtureCleanupHandlesAlreadyExitedAndUncooperativeChildren() async throws {
+    for ignoresTermination in [false, true] {
+      let ready = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "ah-profile-cleanup-" + UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: ready) }
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = [
+        "-c",
+        ignoresTermination
+          ? "trap '' TERM; : > \"$1\"; while :; do :; done"
+          : "exit 0",
+        "fixture", ready.path,
+      ]
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = FileHandle.nullDevice
+      try process.run()
+      defer { XCTAssertTrue(stopOwned(process, grace: 0.05)) }
+      if ignoresTermination {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while !FileManager.default.fileExists(atPath: ready.path)
+          && ProcessInfo.processInfo.systemUptime < deadline
+        { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
+        XCTAssertFalse(waitForExit(process, seconds: 0.05))
+      } else {
+        XCTAssertTrue(waitForExit(process, seconds: 2))
+      }
+      let started = ProcessInfo.processInfo.systemUptime
+      XCTAssertTrue(stopOwned(process, grace: 0.05))
+      XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2.5)
+      XCTAssertEqual(process.terminationStatus, ignoresTermination ? SIGKILL : 0)
+      XCTAssertEqual(Darwin.kill(process.processIdentifier, 0), -1)
+      XCTAssertEqual(errno, ESRCH, "Owned child must be reaped")
+    }
+  }
+
   func testProfilesUseSharedBackendWithoutStartingCapture() async throws {
     guard let path = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
       throw XCTSkip("Set AIRHOUND_TEST_BACKEND for profile integration.")
@@ -87,12 +143,7 @@ final class SetupTests: XCTestCase {
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
     try server.run()
-    defer {
-      if server.isRunning {
-        server.terminate()
-        server.waitUntilExit()
-      }
-    }
+    defer { XCTAssertTrue(stopOwned(server), "Private profile service did not exit after cleanup") }
     for _ in 0..<100 {
       if FileManager.default.fileExists(atPath: socket.path) { break }
       try await Task.sleep(for: .milliseconds(50))
