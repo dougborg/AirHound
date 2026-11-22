@@ -442,6 +442,7 @@ async fn main() -> io::Result<()> {
             } else {
                 (Box::new(io::stdout()), None)
             };
+        let command_recording = completion.clone();
         let result = session_runtime::run(
             receivers,
             filter,
@@ -451,7 +452,26 @@ async fn main() -> io::Result<()> {
                 endpoint,
                 device: args.gpsd_device.clone(),
             }),
-            stdin_command_loop,
+            move |config, start, control| async move {
+                if let Some(recording) = command_recording {
+                    let (tx, rx) = mpsc::channel(8);
+                    std::thread::spawn(move || {
+                        if let Err(error) = read_commands(io::BufReader::new(io::stdin()), tx) {
+                            log::error!("Command input failed: {error}");
+                        }
+                    });
+                    let output = recording.output(io::stdout());
+                    if let Err(error) =
+                        command_loop_recording(rx, config, &control, start, output, Some(recording))
+                            .await
+                    {
+                        log::error!("Recording command failed: {error}");
+                        control.shutdown();
+                    }
+                } else {
+                    stdin_command_loop(config, start, control).await;
+                }
+            },
             shutdown_signal(),
         )
         .await;
@@ -1411,21 +1431,46 @@ fn read_commands(
 }
 
 async fn command_loop(
+    commands: mpsc::Receiver<Option<HostCommand>>,
+    config: Arc<Mutex<FilterConfig>>,
+    scanning_state: &ScanControl,
+    start_time: Instant,
+    output: impl Write,
+) -> io::Result<()> {
+    command_loop_recording(commands, config, scanning_state, start_time, output, None).await
+}
+
+async fn command_loop_recording(
     mut commands: mpsc::Receiver<Option<HostCommand>>,
     config: Arc<Mutex<FilterConfig>>,
     scanning_state: &ScanControl,
     start_time: Instant,
     mut output: impl Write,
+    recording: Option<airhound_hostd::storage::output::Completion>,
 ) -> io::Result<()> {
     while let Some(cmd) = commands.recv().await {
-        let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
-        let mut scanning = scanning_state.load(Ordering::Relaxed);
-        let result = match cmd.as_ref() {
-            Some(cmd) => {
-                comm::execute_command(cmd, &mut cfg, &mut scanning, false, None).map(|_| ())
-            }
-            None => Err(protocol::CommandError::InvalidCommand),
+        let was_scanning = scanning_state.load(Ordering::Relaxed);
+        let (cfg, scanning, result) = {
+            let mut cfg = config.lock().unwrap_or_else(|e| e.into_inner());
+            let mut scanning = was_scanning;
+            let result = match cmd.as_ref() {
+                Some(cmd) => {
+                    comm::execute_command(cmd, &mut cfg, &mut scanning, false, None).map(|_| ())
+                }
+                None => Err(protocol::CommandError::InvalidCommand),
+            };
+            (*cfg, scanning, result)
         };
+        if scanning != was_scanning {
+            // Stop requests reach receivers before the durable pause barrier;
+            // resume requests reach receivers only after its commit succeeds.
+            if !scanning {
+                scanning_state.store(false, Ordering::Relaxed);
+            }
+            if let Some(recording) = &recording {
+                recording.transition(!scanning).await?;
+            }
+        }
         scanning_state.store(scanning, Ordering::Relaxed);
         write_message(&mut output, &comm::command_response(cmd.as_ref(), result))?;
         if matches!(cmd, Some(HostCommand::GetStatus)) {
@@ -1691,6 +1736,78 @@ mod tests {
         assert_eq!(health["scanners"]["ble"]["state"], "unavailable");
         assert_eq!(health["scanners"]["wifi"]["state"], "disabled");
         assert_eq!(health["scan_requested"], true);
+    }
+
+    #[tokio::test]
+    async fn recording_commands_commit_pause_resume_and_retain_replies() {
+        use airhound_hostd::storage::{
+            self, output::SESSION_SOURCE, writer::Writer, RecordingMode,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "airhound-command-storage-{}-{}",
+            std::process::id(),
+            storage::now_us().unwrap()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("recording.sqlite");
+        let writer = Writer::start(
+            path.clone(),
+            RecordingMode::Replay,
+            serde_json::json!({}),
+            vec![(SESSION_SOURCE.into(), serde_json::json!({}))],
+        )
+        .unwrap();
+        let run = writer.run_id.clone();
+        let (output, completion) = storage::output::attach(Vec::new(), writer);
+        let (tx, rx) = mpsc::channel(8);
+        std::thread::spawn(move || {
+            read_commands(
+                io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"stop\"}\n{\"cmd\":\"start\"}\n"),
+                tx,
+            )
+        })
+        .join()
+        .unwrap()
+        .unwrap();
+        let control = ScanControl::new(true);
+        command_loop_recording(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            &control,
+            Instant::now(),
+            output,
+            Some(completion.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(control.load(Ordering::Relaxed));
+        tokio::task::spawn_blocking(move || completion.finish(true))
+            .await
+            .unwrap()
+            .unwrap();
+        let reader = storage::Reader::open(&path).unwrap();
+        let records = reader.records(&run, 0, 10).unwrap();
+        assert_eq!(records.records.len(), 3);
+        assert!(records
+            .records
+            .iter()
+            .all(|record| record.kind == "command_result"));
+        let connection = rusqlite::Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let states: Vec<String> = connection
+            .prepare("SELECT state FROM transitions ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(states, ["recording", "paused", "recording", "finished"]);
+        drop(connection);
+        drop(reader);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

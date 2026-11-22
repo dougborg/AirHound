@@ -9,6 +9,7 @@ use std::{
 /// never an inferred device or radio identity.
 pub const SESSION_SOURCE: &str = "__airhound_session__";
 type Shared = Arc<Mutex<Option<Writer>>>;
+#[derive(Clone)]
 pub struct Completion(Shared);
 pub struct Output<W> {
     downstream: W,
@@ -27,6 +28,30 @@ pub fn attach<W: Write>(downstream: W, writer: Writer) -> (Output<W>, Completion
     )
 }
 impl Completion {
+    pub fn output<W: Write>(&self, downstream: W) -> Output<W> {
+        Output {
+            downstream,
+            writer: self.0.clone(),
+            pending: Vec::new(),
+        }
+    }
+    /// Enqueue under a short lock, then await the disk acknowledgement away from
+    /// the async executor. Capture output can keep enqueueing while SQLite works.
+    pub async fn transition(&self, paused: bool) -> io::Result<()> {
+        let ack = self
+            .0
+            .lock()
+            .map_err(|_| io::Error::other("recording lock poisoned"))?
+            .as_ref()
+            .ok_or_else(|| io::Error::other("recording already closed"))?
+            .transition(paused)?;
+        tokio::task::spawn_blocking(move || {
+            ack.recv()
+                .map_err(|_| io::Error::other("recording transition was not acknowledged"))?
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
     /// Blocking durable barrier; call only after the producer has stopped.
     pub fn finish(self, succeeded: bool) -> io::Result<()> {
         let writer = self
