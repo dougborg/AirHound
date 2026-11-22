@@ -29,6 +29,7 @@ mod observation;
 use control::ScanControl;
 #[cfg(target_os = "macos")]
 mod location_macos;
+mod marauder_replay;
 mod radiotap;
 #[cfg(target_os = "linux")]
 mod wifi_linux;
@@ -431,6 +432,7 @@ async fn main() -> io::Result<()> {
                 receiver.source,
                 airhound_hostd::session::Source::BlePcap { .. }
                     | airhound_hostd::session::Source::WifiPcap { .. }
+                    | airhound_hostd::session::Source::MarauderCapture { .. }
             )
         });
         let receivers = session_runtime::prepare(plan).await?;
@@ -938,7 +940,10 @@ async fn filter_task<W: Write, O: Write>(
             continue;
         }
         if !control.load(Ordering::Relaxed) {
-            if replay.is_some() || matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
+            if replay.is_some()
+                || matches!(&event, ScanEvent::MarauderReplay { .. })
+                || matches!(&event, ScanEvent::BlePacket(packet) if packet.replay)
+            {
                 let mut state = control.subscribe();
                 while !state.borrow().enabled && !state.borrow().shutdown {
                     if state.changed().await.is_err() {
@@ -964,7 +969,10 @@ async fn filter_task<W: Write, O: Write>(
         } else {
             get_location(&control)
         };
-        if replay.is_none() && !matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
+        if replay.is_none()
+            && !matches!(&event, ScanEvent::MarauderReplay { .. })
+            && !matches!(&event, ScanEvent::BlePacket(packet) if packet.replay)
+        {
             output.receiver_location = control.external_location_evidence();
         }
 
@@ -973,6 +981,23 @@ async fn filter_task<W: Write, O: Write>(
             ScanEvent::BleSourceStatus(_)
             | ScanEvent::WifiReplayStatus(_)
             | ScanEvent::FirmwareStatus(_) => unreachable!(),
+            ScanEvent::MarauderReplay {
+                timestamp_micros32,
+                frame,
+            } => {
+                let value = airhound_hostd::marauder::normalized_observation(
+                    airhound_hostd::marauder::Record {
+                        timestamp_micros32,
+                        frame: &frame,
+                    },
+                    source
+                        .as_ref()
+                        .map(|s| s.receiver_id.as_str())
+                        .unwrap_or("marauder"),
+                    &mac_index,
+                );
+                observation::write_json(&mut output, &value)?;
+            }
             ScanEvent::Firmware { record, generation } => {
                 let state = *control.subscribe().borrow();
                 let accepted = if state.shutdown {

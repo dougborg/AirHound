@@ -128,6 +128,18 @@ pub enum Source {
     WifiPcap {
         path: PathBuf,
     },
+    /// Saved Marauder DLT105 capture, never a live UART source.
+    MarauderCapture {
+        path: PathBuf,
+        format: MarauderFormat,
+    },
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarauderFormat {
+    Pcap,
+    Serial,
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -157,7 +169,7 @@ impl SessionConfig {
                     Some("sniffle") => &["port", "python", "helper"],
                     Some("airhound_serial") => &["port"],
                     Some("external_wifi") => &["executable", "firmware"],
-                    Some("wifi_pcap" | "ble_pcap") => &["path"],
+                    Some("wifi_pcap" | "ble_pcap" | "marauder_capture") => &["path"],
                     _ => &[],
                 };
                 let missing: Vec<_> = fields
@@ -196,7 +208,9 @@ impl SessionConfig {
             && self.receivers.iter().all(|receiver| {
                 matches!(
                     receiver.source,
-                    Source::BlePcap { .. } | Source::WifiPcap { .. }
+                    Source::BlePcap { .. }
+                        | Source::WifiPcap { .. }
+                        | Source::MarauderCapture { .. }
                 )
             })
         {
@@ -355,7 +369,9 @@ impl SessionConfig {
                         usb_selector.as_deref().unwrap_or("default")
                     )
                 }
-                Source::BlePcap { path } | Source::WifiPcap { path } => {
+                Source::BlePcap { path }
+                | Source::WifiPcap { path }
+                | Source::MarauderCapture { path, .. } => {
                     if path.as_os_str().is_empty() {
                         return Err(invalid("empty replay path"));
                     }
@@ -419,7 +435,9 @@ impl Source {
             } => {
                 serde_json::json!({"mode":"channel_plan","channels":channels,"dwell_ms":dwell_ms,"usb_selector":usb_selector})
             }
-            Self::BlePcap { .. } | Self::WifiPcap { .. } => serde_json::json!({"mode":"replay"}),
+            Self::BlePcap { .. } | Self::WifiPcap { .. } | Self::MarauderCapture { .. } => {
+                serde_json::json!({"mode":"replay"})
+            }
         }
     }
 }
@@ -429,6 +447,26 @@ impl Source {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn marauder_format_is_required_and_replay_cannot_claim_live_location() {
+        let mut value = json!({"version":1,"receivers":[{"id":"saved","source":{"kind":"marauder_capture","path":"capture.bin","format":"serial"}}]});
+        assert!(serde_json::from_value::<SessionConfig>(value.clone())
+            .unwrap()
+            .resolve()
+            .is_ok());
+        value["location"] = json!({"kind":"gpsd","endpoint":"127.0.0.1:2947"});
+        assert!(serde_json::from_value::<SessionConfig>(value.clone())
+            .unwrap()
+            .resolve()
+            .is_err());
+        value.as_object_mut().unwrap().remove("location");
+        value["receivers"][0]["source"]
+            .as_object_mut()
+            .unwrap()
+            .remove("format");
+        assert!(serde_json::from_value::<SessionConfig>(value).is_err());
+    }
 
     #[test]
     fn location_configuration_is_explicit_and_never_resolves_network_names() {

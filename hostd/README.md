@@ -89,22 +89,25 @@ Firmware configuration and its conservative defaults are unchanged. See the
 
 ## Receiving detector-device data
 
-`hostd` currently scans native host radios or supervises the external receiver
-process described below. It has no M5/XIAO serial-port or BLE GATT client mode.
-Its stdin accepts commands for its own scanning session, not firmware events.
-
-Embedded firmware does emit ordinary and matched observations over serial/BLE.
-Use a separate consumer following the [firmware streaming contract](../docs/firmware-streaming.md),
-or `scripts/monitor-firmware.py` for bounded serial validation. That script writes
-private captures and aggregate diagnostics; it does not feed hostd or export WiGLE.
-For no_std M5 firmware select `--baud 460800`; other firmware builds use 115200.
+An explicit session source `{"kind":"airhound_serial","port":"/dev/cu.example","baud":460800}`
+receives AirHound firmware observations and actual producer status through USB
+serial. The tested M5 no_std firmware uses 460800 baud; other firmware may use
+115200. Opening some USB UART bridges resets the board. Passive discovery never
+opens these ports; select the firmware source explicitly. Pause suspends host
+ingestion while the device continues autonomous scanning. BLE GATT host reception
+is still separate follow-up work. See the [firmware streaming contract](../docs/firmware-streaming.md).
 
 ## Saved Marauder / AWOK Wi-Fi captures
 
-The experimental source-build `airhound-marauder-import` tool imports saved
-v1.21.0-profile PCAP or binary serial captures through shared identity rules.
-It preserves raw packets and unknown radio metadata; hardware acceptance and live
-USB ingestion remain pending. See [usage, framing and limits](../docs/marauder-import.md).
+The explicit `marauder_capture` session source sends saved v1.21.0-profile DLT105
+PCAP or binary serial captures through shared identity matching, durable recording
+and observation queries. Choose `format: "pcap"` or `format: "serial"`; this source
+never opens a UART or starts a device scan. Boot-relative timestamps remain boot
+relative, and missing receive RSSI/channel/GPS remain unknown.
+
+The standalone `airhound-marauder-import` tool remains available for its original
+NDJSON export. Real capture-file acceptance and live USB ingestion are still
+pending. See [usage, framing and limits](../docs/marauder-import.md).
 
 ## CatSniffer / Sniffle packet source
 
