@@ -86,7 +86,6 @@ async fn performance_event_pipeline() {
                 health_messages, 1,
                 "the benchmark must retain initial scanner health"
             );
-            let messages = messages.len() - health_messages;
             assert_eq!(
                 csv_rows,
                 if scenario == "platform_id" {
@@ -95,13 +94,47 @@ async fn performance_event_pipeline() {
                     count + 2
                 }
             );
-            let records_per_ble = if cfg!(target_os = "linux") && scenario == "hardware_mac" {
-                3
+            let count_type = |kind| messages.iter().filter(|msg| msg["type"] == kind).count();
+            let ble_observations = count_type("ble_observation");
+            let wifi_observations = count_type("wifi_observation");
+            let legacy_ble_records = count_type("ble");
+            let legacy_detection_records = count_type("detection");
+            assert_eq!(ble_observations, count / 5);
+            assert_eq!(wifi_observations, count * 4 / 5);
+            let expected_legacy = if !cfg!(target_os = "macos") && scenario == "hardware_mac" {
+                count / 5
             } else {
-                1
+                0
             };
-            assert_eq!(messages, count / 5 * records_per_ble);
-            println!("PERF scenario={scenario} run={run} events={count} matches={messages} elapsed_s={elapsed:.6} events_per_s={:.0} csv_bytes={} ndjson_bytes={}",
+            assert_eq!(legacy_ble_records, expected_legacy);
+            assert_eq!(legacy_detection_records, expected_legacy);
+            // Validate classification separately from emission: extra observations
+            // must not become detections, and matching BLE must remain matched.
+            let matched_observations = messages
+                .iter()
+                .filter(|msg| {
+                    msg["type"] == "ble_observation" && !msg["match"].as_array().unwrap().is_empty()
+                })
+                .count();
+            assert_eq!(matched_observations, count / 5);
+            for message in messages
+                .iter()
+                .filter(|msg| msg["type"] == "wifi_observation")
+            {
+                assert!(message["detection"]["sig"].as_array().unwrap().is_empty());
+                assert!(message["detection"]["rules"].as_array().unwrap().is_empty());
+                assert_eq!(message["detection"]["alert"], "none");
+            }
+            let ndjson_records = messages.len();
+            assert_eq!(
+                ndjson_records,
+                health_messages
+                    + ble_observations
+                    + wifi_observations
+                    + legacy_ble_records
+                    + legacy_detection_records
+            );
+            println!("PERF scenario={scenario} run={run} events={count} matched_observations={matched_observations} ble_observations={ble_observations} wifi_observations={wifi_observations} legacy_ble_records={legacy_ble_records} legacy_detection_records={legacy_detection_records} health_records={health_messages} ndjson_records={ndjson_records} elapsed_s={elapsed:.6} events_per_s={:.0} csv_bytes={} ndjson_bytes={}",
             count as f64 / elapsed, std::fs::metadata(&csv_path).unwrap().len(), std::fs::metadata(&json_path).unwrap().len());
         }
     }

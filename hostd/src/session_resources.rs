@@ -8,7 +8,9 @@ use std::{collections::HashMap, path::Path};
 
 pub(crate) fn validate(plan: &SessionConfig) -> io::Result<()> {
     #[cfg(target_os = "linux")]
-    return validate_linux(plan, Path::new("/sys/class/net"));
+    {
+        validate_linux(plan, Path::new("/sys/class/net"))
+    }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = plan;
