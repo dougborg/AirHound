@@ -125,3 +125,7 @@ to resolve successfully. If serial symlinks now point to the same endpoint, for
 example, load still returns the saved configuration with `validation.valid:false`
 so a client can show and repair it. Save continues to require strict current
 configuration validation and does not overwrite the last valid profile on error.
+
+For durable local helper paths and explicit integrity/runtime checks, see
+[Managed receiver helpers](managed-receiver-helpers.md). Profiles keep the selected
+immutable bundle paths when a newer helper bundle is installed.

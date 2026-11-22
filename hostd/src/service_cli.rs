@@ -298,12 +298,10 @@ impl Backend for LocalBackend {
     fn devices(&self, all: bool) -> BackendResult {
         let capture = self.capture.clone();
         Box::pin(async move {
-            let mut inventory =
-                airhound_hostd::discovery::discover(&airhound_hostd::discovery::Options {
-                    all,
-                    ..Default::default()
-                })
-                .await;
+            let mut inventory = airhound_hostd::discovery::discover(
+                &airhound_hostd::managed_helpers::discovery_options(all),
+            )
+            .await;
             if let Some(capture) = capture {
                 match capture
                     .request(crate::capture_service::Action::Status)
