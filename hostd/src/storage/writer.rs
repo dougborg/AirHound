@@ -27,6 +27,9 @@ pub struct Writer {
 }
 
 impl Writer {
+    pub(crate) fn fail(&self, message: &str) {
+        remember(&self.failure, message.to_owned());
+    }
     /// Returns only after the run and its source metadata are committed. No
     /// receiver should be started before this succeeds.
     pub fn start(

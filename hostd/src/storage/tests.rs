@@ -314,3 +314,59 @@ fn dedicated_writer_capture_failure_retains_committed_evidence() {
     assert_eq!(runs[0].state, "failed");
     assert_eq!(runs[0].record_count, 1);
 }
+
+#[test]
+fn recording_output_preserves_fragmented_source_and_evidence_records() {
+    use std::io::Write;
+    let f = Fixture::new();
+    let writer = writer::Writer::start(
+        f.database(),
+        RecordingMode::Replay,
+        json!({}),
+        vec![
+            ("receiver-a".into(), json!({})),
+            (
+                output::SESSION_SOURCE.into(),
+                json!({"kind":"session_control"}),
+            ),
+        ],
+    )
+    .unwrap();
+    let run = writer.run_id.clone();
+    let (mut output, completion) = output::attach(Vec::new(), writer);
+    let mut payload = record("receiver-a").payload;
+    payload["session_source"] =
+        json!({"receiver_id":"receiver-a","session_id":"original","ingress_sequence":42});
+    let bytes = serde_json::to_vec(&payload).unwrap();
+    for chunk in bytes.chunks(7) {
+        output.write_all(chunk).unwrap();
+    }
+    output.write_all(b"\n").unwrap();
+    output.flush().unwrap();
+    drop(output);
+    completion.finish(true).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let page = reader.records(&run, 0, 10).unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].source_id, "receiver-a");
+    assert_eq!(page.records[0].payload, payload);
+}
+
+#[test]
+fn incomplete_output_cannot_finish_successfully() {
+    use std::io::Write;
+    let f = Fixture::new();
+    let writer = writer::Writer::start(
+        f.database(),
+        RecordingMode::Replay,
+        json!({}),
+        vec![(output::SESSION_SOURCE.into(), json!({}))],
+    )
+    .unwrap();
+    let (mut output, completion) = output::attach(Vec::new(), writer);
+    output.write_all(b"{\"type\":\"observation\"}").unwrap();
+    drop(output);
+    assert!(completion.finish(true).is_err());
+    let reader = Reader::open(&f.database()).unwrap();
+    assert_eq!(reader.runs(1).unwrap()[0].state, "failed");
+}

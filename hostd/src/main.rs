@@ -77,6 +77,9 @@ struct Args {
     #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "wifi_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "external_usb_selector", "no_ble", "no_wifi"])]
     #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
     session_config: Option<PathBuf>,
+    /// Record session output durably in SQLite (requires --session-config or --wifi-pcap)
+    #[arg(long, conflicts_with = "list_ble_adapters")]
+    database: Option<PathBuf>,
     /// List BLE receivers and capability evidence as JSON, without starting a scan
     #[arg(long, conflicts_with_all = ["output", "overwrite", "no_ble", "ble_adapter"])]
     list_ble_adapters: bool,
@@ -372,19 +375,71 @@ async fn main() -> io::Result<()> {
         })).map_err(io::Error::other)
         })
         .transpose()?;
+    if args.database.is_some() && args.session_config.is_none() && replay_plan.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--database requires --session-config or --wifi-pcap",
+        ));
+    }
     if args.session_config.is_some() || replay_plan.is_some() {
         let plan = match replay_plan {
             Some(plan) => plan.resolve()?,
             None => session_runtime::load(args.session_config.as_ref().expect("session path"))?,
         };
         let filter = args.session_filter_config(&plan)?;
+        let recording_config =
+            serde_json::json!({"session":plan,"alert_policy":filter.alert_policy});
+        let mut sources: Vec<_> = plan
+            .receivers
+            .iter()
+            .map(|receiver| {
+                (
+                    receiver.id.clone(),
+                    serde_json::json!({"requested_source":receiver.source}),
+                )
+            })
+            .collect();
+        let replay = plan.receivers.iter().all(|receiver| {
+            matches!(
+                receiver.source,
+                airhound_hostd::session::Source::BlePcap { .. }
+                    | airhound_hostd::session::Source::WifiPcap { .. }
+            )
+        });
         let receivers = session_runtime::prepare(plan).await?;
         let writer = prepare_output(&args)?;
-        return session_runtime::run(
+        let (output, completion): (Box<dyn Write + Send>, _) =
+            if let Some(path) = args.database.clone() {
+                use airhound_hostd::storage::{output, writer::Writer, RecordingMode};
+                sources.push((
+                    output::SESSION_SOURCE.into(),
+                    serde_json::json!({"kind":"session_control"}),
+                ));
+                let recorder = tokio::task::spawn_blocking(move || {
+                    Writer::start(
+                        path,
+                        if replay {
+                            RecordingMode::Replay
+                        } else {
+                            RecordingMode::Live
+                        },
+                        recording_config,
+                        sources,
+                    )
+                })
+                .await
+                .map_err(io::Error::other)??;
+                log::info!("recording run {}", recorder.run_id);
+                let (output, completion) = output::attach(io::stdout(), recorder);
+                (Box::new(output), Some(completion))
+            } else {
+                (Box::new(io::stdout()), None)
+            };
+        let result = session_runtime::run(
             receivers,
             filter,
             writer,
-            io::stdout(),
+            output,
             args.gpsd.clone().map(|endpoint| gpsd::Options {
                 endpoint,
                 device: args.gpsd_device.clone(),
@@ -393,6 +448,17 @@ async fn main() -> io::Result<()> {
             shutdown_signal(),
         )
         .await;
+        if let Some(completion) = completion {
+            let succeeded = result.is_ok();
+            let recorded = tokio::task::spawn_blocking(move || completion.finish(succeeded))
+                .await
+                .map_err(io::Error::other)?;
+            if let Err(error) = recorded {
+                log::error!("recording could not finish successfully: {error}");
+                return Err(error);
+            }
+        }
+        return result;
     }
     if args
         .external_usb_selector
