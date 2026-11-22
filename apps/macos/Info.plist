@@ -11,4 +11,5 @@
 <key>NSHighResolutionCapable</key><true/>
 <key>NSBluetoothAlwaysUsageDescription</key><string>AirHound uses Bluetooth to observe nearby advertisements when you start a Bluetooth receiver.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>macOS requires location access to report nearby Wi-Fi network identities.</string>
+<key>NSLocationUsageDescription</key><string>AirHound uses location access for nearby Wi-Fi identities and receiver positions during capture.</string>
 </dict></plist>

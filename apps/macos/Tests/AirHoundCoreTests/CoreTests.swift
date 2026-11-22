@@ -212,6 +212,8 @@ final class CoreTests: XCTestCase {
     XCTAssertEqual(window.omitted, 5)
     XCTAssertEqual(window.cursor, 1005)
     XCTAssertEqual(try window.observations().observations.count, 1000)
+    XCTAssertEqual(try window.observations().observations.first?.id, 6)
+    XCTAssertEqual(try window.observations().observations.last?.id, 1005)
     let invalid = try JSONDecoder().decode(
       RecordPage.self, from: Data(#"{"records":[],"next_after":3,"has_more":false}"#.utf8))
     XCTAssertThrowsError(try window.append(invalid))

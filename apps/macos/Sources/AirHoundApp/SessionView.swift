@@ -18,7 +18,11 @@ struct SessionView: View {
               Button("Choose Backend…") { app.chooseBackend() }
             }.disabled(session.busy)
             DisclosureGroup("Connection settings") {
-              TextField("Socket", text: $session.socketPath)
+              TextField("Socket", text: $session.socketPath).disabled(
+                session.connected || session.busy)
+              if session.connected {
+                Button("Disconnect Client") { session.disconnect() }.disabled(session.busy)
+              }
               Text(app.executable?.path ?? "No backend selected").font(.caption).textSelection(
                 .enabled)
             }
@@ -80,7 +84,9 @@ struct SessionView: View {
                 systemImage: "record.circle"
               ) { session.start() }
               .disabled(session.isActive && !session.hasPendingStart)
-            }.disabled(!session.connected || session.busy || session.configText.isEmpty)
+            }.disabled(
+              !session.connected || !session.captureEnabled || session.busy
+                || session.configText.isEmpty)
             if let validation = session.validation {
               DisclosureGroup("Validation details") {
                 Text(validation).font(.system(.caption, design: .monospaced)).textSelection(

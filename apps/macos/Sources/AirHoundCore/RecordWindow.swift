@@ -40,6 +40,12 @@ public struct RecordWindow {
       stream.append(try record.payload.data())
       stream.append(10)
     }
-    return try Recording.decode(stream)
+    let decoded = try Recording.decode(stream)
+    let observations = decoded.observations.map { observation in
+      var row = observation
+      row.id = Int(records[observation.id].cursor)
+      return row
+    }
+    return Recording(observations: observations, ignoredRecords: decoded.ignoredRecords)
   }
 }
