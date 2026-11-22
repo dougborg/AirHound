@@ -124,7 +124,7 @@ physical receiver, installed preview or default recording was altered for them.
 
 | Area | Reviewed source / evidence | Result |
 | --- | --- | --- |
-| GPS session rebase | #276 `0896c50`; range-diff against previously reviewed `1275063` | All three feature patches unchanged after the second rebase. The earlier additive conflict correctly retained both backend build metadata and location-provider capabilities |
+| GPS session rebase | #276 `e7cd268`, independently reviewed after merged M5 source | GPS feature/docs remain patch-equivalent. The final integration removes one duplicate CoreLocation initializer from a clean Git merge; only native Wi-Fi requests Location. Build and GPS capability fields are retained; all test targets compile |
 | Managed helper installation | #280 `08f5a67` | Independent installer replay rejects unlisted Python files, symlinks, FIFOs and reuse of altered bundles. Clean bundle verifies. Dangling current pointer requires explicit replacement. Source review confirms manifest directory sync before atomic publication |
 | Managed GPS daemon ownership | `ea145e9` | Original fake-child test reproduced adoption of an unrelated replacement listener. Fixed service sends no WATCH to it, clears daemon identity/fix and reports endpoint busy; clean finish |
 | Shared serial ownership | #281 `77d01e3`, bounded test harness `46ec9b6` | One canonical endpoint/cu–tty alias namespace is shared by Rust and Python. Lease precedes upstream Sniffle construction, M5 UART open and managed GPS child spawn; stale lock files are retained safely rather than unlinked |
@@ -139,13 +139,34 @@ software. Install the reviewed helper revision when testing the assembled build.
 OS serial exclusivity remains an additional transport safeguard, not the shared
 ownership contract by itself.
 
+## Installed GUI service launch
+
+The reviewed `d7be542` preview was installed at `~/Applications/AirHound.app`
+after confirming the default service was absent. The previous authorized app was
+archived for rollback; the recording database and saved profiles were preserved.
+The installed backend retained SHA-256
+`97e144c1d98f84dda6cfc1913d6fc63193327f860c0cff80a4772ec1aac507bf`
+and service CDHash `6dda3e160b2745abfc5756d5940f32e655a9a131`.
+
+The actual visible bottom status control opened the connection popover, and
+**Start Local Service** started the installed nested `tools.airhound.service`
+application. The authenticated default socket reported clean source `d7be542`,
+managed helper bundle `63df7145713d571b77cd8e6de60f5b5124ae452eb3829f766b26ae40e2524189`,
+and both GPS modes. The GUI displayed **Service connected**, its backend source
+version and existing recording history. One restored duplicate window was closed;
+one GUI window and one idle service remained.
+
+This used bounded visual interaction after confirming the exact frontmost process
+and window frame; accessibility enumeration returned no windows. No capture was
+started and no operating-system permission prompt was approved. This verifies the
+installed GUI launch/connection path, not native-radio permission or reception.
+
 ## Remaining acceptance
 
-- Re-establish the default GUI service connection through the actual Start Local
-  Service control, then validate a combined session under that same authorized
-  identity, including M5 and explicit GPS where compatible. At this checkpoint the
-  default control socket is absent and the requested user click is still pending;
-  private service tests do not establish that GUI path.
+- Validate a combined session through the now-connected installed GUI service,
+  including native radios, M5 and explicit GPS where compatible. Its idle launch
+  and history connection passed; capture controls and native permission acceptance
+  remain separate checks.
 - Extend the passed external combined/restart/helper-recovery checks to native
   radios under the authorized app identity. Physical unplug/replug, sleep/wake
   and prolonged load remain untested in this assembled build. Synthetic
