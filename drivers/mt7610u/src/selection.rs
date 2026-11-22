@@ -30,7 +30,7 @@ impl FromStr for Selector {
         let invalid = || {
             "USB selector must be canonical usb:<bus>:<port>[.<port>...] (bus 0..255, ports 1..255, at most 7 ports)".to_string()
         };
-        if parts.next() != Some("usb") {
+        if text.len() > 35 || parts.next() != Some("usb") {
             return Err(invalid());
         }
         let bus = parts

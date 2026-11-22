@@ -162,12 +162,16 @@ do not run them as a ready-made session.
   visibility and permission checks.
 - **ALFA/MT7610U:** configure the separate receiver executable and pinned firmware.
   Its direct USB path is independent of native CoreWLAN's location permission.
-  The current receiver has no physical-device selector: an inventory ID does not
-  tell its helper which of several attached MT7610U adapters to claim. The driver
-  currently refuses to open a device unless exactly one matches. Sessions
-  currently accept only one external MT7610U receiver. With several attached,
-  each candidate reports an unsupported `physical_device_selection` requirement;
-  its configuration hint cannot target that inventory ID.
+  The updated helper's `list-devices` command reports physical USB selectors such
+  as `usb:1:1.2`. Supply these as `usb_selector` in session sources (or
+  `--external-usb-selector` for a single source). Distinct explicit selectors allow
+  independent ALFA channel plans; see the [two-adapter example](examples/session-alfa-multi.json).
+  Without a selector, exactly one matching adapter is required. With several
+  attached, discovery reports `physical_device_selection: needs_selection` and
+  leaves the hint's `usb_selector` null. Inventory IDs are not helper selectors;
+  discovery neither executes the helper nor assumes an automatic mapping between
+  those namespaces. Use the updated source-build helper; older preview binaries
+  do not implement selector confirmation.
 - **Sniffle:** confirm the board and installed protocol, then provide the serial
   endpoint, helper, Python environment and upstream module path. A generic Pico
   descriptor cannot establish these prerequisites. For composite Catnip devices,

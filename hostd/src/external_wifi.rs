@@ -10,6 +10,9 @@ use std::{
 
 /// Canonical process-protocol selector, independently validated without GPL linkage.
 pub fn valid_usb_selector(text: &str) -> bool {
+    if text.len() > 35 {
+        return false;
+    }
     let parts: Vec<_> = text.split(':').collect();
     if parts.len() != 3 || parts[0] != "usb" {
         return false;
