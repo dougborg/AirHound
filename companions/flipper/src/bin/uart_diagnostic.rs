@@ -341,10 +341,7 @@ fn main(args: Option<&CStr>) -> i32 {
             flipperzero::dialogs::alert("Unknown mode. UART not opened.");
             return 1;
         }
-        let mut run = Run::new(0);
-        run.feed(1, b"Stopping WiFi tran/recv\r\n");
-        let passed = run.poll(60, false, false) == Some(Command::Start)
-            && run.poll(2060, false, false) == Some(Command::Stop);
+        let passed = d::synthetic_self_test();
         flipperzero::dialogs::alert(if passed {
             "SYNTHETIC self-test passed\nNo UART or radio opened.\nCapture requires explicit mode."
         } else {
