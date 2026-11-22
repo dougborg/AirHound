@@ -170,6 +170,21 @@ async fn ready(child: &mut Child, port: u16) -> io::Result<()> {
     ))
 }
 
+async fn owned_session(options: &Options, source: &Source, pid: u32, port: u16) -> io::Result<()> {
+    let socket = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::net::TcpStream::connect(&options.endpoint),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "managed gpsd connection timeout"))??;
+    // Recheck after connecting and before any WATCH or data ingestion. Never
+    // delegate retries to the external-server client: ownership can change.
+    if !owns_listener(pid, port).await? {
+        return Err(io::Error::other("managed gpsd no longer owns its listener"));
+    }
+    super::consume_socket(socket, source).await
+}
+
 pub(super) async fn run(
     options: Options,
     source: Source,
@@ -242,10 +257,15 @@ pub(super) async fn run(
             source.disconnected("managed_start_failed");
             return;
         }
+        let pid = child.id().expect("ready child has not been reaped");
         tokio::select! {
             biased;
             _ = child.wait() => source.disconnected("managed_child_exited"),
-            _ = super::run_external(options.clone(), source.clone(), state.clone()) => {
+            result = owned_session(&options, &source, pid, endpoint.port()) => {
+                if let Err(error) = result { log::warn!("managed gpsd connection: {error}"); }
+                source.disconnected("managed_connection_lost");
+            }
+            _ = async { loop { if state.changed().await.is_err() || state.borrow().shutdown { break; } } } => {
                 stop(&mut child).await; source.disconnected("stopped"); return;
             }
         }
@@ -384,6 +404,45 @@ time.sleep({})
             std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, listen_port)).is_err()
         );
         assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
+
+        let fixture = Fixture::new(false);
+        let script = std::fs::read_to_string(fixture.0.join("gpsd")).unwrap().replace(
+            "time.sleep(30)", "time.sleep(0.3)\nc.close(); s.close()\n(root/'released').write_text('yes')\ntime.sleep(30)");
+        std::fs::write(fixture.0.join("gpsd"), script).unwrap();
+        let listen_port = port();
+        let source = Source::new(Some("/dev/null".into()));
+        let control = crate::control::ScanControl::new(true);
+        let task = tokio::spawn(run(
+            fixture.options(listen_port, "/dev/null"),
+            source.clone(),
+            control.subscribe(),
+        ));
+        until(&source, "fix").await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !fixture.0.join("released").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let replacement =
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, listen_port))
+                .await
+                .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(source.health()["state"], "managed_endpoint_busy");
+        assert!(source.location().is_none());
+        assert!(source.health()["daemon"].is_null());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), replacement.accept())
+                .await
+                .is_err(),
+            "replacement daemon must receive no connection or WATCH"
+        );
+        drop(replacement);
 
         let fixture = Fixture::new(true);
         let source = Source::new(Some("/dev/null".into()));
