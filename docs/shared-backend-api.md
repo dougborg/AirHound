@@ -186,6 +186,35 @@ before retrying. Scope a bounded idempotency cache to backend instance UUID,
 client UUID and request ID. A backend restart invalidates cached operations;
 the client must handshake and resynchronize rather than replay Start blindly.
 
+## Planned capability-based nodes and phone gateways
+
+A node can independently contribute location, radio observations, receiver tuning,
+and control/presentation. Do not assign a single fixed role based on whether the
+node is a phone, embedded detector or desktop. A phone may be GPS-only, capture-only,
+a remote control, or a gateway for attached M5/Flipper/other receivers.
+
+Advertise capabilities per source, including supported protocols/bands/channels,
+fixed-channel versus OS-managed scanning, passive versus active discovery,
+clock/timestamp semantics, and transport/queue loss reporting. The backend assigns
+channels or other slices only when the source can accept and acknowledge them;
+unavailable tuning is never silently treated as successful. Preserve the physical
+receiver identity separately from the forwarding phone and network connection.
+
+Location fixes carry source, time, accuracy and freshness. Associate a phone's
+location with another receiver only through an explicit co-location relationship;
+receiving a remote stream does not establish that both devices are in one place.
+Reconnection/replay must retain original timestamps and report missing intervals.
+
+The first proposed iPhone gateway transport is CoreBluetooth GATT to existing
+firmware: observations/commands on the device link, optional phone location and
+presentation, and authenticated forwarding to another backend later. External
+receiver addresses remain payload data, independent of the iPhone's own Bluetooth
+peripheral identifiers. BLE notification throughput, fragmentation, reconnects and
+background execution require acceptance testing. Generic USB serial is not an
+assumed iPhone capability; Android USB host adapters and supported iPad DriverKit
+paths are separate platform integrations. None of these phone roles is implemented
+by the initial local Unix-socket service. Track mobile work in #246.
+
 ## Planned events, replay and loss
 
 Events carry backend instance UUID, monotonically increasing event sequence,
