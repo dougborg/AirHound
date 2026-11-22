@@ -349,6 +349,13 @@ SQLite `quick_check` passed; the private service exited 0 and removed its socket
 This accepts the bounded diagnostic acquisition/import path only. RF loss,
 endurance and normal concurrent live-receiver operation remain unproven.
 
+PR #295 also corrects helper-supervisor cleanup ordering: completion is published
+only after child reaping and lease release. That fix is newer than the installed
+`33a5e93` backend and awaits the next preview rollout; the installed app/service
+were not replaced during these tests. The accompanying GPS fixture interpreter
+changes affect tests only. Earlier CI interpreter startup stalls remain
+internally unexplained; production readiness timeouts are unchanged.
+
 ## Remaining acceptance
 
 - Approve the updated installed application's pending Bluetooth and Location
