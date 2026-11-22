@@ -15,6 +15,7 @@ are labeled separately.
 | ESP32 firmware: M5StickC Plus2 / XIAO ESP32-S3 | [Firmware setup](firmware.md) |
 | Alternative ESP-IDF firmware | [firmware-std/README.md](../firmware-std/README.md) |
 | macOS/Linux desktop CLI | [hostd/README.md](../hostd/README.md) |
+| Passive MCP adapter (macOS/Linux) | [clients/mcp/README.md](../clients/mcp/README.md) |
 | External receivers and independent driver | [drivers/README.md](../drivers/README.md) |
 | Production signatures and research candidates | [signatures/README.md](../signatures/README.md) |
 | JSON contracts and examples | [schemas/README.md](../schemas/README.md) |
