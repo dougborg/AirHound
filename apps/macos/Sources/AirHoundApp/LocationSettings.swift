@@ -19,7 +19,7 @@ struct LocationSettings: View {
       if let location = session.planLocation, location != .null {
         if location["kind"]?.string == "gpsd" {
           TextField(
-            "GPSD server (host:port)",
+            "GPSD server (IP address:port)",
             text: Binding(
               get: { location["endpoint"]?.string ?? "" },
               set: { session.setLocationField("endpoint", value: .string($0)) })
