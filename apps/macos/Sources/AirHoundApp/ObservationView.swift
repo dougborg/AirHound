@@ -10,7 +10,8 @@ struct MainView: View {
   @State private var medium = "All types"
   @State private var matchesOnly = false
   @State private var showInspector = true
-  @State private var sortOrder = [KeyPathComparator(\Observation.name)]
+  @State private var sortOrder = [ObservationSort()]
+  @State private var tableRevision = UUID()
   // Rebuild only when the data or query changes, never while rendering a row,
   // scrolling, selecting an observation, or opening the inspector.
   @State private var filtered: [Observation] = []
@@ -49,15 +50,10 @@ struct MainView: View {
           Spacer()
         }.padding(12)
         Divider()
-        Table(filtered, selection: $selection, sortOrder: $sortOrder) {
-          TableColumn("Name", value: \.name).width(min: 180, ideal: 250)
-          TableColumn("Protocol", value: \.medium).width(min: 70, ideal: 85)
-          TableColumn("dBm", value: \.signalSort) { row in Text(row.signal).monospacedDigit() }
-            .width(50)
-          TableColumn("Channel", value: \.channel).width(58)
-          TableColumn("Receiver", value: \.receiver).width(min: 90, ideal: 110)
-          TableColumn("Match", value: \.match).width(52)
-        }
+        ObservationTable(
+          rows: filtered, revision: tableRevision,
+          selection: $selection, sortOrder: $sortOrder
+        )
         .overlay {
           if observations.isEmpty {
             ContentUnavailableView(
@@ -144,7 +140,8 @@ struct MainView: View {
           || [row.name, row.address, row.receiver, row.medium].contains {
             $0.localizedCaseInsensitiveContains(search)
           })
-    }.sorted(using: sortOrder)
+    }.sorted(using: sortOrder.map(\.comparator))
+    tableRevision = UUID()
     if let selection, !filtered.contains(where: { $0.id == selection }) { self.selection = nil }
   }
   private func receiverLabel(_ name: String, id: String, icon: String, assignment: String)

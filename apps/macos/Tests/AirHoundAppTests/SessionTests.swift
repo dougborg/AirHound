@@ -167,13 +167,53 @@ final class SessionTests: XCTestCase {
     XCTAssertEqual(
       completedPresentation.recording?.revision, unchangedRevision,
       "An empty page must not publish a new observation table")
-    replacement.rewindRecords()
-    replacement.leaveRecording()
-    try await waitIdle(replacement)
-    XCTAssertNil(replacement.browsingRun)
-    XCTAssertEqual(
-      completedPresentation.recording?.revision, unchangedRevision,
-      "A late page must not replace a recording after leaving it")
+    // Block an actual records subprocess, not merely the task queued by open().
+    let wrapper = root.appendingPathComponent("delayed-client.sh")
+    let entered = root.appendingPathComponent("entered")
+    let release = root.appendingPathComponent("release")
+    let armed = root.appendingPathComponent("armed")
+    func quote(_ value: String) -> String {
+      "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    let delayedScript = """
+      #!/bin/sh
+      for argument in "$@"; do
+        if [ "$argument" = records ] && [ -f \(quote(armed.path)) ]; then
+          : > \(quote(entered.path))
+          attempts=0
+          while [ ! -f \(quote(release.path)) ]; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -lt 200 ] || exit 70
+            sleep 0.05
+          done
+        fi
+      done
+      exec \(quote(path)) "$@"
+      """
+    try Data(delayedScript.utf8).write(to: wrapper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+    let delayed = SessionModel(preferences: defaults)
+    delayed.connect(executable: wrapper)
+    defer {
+      try? Data().write(to: release)
+      delayed.disconnect()
+    }
+    try await waitIdle(delayed)
+    XCTAssertTrue(delayed.connected)
+    try Data().write(to: armed)
+    let latePresentation = AppModel()
+    delayed.open(try XCTUnwrap(finishedRuns.runs.first), app: latePresentation)
+    for _ in 0..<100 {
+      if FileManager.default.fileExists(atPath: entered.path) { break }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: entered.path), "Records request must be in flight")
+    delayed.leaveRecording()
+    try Data().write(to: release)
+    try await waitIdle(delayed)
+    XCTAssertNil(delayed.browsingRun)
+    XCTAssertNil(latePresentation.recording, "An in-flight page must not publish after leaving")
 
   }
   private func waitIdle(_ model: SessionModel) async throws {
