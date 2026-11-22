@@ -299,6 +299,16 @@ final class CoreTests: XCTestCase {
     XCTAssertThrowsError(try store.load())
   }
 
+  func testReceiverRowsKeepDistinctDevicesWithCandidateIndexZero() throws {
+    let data = Data(
+      #"{"schema_version":1,"mode":"passive","platform":"macos","devices":[{"id":"system:ble","identity_scope":"system_backend","name":"Bluetooth","endpoints":[],"candidates":[{"kind":"native_ble","label":"Bluetooth receiver","support":"available","state":"unverified","evidence":[],"requirements":[]}]},{"id":"system:wifi","identity_scope":"system_backend","name":"Wi-Fi","endpoints":[],"candidates":[{"kind":"native_wifi","label":"Wi-Fi receiver","support":"available","state":"unverified","evidence":[],"requirements":[]}]}],"diagnostics":[]}"#
+        .utf8)
+    let rows = try Inventory.decode(data).receiverChoices
+    XCTAssertEqual(rows.map(\.id), ["system:ble:0", "system:wifi:0"])
+    XCTAssertEqual(rows.map { $0.candidate.label }, ["Bluetooth receiver", "Wi-Fi receiver"])
+    XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+  }
+
   func testMissingExecutable() async {
     do {
       _ = try await DiscoveryProcess().run(executable: URL(fileURLWithPath: "/does-not-exist"))

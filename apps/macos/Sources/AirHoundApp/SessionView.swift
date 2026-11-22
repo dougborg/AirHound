@@ -8,94 +8,84 @@ struct SessionView: View {
   @State private var confirmFinish = false
   var body: some View {
     HSplitView {
-      ScrollView {
-        Form {
-          Section("Service") {
-            LabeledContent("Connection", value: session.connected ? "Connected" : "Disconnected")
-            HStack {
-              Button("Connect") { session.connect(executable: app.executable) }
-              Button("Start Local Service") { session.startService(executable: app.executable) }
-              Button("Choose Backend…") { app.chooseBackend() }
-            }.disabled(session.busy)
-            DisclosureGroup("Connection settings") {
-              TextField("Socket", text: $session.socketPath).disabled(
-                session.connected || session.busy)
-              if session.connected {
-                Button("Disconnect Client") { session.disconnect() }.disabled(session.busy)
-              }
-              Text(app.executable?.path ?? "No backend selected").font(.caption).textSelection(
-                .enabled)
-            }
-            Text(session.message).foregroundStyle(.secondary)
-          }
-          Section("Receivers") {
-            if let inventory = session.inventory {
-              ForEach(inventory.devices) { device in
-                ForEach(Array(device.candidates.enumerated()), id: \.offset) { index, candidate in
-                  let key = device.id + ":" + String(index)
-                  Toggle(
-                    isOn: Binding(
-                      get: { session.selected.contains(key) },
-                      set: {
-                        if $0 { session.selected.insert(key) } else { session.selected.remove(key) }
-                        session.useSelectedReceivers()
-                      })
-                  ) {
-                    VStack(alignment: .leading) {
-                      Text(candidate.label)
-                      Text(
-                        "\(device.name) · \(candidate.state.replacingOccurrences(of: "_", with: " "))"
-                      )
-                      .font(.caption).foregroundStyle(.secondary)
-                    }
-                  }.disabled(candidate.configurationHint == nil || session.isActive || session.busy)
-                  if session.selected.contains(key), let source = candidate.configurationHint,
-                    ["sniffle", "external_wifi"].contains(candidate.kind)
-                  {
-                    ReceiverSettings(
-                      session: session, key: key, kind: candidate.kind, source: source
-                    )
-                    .disabled(session.isActive || session.busy)
-                  }
+      Form {
+        Section("Receivers") {
+          if let inventory = session.inventory {
+            ForEach(inventory.receiverChoices) { choice in
+              let candidate = choice.candidate
+              let key = choice.id
+              Toggle(
+                isOn: Binding(
+                  get: { session.selected.contains(key) },
+                  set: {
+                    if $0 { session.selected.insert(key) } else { session.selected.remove(key) }
+                    session.useSelectedReceivers()
+                  })
+              ) {
+                VStack(alignment: .leading) {
+                  Text(candidate.label)
+                  Text(
+                    "\(choice.deviceName) · \(candidate.statusDescription)"
+                  )
+                  .font(.caption).foregroundStyle(.secondary)
+                }
+              }.disabled(candidate.configurationHint == nil || session.isActive || session.busy)
+              DisclosureGroup("Identification details") {
+                Text(candidate.evidence.joined(separator: "\n"))
+                  .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                if !candidate.requirements.isEmpty {
+                  Text(
+                    candidate.requirements.map { "\($0.name): \($0.detail)" }.joined(
+                      separator: "\n")
+                  )
+                  .font(.caption).textSelection(.enabled)
                 }
               }
-              ForEach(Array(inventory.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
-                Text(diagnostic.message).font(.caption).foregroundStyle(.secondary)
-              }
-            } else {
-              Text("Connect to discover attached receivers.").foregroundStyle(.secondary)
-            }
-          }
-          Section("Scan plan") {
-            Text(
-              "Select receivers and configure any external helpers. Validation checks the plan without opening radios."
-            )
-            .font(.callout).foregroundStyle(.secondary)
-            DisclosureGroup("Advanced receiver and channel settings", isExpanded: $advanced) {
-              TextEditor(text: $session.configText).font(.system(.body, design: .monospaced))
-                .frame(minHeight: 180).accessibilityLabel("Session configuration JSON")
-                .disabled(session.isActive)
-              Button("Import Plan…") { importPlan() }
-            }
-            HStack {
-              Button("Validate Plan") { session.validate() }
-              Button(
-                session.hasPendingStart ? "Resolve Pending Start" : "Start Recording",
-                systemImage: "record.circle"
-              ) { session.start() }
-              .disabled(session.isActive && !session.hasPendingStart)
-            }.disabled(
-              !session.connected || !session.captureEnabled || session.busy
-                || session.configText.isEmpty)
-            if let validation = session.validation {
-              DisclosureGroup("Validation details") {
-                Text(validation).font(.system(.caption, design: .monospaced)).textSelection(
-                  .enabled)
+              if session.selected.contains(key), let source = candidate.configurationHint,
+                ["sniffle", "external_wifi"].contains(candidate.kind)
+              {
+                ReceiverSettings(
+                  session: session, key: key, kind: candidate.kind, source: source
+                )
+                .disabled(session.isActive || session.busy)
               }
             }
+            ForEach(Array(inventory.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
+              Text(diagnostic.message).font(.caption).foregroundStyle(.secondary)
+            }
+          } else {
+            Text("Connect to discover attached receivers.").foregroundStyle(.secondary)
           }
-        }.formStyle(.grouped)
-      }.frame(minWidth: 390, idealWidth: 490)
+        }
+        Section("Scan plan") {
+          Text(
+            "Select receivers and configure any external helpers. Validation checks the plan without opening radios."
+          )
+          .font(.callout).foregroundStyle(.secondary)
+          DisclosureGroup("Advanced receiver and channel settings", isExpanded: $advanced) {
+            TextEditor(text: $session.configText).font(.system(.body, design: .monospaced))
+              .frame(minHeight: 180).accessibilityLabel("Session configuration JSON")
+              .disabled(session.isActive)
+            Button("Import Plan…") { importPlan() }
+          }
+          HStack {
+            Button("Validate Plan") { session.validate() }
+            Button(
+              session.hasPendingStart ? "Resolve Pending Start" : "Start Recording",
+              systemImage: "record.circle"
+            ) { session.start() }
+            .disabled(session.isActive && !session.hasPendingStart)
+          }.disabled(
+            !session.connected || !session.captureEnabled || session.busy
+              || session.configText.isEmpty)
+          if let validation = session.validation {
+            DisclosureGroup("Validation details") {
+              Text(validation).font(.system(.caption, design: .monospaced)).textSelection(
+                .enabled)
+            }
+          }
+        }
+      }.formStyle(.grouped).frame(minWidth: 390, idealWidth: 490)
       VStack(alignment: .leading, spacing: 16) {
         HStack {
           Text("Recording").font(.title2)

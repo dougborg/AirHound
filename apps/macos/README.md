@@ -28,7 +28,8 @@ and deployment target. See the packaged backend's platform requirements.
 
 ## Connect and capture
 
-1. Open **Capture**. Choose a trusted backend if one is not embedded.
+1. Open **Capture**, then click the service status at the bottom to open connection
+   settings. Choose a trusted backend if one is not embedded.
 2. Click **Start Local Service**, or **Connect** if a service already exists.
 3. Select receivers. System Wi-Fi and Bluetooth form the initial suggested plan;
    selection does not start scanning or prove permission/readiness.
@@ -103,9 +104,10 @@ and query state after uncertain outcomes. The service process has no pipes tied
 to the app and is not terminated on app disconnect.
 
 Hardware and visual acceptance are separate from compiler/unit tests. The
-current integration is still under acceptance: ALFA MCU timeouts prevent a
-successful combined ALFA/CatSniffer sign-off, and full window close/reopen and
-rendered UI inspection remain pending. CatSniffer reception and real-service
+current integration is still under acceptance: packaged CatSniffer/replay GUI
+controls and full window close/reopen acceptance remain pending. ALFA MCU recovery
+and combined ALFA/CatSniffer acceptance are separate hardware follow-ups; they
+are not prerequisites for this native preview. CatSniffer reception and real-service
 replay, idempotent retry, history/export, and app-model service reconnection have
 been exercised locally. Do not treat those narrower checks as full hardware or
 UI acceptance.

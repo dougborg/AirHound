@@ -13,10 +13,11 @@ The preview is under acceptance, not a signed-off production release.
 | Uncertain start after app loss | Private fsynced intent record; replacement model resolves accepted ID with input file removed | Automated recovery check passes |
 | Bounded browsing/live polling | Record window eviction and cursor tests; paged/follow controls | Core checks pass; rendered interaction pending |
 | Readiness/recovery/drop distinctions | Unknown-versus-zero tests and preserved backend phases/counters | Automated checks pass |
-| Window close leaves capture running | Service lifetime is independent in code/model tests | Actual window acceptance pending Accessibility access |
+| Window close leaves capture running | Service lifetime is independent in code/model tests | Actual window acceptance pending; automation access is enabled |
 | Packaged backend startup/signing | Local optimized bundle, plist/codesign/embedded-help checks | Passed before latest edits; repeat on final artifact |
 | ALFA + CatSniffer capture together | Local packaged-backend attempt on 2026-11-22 | Failed: ALFA MCU timeout; reset/retest required |
-| Native rendered UI/accessibility | Accessibility trust probe returned false; System Events request timed out | Pending user permission |
+| Service connection status/popover | User confirmed clicking the bottom status opens the popover on 2026-11-22 | Passed manual interaction check |
+| Native rendered UI/accessibility | Compact predecessor row rendered; current bottom status is available across both tabs | Full capture interaction/appearance check pending; automation intermittently loses window access |
 
 The combined attempt retained 1,355 CatSniffer packets with zero reported host
 drops. ALFA produced no observations, reported two recovery attempts and failed.
@@ -29,7 +30,11 @@ No nearby-device identifiers or raw captures belong in the committed test
 fixtures. The regression tests use synthetic replay input and isolated temporary
 service databases.
 
-Before sign-off: repeat the dual-receiver run after ALFA reset; exercise native
+Before preview sign-off: exercise the packaged app with CatSniffer and synthetic
+replay, including failure/reconnect cases. Exercise native
 Start/Pause/Resume/Finish, browse observations/evidence, close/reopen during capture,
 and export/reopen a snapshot. Inspect the final bundle in light/dark appearance,
 keyboard focus and a narrow window. Rebuild and verify the artifact after fixes.
+
+ALFA recovery and successful ALFA + CatSniffer capture remain separate open
+hardware follow-ups (#155), not prerequisites for this native preview.

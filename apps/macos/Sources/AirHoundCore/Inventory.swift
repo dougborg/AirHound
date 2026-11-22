@@ -7,6 +7,15 @@ public struct Inventory: Decodable {
   public let devices: [Device]
   public let diagnostics: [Diagnostic]
 
+  public var receiverChoices: [ReceiverChoice] {
+    devices.flatMap { device in
+      device.candidates.enumerated().map { index, candidate in
+        ReceiverChoice(
+          id: device.id + ":" + String(index), deviceName: device.name, candidate: candidate)
+      }
+    }
+  }
+
   public static func decode(_ data: Data) throws -> Self {
     guard data.count <= 4 * 1024 * 1024 else { throw ModelError.invalid("Inventory exceeds 4 MiB") }
     let decoder = JSONDecoder()
@@ -50,6 +59,15 @@ public struct Candidate: Decodable {
   public let evidence: [String]
   public let requirements: [Requirement]
   public let configurationHint: JSONValue?
+  public var statusDescription: String {
+    switch state {
+    case "unsupported": return "Recognized — AirHound integration pending"
+    case "needs_identification": return "Device or firmware identity not yet verified"
+    case "needs_configuration": return "Setup required before capture"
+    case "unverified": return "Detected; readiness not yet verified"
+    default: return state.replacingOccurrences(of: "_", with: " ")
+    }
+  }
 }
 public struct Requirement: Decodable {
   public let name: String
@@ -62,4 +80,11 @@ public enum ModelError: LocalizedError {
     if case .invalid(let message) = self { return message }
     return nil
   }
+}
+
+/// Globally unique row identities survive Form's flattening of nested content.
+public struct ReceiverChoice: Identifiable {
+  public let id: String
+  public let deviceName: String
+  public let candidate: Candidate
 }
