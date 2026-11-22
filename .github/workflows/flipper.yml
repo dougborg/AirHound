@@ -48,7 +48,9 @@ jobs:
           python scripts/check-fap.py target/airhound-flipper-demo.fap target/momentum-api.csv > target/fap-audit.json
           cat target/fap-audit.json
       - name: Build diagnostic with matching symbols (no hardware acceptance)
-        run: python scripts/build-diagnostic.py target/momentum-api.csv
+        run: |
+          python scripts/build-diagnostic.py target/momentum-api.csv
+          python scripts/test-diagnostic-artifacts.py target/diagnostic
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flipper-uart-diagnostic-api87-unverified

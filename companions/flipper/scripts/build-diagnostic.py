@@ -13,11 +13,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
+import zlib
+from elftools.elf.elffile import ELFFile
 
 ROOT = Path(__file__).resolve().parents[1]
 FLAGS = ['-C', 'target-cpu=cortex-m4', '-C', 'panic=abort', '-C', 'debuginfo=2',
          '-C', 'embed-bitcode=yes', '-C', 'lto=yes',
-         '-C', 'link-arg=--script=flipperzero-rt.ld', '-C', 'link-arg=--Bstatic',
+         '-C', 'link-arg=--script=diagnostic.ld', '-C', 'link-arg=--Bstatic',
          '-C', 'link-arg=--relocatable', '-C', 'link-arg=--lto-O3',
          '-C', 'link-arg=--lto-whole-program-visibility']
 
@@ -28,6 +31,37 @@ def output(*args):
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_pair(debug, fap):
+    with debug.open('rb') as source, fap.open('rb') as stripped:
+        original = ELFFile(source)
+        deployed = ELFFile(stripped)
+        for name in ('.debug_info', '.debug_line', '.debug_abbrev'):
+            section = original.get_section_by_name(name)
+            if section is None or not section.data_size:
+                raise ValueError(f'missing nonempty {name}: debug information was stripped')
+        def allocated(elf):
+            return {s.name: (s['sh_type'], s['sh_flags'], s['sh_size'],
+                            None if s['sh_type'] == 'SHT_NOBITS' else s.data())
+                    for s in elf.iter_sections() if s['sh_flags'] & 2}
+        if allocated(original) != allocated(deployed):
+            raise ValueError('debug ELF and FAP allocated code/data differ')
+        link = deployed.get_section_by_name('.gnu_debuglink')
+        if link is None:
+            raise ValueError('missing debug link')
+        data = link.data()
+        name_end = data.find(b'\0')
+        crc_offset = (name_end + 4) & ~3
+        if name_end < 0 or len(data) != crc_offset + 4:
+            raise ValueError('malformed debug link')
+        if data[:name_end] != debug.name.encode():
+            raise ValueError('debug link filename mismatch')
+        crc = struct.unpack_from('<I', data, crc_offset)[0]
+        if crc != zlib.crc32(debug.read_bytes()):
+            raise ValueError('debug link CRC mismatch')
+        return {'dwarf_verified': True, 'allocated_sections_match': True,
+                'debuglink_crc32': f'{crc:08x}'}
 
 
 def main():
@@ -59,12 +93,14 @@ def main():
     shutil.copyfile(Path(env['CARGO_TARGET_DIR']) / 'thumbv7em-none-eabihf/release/airhound-uart-diagnostic', debug)
     subprocess.run([str(objcopy), '--strip-debug', f'--add-gnu-debuglink={debug}', str(debug), str(fap)], check=True)
     result = audit.audit(fap, sdk)
+    result.update(verify_pair(debug, fap))
     result.update(debug_elf_sha256=digest(debug), source_revision=output('git', 'rev-parse', 'HEAD'),
                   source_modified=bool(output('git', 'status', '--porcelain')),
                   rustc=output('rustc', '-vV'), rustflags=FLAGS,
                   source_hashes={str(p.relative_to(ROOT)): digest(p) for p in sorted(
                       [*ROOT.glob('src/**/*.rs'), ROOT / 'Cargo.toml', ROOT / 'Cargo.lock',
-                       ROOT / 'scripts/build-diagnostic.py', ROOT / 'scripts/check-fap.py'])},
+                       ROOT / 'scripts/build-diagnostic.py', ROOT / 'scripts/check-fap.py',
+                       ROOT / 'diagnostic.ld', ROOT / 'diagnostic-linker.LICENSE'])},
                   hardware_tested=False)
     (folder / 'audit.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))
