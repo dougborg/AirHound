@@ -123,18 +123,22 @@ struct AirHoundApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
   @StateObject private var model = AppModel()
   var body: some Scene {
-    Window("AirHound", id: "main") {
+    WindowGroup("AirHound", id: "main") {
       TabView(selection: $model.selectedTab) {
         SessionView(session: model.session, app: model).tabItem {
           Label("Capture", systemImage: "antenna.radiowaves.left.and.right")
         }.tag("capture")
         MainView(model: model).tabItem { Label("Observations", systemImage: "list.bullet") }.tag(
           "observations")
-      }.frame(minWidth: 1020, minHeight: 650).onAppear { delegate.model = model }
+      }
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        ServiceConnectionView(session: model.session, app: model)
+      }
+      .frame(minWidth: 1020, minHeight: 650).onAppear { delegate.model = model }
     }
     .defaultSize(width: 1280, height: 820)
     .commands {
-      CommandGroup(replacing: .newItem) {
+      CommandGroup(after: .newItem) {
         Button("Open Recording…") { model.openRecording() }.keyboardShortcut("o")
           .disabled(model.loadingRecording)
         Button("Open Example Recording") { model.loadExample() }

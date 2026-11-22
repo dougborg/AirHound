@@ -34,3 +34,9 @@ Capture belongs to the Rust service. The interface distinguishes requested run
 state, observed receiver health, and unavailable counters. Closing the app does
 not imply stopping capture. No visual acceptance is claimed until a rendered
 inspection and actual close/reopen check have been completed.
+
+Service connection occupies a compact bottom status bar shared by both tabs.
+Its text and green/red indicator report connected, disconnected or error state;
+color is not the only signal. Clicking the status opens a native popover with
+backend selection, socket configuration, connect/start and disconnect controls.
+The receiver setup area does not repeat those controls.
