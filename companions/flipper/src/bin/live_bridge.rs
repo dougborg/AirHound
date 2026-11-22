@@ -153,6 +153,7 @@ unsafe extern "C" fn send_loop(context: *mut c_void) -> i32 {
 struct Emit {
     sequence: u32,
     instance: u64,
+    app_started: u32,
 }
 impl Emit {
     fn body(&mut self, s: &Shared, c: &Controller, request_id: u32, body: Body<'_>) -> bool {
@@ -187,6 +188,7 @@ impl Emit {
     }
     fn status(&mut self, s: &Shared, c: &Controller, rx: &Rx, bytes: u64, unread: u32) -> bool {
         let mut state = c.status(now());
+        state.app_uptime_ms = now().wrapping_sub(self.app_started);
         state.uart_rx_bytes = bytes;
         state.uart_dropped_bytes = rx.dropped.load(Ordering::Relaxed) as u64;
         state.uart_error_events = rx.errors.load(Ordering::Relaxed) as u64;
@@ -325,7 +327,7 @@ impl Output for Link<'_, '_> {
             0,
             Body::Raw {
                 generation: c.generation,
-                app_uptime_ms: now(),
+                app_uptime_ms: now().wrapping_sub(self.emit.app_started),
                 bytes,
             },
         )
@@ -419,6 +421,7 @@ fn main(args: Option<&CStr>) -> i32 {
     let mut emit = Emit {
         sequence: 0,
         instance,
+        app_started: now(),
     };
     let screen = Screen::new();
     unsafe {
@@ -430,7 +433,7 @@ fn main(args: Option<&CStr>) -> i32 {
     let mut received = 0u64;
     let mut unread = 0u32;
     let mut last_status = now();
-    let launched = now();
+    let launched = emit.app_started;
     let mut previous = (c.state, c.cause, c.evidence, c.generation, c.request_id());
     loop {
         let drained_sequence = rx.sequence.load(Ordering::Acquire);
