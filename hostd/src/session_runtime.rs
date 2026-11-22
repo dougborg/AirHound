@@ -45,7 +45,7 @@ impl ReceiverTask {
 #[derive(Clone, serde::Serialize)]
 pub(crate) struct EventSource {
     session_id: String,
-    receiver_id: String,
+    pub(crate) receiver_id: String,
     /// Host ingress order within this source, not a device capture sequence.
     ingress_sequence: u64,
 }
@@ -234,6 +234,9 @@ async fn start_source(
             .await
         }
         Source::WifiPcap { path } => wifi_pcap::scan(path, tx, control).await,
+        Source::MarauderCapture { path, format } => {
+            crate::marauder_replay::scan(path, format, tx, control).await
+        }
         Source::BlePcap { path } => {
             ble_source::scan(ble_source::Source::Pcap(path), tx, control).await
         }

@@ -7,6 +7,18 @@ final class CoreTests: XCTestCase {
   private let inventory =
     #"{"schema_version":1,"mode":"passive","platform":"macos","devices":[{"id":"usb:example","identity_scope":"attachment_topology","name":"Example bridge","endpoints":[{"kind":"serial","path":"/dev/example"}],"candidates":[{"kind":"future_backend","label":"Future role","support":"candidate","state":"needs_identification","evidence":["Generic bridge"],"requirements":[{"name":"firmware","state":"unknown","detail":"Inspect manually"}],"capabilities":{"scope":"unknown"}}]}],"diagnostics":[{"backend":"ioreg","message":"Partial inventory"}]}"#
 
+  func testMarauderReplayObservationPreservesUnknownReceiveFields() throws {
+    let input =
+      #"{"type":"wifi_packet_observation","mac":"02:01:02:03:04:05","ssid":"fixture","replay":true,"timestamp_micros32":4294967295,"timestamp_clock":"device_boot_micros32_wrap_or_reset_unknown","rssi_dbm":null,"receive_channel":null,"gps":null,"session_source":{"receiver_id":"awok-file"}}"#
+    let row = try XCTUnwrap(Recording.decode(Data(input.utf8)).observations.first)
+    XCTAssertEqual(row.name, "fixture")
+    XCTAssertEqual(row.address, "02:01:02:03:04:05")
+    XCTAssertEqual(row.receiver, "awok-file")
+    XCTAssertNil(row.rssi)
+    XCTAssertEqual(row.channel, "Not reported")
+    XCTAssertTrue(row.raw.contains("device_boot_micros32_wrap_or_reset_unknown"))
+  }
+
   func testUnnamedObservationsUseAvailableIdentity() throws {
     let input = #"{"type":"ble_observation","name":"","mac":"02:00:00:00:00:01"}"#
     let row = try XCTUnwrap(Recording.decode(Data(input.utf8)).observations.first)

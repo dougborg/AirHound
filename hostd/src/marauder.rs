@@ -198,6 +198,30 @@ pub fn observation(
     value
 }
 
+/// Canonical desktop observation envelope. The decoder profile is not firmware
+/// identity, boot ticks are not UTC, and bare frames contain no receive metadata.
+pub fn normalized_observation(
+    record: Record<'_>,
+    source_id: &str,
+    index: &airhound::mac_index::MacIndex,
+) -> serde_json::Value {
+    let mut value = observation(record, source_id, index);
+    value["type"] = "wifi_packet_observation".into();
+    value["mac"] = value["identity"]["transmitter"]
+        .as_array()
+        .map(|bytes| {
+            bytes
+                .iter()
+                .map(|b| format!("{:02x}", b.as_u64().unwrap_or(0)))
+                .collect::<Vec<_>>()
+                .join(":")
+        })
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null);
+    value["ssid"] = value["identity"]["ssid"].clone();
+    value
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
