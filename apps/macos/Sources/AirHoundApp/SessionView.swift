@@ -6,6 +6,7 @@ struct SessionView: View {
   @ObservedObject var app: AppModel
   @State private var advanced = false
   @State private var confirmFinish = false
+  @State private var finishTarget: SessionModel.ControlTarget?
   var body: some View {
     HSplitView {
       Form {
@@ -68,7 +69,7 @@ struct SessionView: View {
             ) { session.start() }
             .disabled(session.isActive && !session.hasPendingStart)
           }.disabled(
-            !session.connected || !session.captureEnabled || session.busy
+            !session.canSubmitAction || !session.captureEnabled
               || session.configText.isEmpty)
           if let validation = session.validation {
             DisclosureGroup("Validation details") {
@@ -92,8 +93,11 @@ struct SessionView: View {
           ) {
             session.control(session.state == "paused" ? .resume : .pause)
           }
-          Button("Finish Recording", systemImage: "stop.fill") { confirmFinish = true }
-        }.disabled(!session.connected || !session.isActive || session.busy)
+          Button("Finish Recording", systemImage: "stop.fill") {
+            finishTarget = session.controlTarget()
+            confirmFinish = finishTarget != nil
+          }
+        }.disabled(!session.canSubmitAction || !session.isActive)
         Text(
           "Closing this window leaves capture running. Finish Recording saves and closes the host run."
         )
@@ -158,9 +162,11 @@ struct SessionView: View {
         }
       }.padding(20).frame(minWidth: 430)
     }
-    .confirmationDialog("Finish this recording?", isPresented: $confirmFinish) {
-      Button("Finish Recording") { session.control(.finish) }
-    } message: {
+    .confirmationDialog(
+      "Finish this recording?", isPresented: $confirmFinish, presenting: finishTarget
+    ) { target in
+      Button("Finish Recording") { session.control(.finish, target: target) }
+    } message: { _ in
       Text(
         "The service will close its receivers and save the remaining observations. Standalone devices may continue scanning."
       )

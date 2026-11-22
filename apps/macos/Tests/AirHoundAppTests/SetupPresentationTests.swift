@@ -32,14 +32,14 @@ final class SetupPresentationTests: XCTestCase {
     session.beginBackgroundRefresh()
     var executed: [String] = []
     XCTAssertTrue(session.submitSetupMutation { executed.append("save submitted plan") })
-    XCTAssertTrue(session.setupMutationQueued)
+    XCTAssertTrue(session.userActionQueued)
     XCTAssertFalse(session.canEditPlan)
     XCTAssertFalse(session.submitSetupMutation { executed.append("duplicate") })
     XCTAssertTrue(executed.isEmpty)
     session.finishBackgroundRefresh()
     for _ in 0..<20 where session.busy { await Task.yield() }
     XCTAssertEqual(executed, ["save submitted plan"])
-    XCTAssertFalse(session.setupMutationQueued)
+    XCTAssertFalse(session.userActionQueued)
     XCTAssertFalse(session.busy)
     session.beginBackgroundRefresh()
     XCTAssertTrue(session.submitSetupMutation { executed.append("delete submitted ID") })
