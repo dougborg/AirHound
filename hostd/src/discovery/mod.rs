@@ -131,6 +131,18 @@ impl Inventory {
         };
         for device in &mut self.devices {
             for candidate in &mut device.candidates {
+                if candidate.kind == "serial_unknown" {
+                    if let Some(identified) = active_airhound_candidate(
+                        device.id.as_str(),
+                        &device.endpoints,
+                        receivers,
+                        status,
+                    ) {
+                        *candidate = identified;
+                        self.mode = "passive_with_active_metadata";
+                    }
+                    continue;
+                }
                 if candidate.kind != "sniffle" {
                     continue;
                 }
@@ -173,6 +185,91 @@ impl Inventory {
                 self.mode = "passive_with_active_metadata";
             }
         }
+    }
+}
+
+// Runtime identity can enrich a passive inventory, but must never initiate UART
+// access or treat a USB bridge's brand as firmware evidence.
+fn active_airhound_candidate(
+    device_id: &str,
+    endpoints: &[Endpoint],
+    owners: &[Value],
+    status: &Value,
+) -> Option<Candidate> {
+    let (endpoint, owner) = endpoints
+        .iter()
+        .filter(|endpoint| endpoint.kind == "serial")
+        .find_map(|endpoint| {
+            owners
+                .iter()
+                .find(|owner| {
+                    let receiver = &owner["receiver"];
+                    receiver["backend"] == "airhound_serial"
+                        && matches!(
+                            receiver["availability"].as_str(),
+                            Some("available" | "paused" | "initializing")
+                        )
+                        && receiver["adapter_id"]
+                            .as_str()
+                            .is_some_and(|path| serial_alias(path) == serial_alias(&endpoint.path))
+                })
+                .map(|owner| (endpoint, owner))
+        })?;
+    let identity = &owner["receiver"]["producer_identity"];
+    if identity["application"] != "AirHound" || identity["evidence"] != "device_status" {
+        return None;
+    }
+    let bounded = |key: &str| {
+        identity[key]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 64)
+    };
+    let version = bounded("version")?;
+    let board = bounded("board")?;
+    identity["connection_generation"].as_u64()?;
+    identity["boot_generation"].as_u64()?;
+    let mut candidate = candidate("airhound_serial", "AirHound WiFi/BLE sensor", "available", "in_use",
+        "Firmware identity comes from the existing capture owner; discovery did not open or reset the serial port");
+    candidate.evidence.push(format!("Device reports AirHound {version} on {board}; RF readiness remains in current receiver health"));
+    candidate.capabilities = json!({"scope":"firmware_summary_contract", "media":["wifi","ble"], "channel_control":"device_managed", "pause":"host_ingestion_only", "stop":"close_transport_only", "extended_advertising":"unknown", "coded_phy":"unknown"});
+    let request = identify::Request {
+        protocol: "airhound_serial".into(),
+        device_id: device_id.into(),
+        port: endpoint.path.clone(),
+        python: PathBuf::new(),
+        helper: PathBuf::new(),
+        module_path: None,
+    };
+    let mut identified = identify::Identification::new(
+        &request,
+        "in_use",
+        "Identity reused from actual AirHound device status; no additional endpoint opened",
+    );
+    identified.provenance = "active_capture_owner";
+    identified.application = Some("AirHound");
+    identified.firmware_version = Some(version.into());
+    identified.board = Some(board.into());
+    // The firmware reports no protocol version, and identity alone is not RF evidence.
+    identified.owner = Some(json!({"run_id":status["run_id"],"receiver":owner}));
+    candidate.identification = Some(identified);
+    if let Some(baud) = owner["requested_assignment"]["baud"]
+        .as_u64()
+        .filter(|baud| [115200, 460800, 921600].contains(baud))
+    {
+        candidate.configuration_hint = Some(
+            json!({"kind":"airhound_serial","port":owner["receiver"]["adapter_id"],"baud":baud}),
+        );
+    }
+    Some(candidate)
+}
+
+fn serial_alias(path: &str) -> String {
+    match path
+        .strip_prefix("/dev/cu.")
+        .or_else(|| path.strip_prefix("/dev/tty."))
+    {
+        Some(port) => format!("macos_serial:{port}"),
+        None => format!("serial:{path}"),
     }
 }
 

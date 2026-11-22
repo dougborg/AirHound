@@ -65,6 +65,8 @@ pub struct Identification {
     pub message: String,
     pub application: Option<&'static str>,
     pub firmware_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
     pub protocol_api: Option<u16>,
     pub compatible: Option<bool>,
     pub reception: &'static str,
@@ -88,6 +90,7 @@ impl Identification {
             message: message.into(),
             application: None,
             firmware_version: None,
+            board: None,
             protocol_api: None,
             compatible: None,
             reception: "not_tested",
