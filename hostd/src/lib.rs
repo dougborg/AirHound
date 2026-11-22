@@ -8,6 +8,7 @@ pub mod session;
 
 pub mod build_info;
 pub mod discovery;
+pub mod managed_helpers;
 pub mod profiles;
 pub mod service;
 
