@@ -1050,7 +1050,7 @@ async fn filter_task<W: Write, O: Write>(
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
                 protocol::format_mac(&wifi_event.mac, &mut mac_buf);
-                let freq = wigle::channel_to_frequency(wifi_event.channel);
+                let freq = wifi_event.frequency_mhz.map(u32::from).unwrap_or(0);
                 wigle.write_wifi(
                     &mac_buf,
                     wifi_event.ssid.as_str(),
@@ -1178,6 +1178,8 @@ fn handle_wifi_event(
             "type":"wifi_observation", "mac":mac_str.as_str(), "ssid":event.ssid.as_str(),
             "rssi":event.rssi, "ch":event.channel, "frame":event.frame_type.as_str(),
             "security":event.security.as_str(), "ts":ts,
+            "frequency_mhz":event.frequency_mhz,
+            "band":event.frequency_mhz.and_then(airhound::wifi_frequency::channel).map(|(band, _)| band.as_str()),
             "detection":result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist)
         }),
     )?;
@@ -1195,7 +1197,13 @@ fn handle_wifi_event(
         ts,
     };
 
-    write_message(output, &msg)?;
+    let mut legacy = serde_json::to_value(&msg).map_err(io::Error::other)?;
+    legacy["frequency_mhz"] = serde_json::json!(event.frequency_mhz);
+    legacy["band"] = serde_json::json!(event
+        .frequency_mhz
+        .and_then(airhound::wifi_frequency::channel)
+        .map(|(band, _)| band.as_str()));
+    observation::write_json(output, &legacy)?;
     write_message(
         output,
         &DeviceMessage::Detection {
@@ -1736,10 +1744,50 @@ mod tests {
             ssid: "Flock-123456".try_into().unwrap(),
             rssi: -50,
             channel: 6,
+            frequency_mhz: None,
             frame_type: airhound::scanner::FrameType::Beacon,
             raw_ies: Default::default(),
             security: "[WPA2-PSK]".try_into().unwrap(),
         })
+    }
+
+    #[test]
+    fn wifi_output_keeps_overlapping_channel_bands_and_unknown_metadata() {
+        for (frequency, expected_band) in [
+            (Some(2412), Some("2.4GHz")),
+            (Some(5955), Some("6GHz")),
+            (None, None),
+        ] {
+            let ScanEvent::WiFi(mut event) = wifi_match() else {
+                unreachable!()
+            };
+            event.channel = 1;
+            event.frequency_mhz = frequency;
+            let mut output = Vec::new();
+            handle_wifi_event(
+                &event,
+                &FilterConfig::new(),
+                &MacIndex::from_defaults(),
+                Instant::now(),
+                &mut output,
+            )
+            .unwrap();
+            let rows: Vec<serde_json::Value> = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let wifi: Vec<_> = rows
+                .iter()
+                .filter(|r| r["type"] == "wifi_observation" || r["type"] == "wifi")
+                .collect();
+            assert_eq!(wifi.len(), 2);
+            for row in wifi {
+                assert_eq!(row["ch"], 1);
+                assert_eq!(row["frequency_mhz"], serde_json::json!(frequency));
+                assert_eq!(row["band"], serde_json::json!(expected_band));
+            }
+        }
     }
 
     #[test]

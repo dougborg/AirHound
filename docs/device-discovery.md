@@ -92,6 +92,7 @@ bridges. They are not hardware or firmware authentication.
 
 | Descriptor evidence | Interpretation and limits |
 | --- | --- |
+| `0e8d:7961`, `0846:9072` | AXML/MT7921U and A9000/MT7925U candidates, respectively. Experimental and unverified; live AirHound integration remains [#235](https://github.com/dougborg/AirHound/issues/235). No MT7610U helper configuration or verified capabilities are implied. |
 | `0e8d:7610` | MT7610U chipset candidate for the external WiFi receiver. This is the ID used by the tested ALFA AWUS036ACHM, but it does not prove the product brand or RF acceptance. |
 | `2e8a:00c0` | Generic RP2040/Pico bridge. The tested CatSniffer uses this ID; another board with this ID is not thereby a CatSniffer or a Sniffle receiver. |
 | `1209:babb` | Documented Catnip/CatSniffer composite identity. Inspect the exposed interfaces and installed firmware before selecting a capture protocol. |

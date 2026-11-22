@@ -96,6 +96,8 @@ See [GNSS setup, validity, and wardriving limits](../docs/gnss-wardriving.md).
 
 ## Observation identity and export
 
+[WiFi receive frequency and band](../docs/wifi-observation-contract.md) documents desktop metadata, unknown bands and new receiver preparation.
+
 CoreBluetooth supplies a host-scoped peripheral UUID, not a public MAC API.
 The standard macOS build additionally attempts address lookup through
 `corebluetooth-address` and Apple's private `retrieveAddressForPeripheral:`
@@ -297,7 +299,8 @@ NetworkManager, change interface mode, hop this interface's channel or transmit
 WiFi packets. Without `--wifi-interface`, Linux runs BLE only.
 
 The adapter requires radiotap channel and dBm signal fields. It supports 2.4 GHz
-and 5 GHz channels 36–177; 6 GHz awaits explicit band metadata. Truncated packets,
+and 5/6 GHz frequency metadata, including overlapping channel numbers. This does
+not establish radio support for those bands. Truncated packets,
 failed CRCs, padded payloads and missing/unsupported metadata are discarded.
 Capture and the bounded event queue are best effort under load. Parsed WiFi
 observations use the shared filter and WiGLE writer; Remote ID

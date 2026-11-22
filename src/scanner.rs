@@ -26,6 +26,8 @@ pub struct WiFiEvent {
     pub ssid: heapless::String<33>,
     pub rssi: i8,
     pub channel: u8,
+    /// Receive frequency supplied by the backend; channel alone cannot establish a band.
+    pub frequency_mhz: Option<u16>,
     pub frame_type: FrameType,
     /// Raw tagged parameters (IEs) from beacon/probe-response frames.
     /// Used for post-match ODID vendor IE parsing. Empty for data/other frames.
@@ -162,6 +164,7 @@ pub fn parse_wifi_frame(frame: &[u8], rssi: i8, channel: u8) -> Option<WiFiEvent
         frame_type: identity.frame_type,
         rssi,
         channel,
+        frequency_mhz: None,
         #[cfg(not(feature = "esp32"))]
         raw_ies: identity.raw_ies,
         #[cfg(not(feature = "esp32"))]

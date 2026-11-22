@@ -165,7 +165,9 @@ fn convert_network(network: &wifi_scan::Wifi) -> Option<WiFiEvent> {
 
     let rssi = network.signal_level.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
 
-    let channel = network.channel as u8;
+    // wifi_scan exposes no band/frequency. Its get_frequency() guesses from
+    // channel number, which is ambiguous for 6 GHz; preserve unknown instead.
+    let channel = u8::try_from(network.channel).unwrap_or(0);
 
     let security = format_security(&network.security);
 
@@ -174,6 +176,7 @@ fn convert_network(network: &wifi_scan::Wifi) -> Option<WiFiEvent> {
         ssid,
         rssi,
         channel,
+        frequency_mhz: None,
         frame_type: FrameType::Beacon, // CoreWLAN only returns beacon-equivalent data
         raw_ies: heapless::Vec::new(),
         security,
@@ -255,6 +258,7 @@ mod tests {
         assert_eq!(event.ssid.as_str(), "Flock-test");
         assert_eq!(event.security.as_str(), "[WPA2-PSK]");
         assert_eq!((event.channel, event.rssi), (6, -55));
+        assert_eq!(event.frequency_mhz, None);
         assert!(convert_network(&wifi_scan::Wifi::default()).is_none());
         let mut n = network();
         n.ssid = "é".repeat(20);
@@ -264,9 +268,12 @@ mod tests {
         assert_eq!(event.rssi, -128);
         n.ssid.clear();
         n.signal_level = 300;
+        n.channel = 65537;
         let event = convert_network(&n).unwrap();
         assert!(event.ssid.is_empty());
         assert_eq!(event.rssi, 127);
+        assert_eq!(event.channel, 0);
+        assert_eq!(event.frequency_mhz, None);
     }
     #[test]
     fn security_modes_are_preserved_in_csv_tags() {
