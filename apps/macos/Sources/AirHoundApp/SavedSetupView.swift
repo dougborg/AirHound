@@ -15,7 +15,8 @@ struct SavedSetupView: View {
             Text("Choose a saved setup").tag("")
             ForEach(session.setups) { setup in Text(setup.name).tag(setup.id) }
           }
-          Button("Load") { session.reviewSetup() }.disabled(session.selectedSetupID.isEmpty)
+          Button("Load") { session.reviewSetup() }
+            .disabled(session.selectedSetupID.isEmpty || session.busy)
         }
         HStack {
           Button("Save Setup…") {
@@ -24,7 +25,7 @@ struct SavedSetupView: View {
             saving = true
           }.disabled(session.configText.isEmpty)
           Menu("Manage") {
-            Button("Refresh List") { session.refreshSetups() }
+            Button("Refresh List") { session.refreshSetups() }.disabled(session.busy)
             Button("Delete Selected Setup…", role: .destructive) { deleting = true }
               .disabled(session.selectedSetupID.isEmpty)
           }
