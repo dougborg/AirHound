@@ -3,8 +3,9 @@
 This separate `airhound-live-bridge` target implements the device side of the
 [AHFB protocol](flipper-bridge-protocol.md). Revision `f457474` passed bounded
 UART-free RPC load/Hello/Stop/exit checks through Python and the production Rust
-transport engine on the attached Flipper. Live UART streaming is not yet accepted. The diagnostic application's successful 85-packet
-file acquisition is separate evidence for its UART/parser foundation.
+transport engine on the attached Flipper. A subsequent private full-service
+Start/Pause/Finish run stored 65 live Wi-Fi packet observations. The diagnostic
+application's earlier 85-packet file acquisition remains separate evidence.
 
 Launch is RPC-only. Default/standalone launch and Hello do not open UART. An
 explicit bound StartBeacon first obtains the UART, sends a line-synchronized stop,
@@ -64,9 +65,10 @@ target/audit-env/bin/python scripts/test-diagnostic-artifacts.py target/live-bri
 The outputs retain DWARF, matching code/data and debuglink CRC, exact source/SDK
 hashes and an explicit `hardware_tested: false`; acceptance evidence remains
 separate from immutable build metadata. Independent source/artifact review and the
-UART-free device checks below passed. Remaining gates include full service
-recording, paired fault tests, and separately reviewed passive streaming/watchdog/
-stop tests. The diagnostic and original Marauder companion remain preserved.
+UART-free and single-source passive device checks below passed. Remaining gates
+include Resume, physical watchdog/transport-failure tests, concurrent sources,
+endurance and the normal native setup/capture workflow. The diagnostic and
+original Marauder companion remain preserved.
 
 ## UART-free device evidence (2026-11-22)
 
@@ -98,5 +100,31 @@ actual controls were app launch, Hello, Stop and SessionClose. The clean backend
 build and exact companion version/revision were verified, all checked UART/loss
 counters remained zero, and post-run CLI/idle-loader/original and bridge hashes
 passed. The default service and its capture state were unchanged. This confirms
-the production transport engine; the full service recording and RF streaming
-paths remain unaccepted.
+the production transport engine without claiming RF reception from that test.
+
+## Single-source service capture evidence (2026-11-22)
+
+The unchanged `f457474`/`40652e` companion and private production backend
+`b2db65a` (SHA-256
+`38f8b3b61c253b0b38193b6127157b43341ec4b3d7c6b7754bf03de551b16ad2`)
+passed one explicit Start → Pause → Finish session. SQLite and the shared client
+returned 187 records, including **65 live Wi-Fi packet observations** attributed
+to the configured Flipper receiver, bound app instance and capture generation 1.
+The run finished, SQLite `quick_check` passed, and packet provenance retained
+`replay: false`, the device boot clock with unknown wrap/reset, and unknown RSSI,
+receive channel, GPS and AWOK firmware identity. No receiver location was attached.
+
+Pause was requested 2.003 seconds after the host observed Capturing. The producer's
+Capturing-to-Paused report interval was 3.016 seconds; neither interval measures
+exact RF duration or establishes a hard two-second device limit. The existing
+three-second heartbeat watchdog remains distinct from the requested pause target.
+Durable reports show Paused with stop-text evidence, a new Finish-specific
+Stopping boundary with that evidence cleared, then Stopped with fresh observed
+stop text and completed drain. Reported UART/RPC/output drops, UART errors and
+unread bytes were zero; RF loss remains unknown.
+
+The private service exited 0. Fresh post-run checks confirmed CLI restoration,
+idle loader, unchanged bridge/original companion hashes, reacquired serial lease
+and released USB ownership. The user's default service and capture state were
+unchanged. This accepts one single-source service lifecycle, not Resume,
+watchdog fault injection, concurrent capture, endurance or native UI controls.
