@@ -1,60 +1,12 @@
 //! A session-owned, foreground, read-only gpsd. Never adopts another daemon.
 use super::{Options, Source};
-use std::fs::{File, OpenOptions};
+use airhound_hostd::serial_lease::acquire as lease;
 use std::io;
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
-
-fn lease(device: &str) -> io::Result<File> {
-    use sha2::{Digest, Sha256};
-    let canonical = std::fs::canonicalize(device)?;
-    let name = canonical.to_string_lossy();
-    let resource = name
-        .strip_prefix("/dev/cu.")
-        .or_else(|| name.strip_prefix("/dev/tty."))
-        .unwrap_or(&name);
-    // Stable across services; never remove lock files while another process may
-    // hold their inode. O_NOFOLLOW and owner/type checks reject substitutions.
-    let uid = unsafe { libc::geteuid() };
-    let directory = std::env::temp_dir().join(format!("airhound-gpsd-{uid}"));
-    match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
-        Ok(()) => (),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
-        Err(e) => return Err(e),
-    }
-    let m = std::fs::symlink_metadata(&directory)?;
-    if !m.is_dir() || m.uid() != uid || m.mode() & 0o077 != 0 {
-        return Err(io::Error::other("unsafe gpsd lease directory"));
-    }
-    let key = Sha256::digest(resource.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(directory.join(key))?;
-    let m = file.metadata()?;
-    if !m.is_file() || m.uid() != uid || m.mode() & 0o077 != 0 {
-        return Err(io::Error::other("unsafe gpsd lease file"));
-    }
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "GPS device already owned by another AirHound session",
-        ));
-    }
-    Ok(file)
-}
 
 fn command(executable: &Path, device: &str, port: u16) -> Command {
     let mut command = Command::new(executable);

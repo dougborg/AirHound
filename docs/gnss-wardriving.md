@@ -39,7 +39,8 @@ Validation only checks configuration and local file metadata. It never opens the
 GPS or starts the daemon. Clients check `status.location_providers` for
 `managed_gpsd` before offering this mode. Loading a saved setup does not start it.
 
-At recording start the service takes a per-device AirHound lease, checks the
+At recording start the service takes the shared per-device AirHound serial lease
+(the same lease used by current Sniffle and M5 sources), checks the
 endpoint is unused, and starts only the selected helper with `-N -b -n -S PORT
 DEVICE`. It verifies the exact child owns the IPv4 localhost listener before
 sending WATCH or accepting location data. gpsd handles serial exclusivity and
