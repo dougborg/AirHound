@@ -108,36 +108,51 @@ final class SessionModel: ObservableObject {
       guard !FileManager.default.fileExists(atPath: socket.path) else {
         throw ModelError.invalid("A socket already exists. Connect to the service instead.")
       }
-      let process = Process()
-      process.executableURL = executable
-      process.arguments = [
+      let arguments = [
         "serve", "--socket", socket.path, "--database",
         directory.appendingPathComponent("recordings.sqlite").path, "--capture",
       ]
-      process.standardInput = FileHandle.nullDevice
-      process.standardOutput = FileHandle.nullDevice
-      process.standardError = FileHandle.nullDevice
-      try process.run()
-      service = process
       busy = true
       message = "Starting service…"
       Task {
-        for _ in 0..<30 {
-          if FileManager.default.fileExists(atPath: socket.path) {
-            busy = false
-            connect(executable: executable)
-            return
+        do {
+          let running: () -> Bool
+          if let application = ServiceLauncher.application(for: executable) {
+            let launched = try ServiceLauncher.launch(
+              application: application, arguments: arguments)
+            running = { launched.isRunning }
+          } else {
+            // Explicit standalone developer backends remain usable, but their
+            // native radio permissions depend on their own launch identity.
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            service = process
+            running = { process.isRunning }
           }
-          if !process.isRunning {
-            busy = false
-            error =
-              "Service exited (\(process.terminationStatus)). Check the directory permissions and database ownership."
-            return
+          for _ in 0..<50 {
+            if FileManager.default.fileExists(atPath: socket.path) {
+              busy = false
+              connect(executable: executable)
+              return
+            }
+            guard running() else {
+              throw ModelError.invalid(
+                "Service exited before becoming ready. Check the directory permissions and database ownership."
+              )
+            }
+            try await Task.sleep(for: .milliseconds(100))
           }
-          try? await Task.sleep(for: .milliseconds(100))
+          throw ModelError.invalid(
+            "Service has not become ready. Try Connect; no socket has been removed.")
+        } catch {
+          busy = false
+          self.error = error.localizedDescription
         }
-        busy = false
-        error = "Service has not become ready. Try Connect; no socket has been removed."
       }
     } catch { self.error = error.localizedDescription }
   }
