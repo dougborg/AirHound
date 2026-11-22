@@ -210,7 +210,7 @@ impl Manifest {
             contains(&format!("{}/serial/__init__.py", s.module_path))?;
             if s.version != "1.11.0"
                 || s.pyserial_version != "3.5"
-                || !hex(&s.source_revision, 40)
+                || s.source_revision != "18252f2c5a05f9ad906865b776652e31c61471c4"
                 || !hex(&s.runtime_sha256, 64)
                 || !s.runtime_path.is_absolute()
                 || s.licenses.len() < 2
@@ -323,7 +323,54 @@ pub fn discovery_options(all: bool) -> crate::discovery::Options {
     }
 }
 /// Hash checks are explicit setup work. This does not execute code or open radios.
+fn verify_layout(bundle: &Path, m: &Manifest) -> io::Result<()> {
+    let mut allowed_files: BTreeSet<PathBuf> =
+        m.files.iter().map(|f| PathBuf::from(&f.path)).collect();
+    allowed_files.insert("manifest.json".into());
+    let mut allowed_dirs = BTreeSet::new();
+    for file in &allowed_files {
+        for parent in file.ancestors().skip(1) {
+            if !parent.as_os_str().is_empty() {
+                allowed_dirs.insert(parent.to_path_buf());
+            }
+        }
+    }
+    let limit = allowed_files.len() + allowed_dirs.len();
+    let mut seen = 0;
+    let mut pending = vec![bundle.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        private_dir(&directory, false)?;
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            seen += 1;
+            if seen > limit {
+                return Err(invalid("unexpected installed bundle entries"));
+            }
+            let relative = path.strip_prefix(bundle).map_err(io::Error::other)?;
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() && allowed_dirs.contains(relative) {
+                pending.push(path);
+            } else if !metadata.is_file()
+                || !allowed_files.contains(relative)
+                || metadata.uid() != unsafe { libc::geteuid() }
+            {
+                return Err(invalid(
+                    "unexpected file, symlink or special node in installed bundle",
+                ));
+            }
+        }
+    }
+    if seen != limit {
+        return Err(invalid("installed bundle is incomplete"));
+    }
+    let manifest = fs::symlink_metadata(bundle.join("manifest.json"))?;
+    if manifest.mode() & 0o777 != 0o600 {
+        return Err(invalid("installed manifest must be private"));
+    }
+    Ok(())
+}
 fn verify_bundle(bundle: &Path, m: &Manifest) -> io::Result<()> {
+    verify_layout(bundle, m)?;
     for f in &m.files {
         let path = check_tree(bundle, &f.path)?;
         let meta = fs::symlink_metadata(&path)?;
@@ -388,7 +435,7 @@ pub fn install(root: &Path, source: &Path, replace: bool) -> io::Result<Value> {
     let m: Manifest = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     m.validate()?;
     let id = hex_bytes(&Sha256::digest(&bytes));
-    if root.join("current").exists() && !replace {
+    if fs::symlink_metadata(root.join("current")).is_ok() && !replace {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "helpers already installed; explicit --replace required",
@@ -433,6 +480,7 @@ pub fn install(root: &Path, source: &Path, replace: bool) -> io::Result<Value> {
             .open(pending.join("manifest.json"))?;
         out.write_all(&bytes)?;
         out.sync_all()?;
+        File::open(&pending)?.sync_all()?;
         verify_bundle(&pending, &m)?;
         if final_dir.exists() {
             private_dir(&final_dir, false)?;
