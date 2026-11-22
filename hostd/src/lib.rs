@@ -5,3 +5,5 @@ pub mod external_wifi;
 pub mod marauder;
 
 pub mod session;
+
+pub mod discovery;

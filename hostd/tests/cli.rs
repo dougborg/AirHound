@@ -89,3 +89,42 @@ fn invalid_adapter_selection_fails_before_radio_initialization() {
             .contains("system-managed"));
     }
 }
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn passive_discovery_json_is_separate_from_scanning_and_csv_output() {
+    let binary = env!("CARGO_BIN_EXE_airhound-hostd");
+    let output = std::process::Command::new(binary)
+        .args(["devices", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inventory: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(inventory["schema_version"], 1);
+    assert_eq!(inventory["mode"], "passive");
+    assert!(inventory["devices"].is_array());
+    assert!(inventory["diagnostics"].is_array());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("scan started"));
+    for args in [
+        vec!["--no-wifi", "devices", "list"],
+        vec!["--session-config", "absent.json", "devices", "list"],
+        vec!["devices", "list", "--output", "unused.csv"],
+    ] {
+        assert!(!std::process::Command::new(binary)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
+    let text = std::process::Command::new(binary)
+        .args(["devices", "list", "--all"])
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    assert!(String::from_utf8_lossy(&text.stdout).contains("No ports opened or scans started"));
+}
