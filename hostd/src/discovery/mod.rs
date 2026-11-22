@@ -238,7 +238,7 @@ fn classify(raw: &RawDevice, platform: &str, options: &Options) -> Vec<Candidate
         (Some(0x0e8d), Some(0x7610)) => {
             let mut c = candidate("external_wifi", "MediaTek MT7610U (including ALFA AWUS036ACHM)", "experimental", "needs_configuration", "USB VID/PID matches MT7610U; branding, firmware and exclusive access not verified");
             configure(&mut c, vec![prerequisite("external_scanner", options.external_scanner.as_deref(), false), prerequisite("external_firmware", options.external_firmware.as_deref(), false)]);
-            c.configuration_hint = Some(json!({"kind":"external_wifi", "executable":options.external_scanner, "firmware":options.external_firmware,"channels":[1],"dwell_ms":500})); result.push(c);
+            c.configuration_hint = Some(json!({"kind":"external_wifi", "usb_selector":null, "executable":options.external_scanner, "firmware":options.external_firmware,"channels":[1],"dwell_ms":500})); result.push(c);
         }
         (Some(0x2e8a), Some(0x00c0)) | (Some(0x1209), Some(0xbabb)) => {
             let mut c = candidate("sniffle", "CatSniffer / Sniffle candidate", "candidate", "needs_identification", "USB bridge identity is compatible with CatSniffer; installed radio and Sniffle firmware must be confirmed explicitly");
@@ -318,7 +318,7 @@ fn assemble(
             for c in &mut device.candidates {
                 if c.kind == "external_wifi" {
                     c.state = "needs_configuration";
-                    c.requirements.push(Requirement { name:"physical_device_selection".into(), state:"unsupported", detail:"Multiple MT7610U devices attached; current helper has no physical-device selector. Configuration hint cannot target this inventory ID".into() });
+                    c.requirements.push(Requirement { name:"physical_device_selection".into(), state:"needs_selection", detail:"Multiple MT7610U devices attached; run the updated helper list-devices command and choose distinct usb_selector values. Inventory IDs are not helper selectors and no automatic mapping is performed".into() });
                 }
             }
         }

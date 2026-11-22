@@ -206,9 +206,10 @@ fn composite_serial_roles_and_multiple_alfa_devices_are_not_auto_selected() {
     b.id = "usb:2".into();
     let inventory = assemble(vec![a, b], vec![], "linux", &Options::default());
     for d in inventory.devices {
+        assert!(d.candidates[0].configuration_hint.as_ref().unwrap()["usb_selector"].is_null());
         assert!(d.candidates[0]
             .requirements
             .iter()
-            .any(|r| r.name == "physical_device_selection" && r.state == "unsupported"));
+            .any(|r| r.name == "physical_device_selection" && r.state == "needs_selection"));
     }
 }
