@@ -26,12 +26,12 @@ mod observation;
 use control::ScanControl;
 #[cfg(target_os = "macos")]
 mod location_macos;
-#[cfg(any(target_os = "linux", test))]
 mod radiotap;
 #[cfg(target_os = "linux")]
 mod wifi_linux;
 #[cfg(target_os = "macos")]
 mod wifi_macos;
+mod wifi_pcap;
 mod wigle;
 
 #[cfg(test)]
@@ -68,12 +68,12 @@ use wigle::{Location, WigleWriter};
     about = "AirHound host daemon — WiFi/BLE scanner with WiGLE CSV output",
     args_conflicts_with_subcommands = true
 )]
-#[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner"]))))]
+#[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner", "wifi_pcap"]))))]
 struct Args {
     #[command(subcommand)]
     command: Option<DiscoveryCommand>,
     /// Concurrent receivers described by a versioned JSON session file
-    #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "external_usb_selector", "no_ble", "no_wifi"])]
+    #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "wifi_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "external_usb_selector", "no_ble", "no_wifi"])]
     #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
     session_config: Option<PathBuf>,
     /// List BLE receivers and capability evidence as JSON, without starting a scan
@@ -85,6 +85,10 @@ struct Args {
     /// Replay classic DLT256 BLE PCAP through the shared observation pipeline
     #[arg(long, conflicts_with_all = ["sniffle_port", "ble_adapter", "no_ble", "list_ble_adapters"])]
     ble_pcap: Option<PathBuf>,
+    /// Replay a saved classic radiotap PCAP (DLT127), without starting live radios
+    #[arg(long, conflicts_with_all = ["ble_pcap", "ble_adapter", "sniffle_port", "external_scanner", "no_wifi", "list_ble_adapters", "gpsd"])]
+    #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
+    wifi_pcap: Option<PathBuf>,
     /// Explicit serial port for a Sniffle 1.11.0 receiver (no automatic flashing)
     #[arg(long, requires = "sniffle_helper", conflicts_with_all = ["ble_adapter", "no_ble", "list_ble_adapters"])]
     sniffle_port: Option<String>,
@@ -321,8 +325,20 @@ async fn main() -> io::Result<()> {
             }),
         );
     }
-    if let Some(path) = args.session_config.as_ref() {
-        let plan = session_runtime::load(path)?;
+    let replay_plan = args
+        .wifi_pcap
+        .as_ref()
+        .map(|path| {
+            serde_json::from_value::<airhound_hostd::session::SessionConfig>(serde_json::json!({
+            "version":1,"receivers":[{"id":"wifi-pcap","source":{"kind":"wifi_pcap","path":path}}]
+        })).map_err(io::Error::other)
+        })
+        .transpose()?;
+    if args.session_config.is_some() || replay_plan.is_some() {
+        let plan = match replay_plan {
+            Some(plan) => plan.resolve()?,
+            None => session_runtime::load(args.session_config.as_ref().expect("session path"))?,
+        };
         let filter = args.session_filter_config(&plan)?;
         let receivers = session_runtime::prepare(plan).await?;
         let writer = prepare_output(&args)?;
@@ -737,7 +753,12 @@ async fn filter_task<W: Write, O: Write>(
             event => (event, None, control.clone()),
         };
         let control = event_control;
+        let (event, replay) = match event {
+            ScanEvent::Replay { event, metadata } => (*event, Some(metadata)),
+            event => (event, None),
+        };
         let mut output = session_runtime::SourceWriter::new(&mut output, source.as_ref());
+        output.replay = replay.as_ref();
         if let ScanEvent::ExternalStatus {
             ref state,
             dropped,
@@ -759,12 +780,14 @@ async fn filter_task<W: Write, O: Write>(
             observation::write_json(&mut output, &value)?;
             continue;
         }
-        if let ScanEvent::BleSourceStatus(ref value) = event {
+        if let ScanEvent::BleSourceStatus(ref value) | ScanEvent::WifiReplayStatus(ref value) =
+            event
+        {
             observation::write_json(&mut output, value)?;
             continue;
         }
         if !control.load(Ordering::Relaxed) {
-            if matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
+            if replay.is_some() || matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
                 let mut state = control.subscribe();
                 while !state.borrow().enabled && !state.borrow().shutdown {
                     if state.changed().await.is_err() {
@@ -780,12 +803,21 @@ async fn filter_task<W: Write, O: Write>(
         }
 
         let cfg = *config.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let location = get_location(&control);
+        let now = replay
+            .as_ref()
+            .map(|record| record.csv_time())
+            .unwrap_or_else(|| Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        // A saved capture must never acquire the replay host's present-day location.
+        let location = if replay.is_some() {
+            None
+        } else {
+            get_location(&control)
+        };
 
         match event {
             ScanEvent::Sourced { .. } => return Err(io::Error::other("nested receiver envelope")),
-            ScanEvent::BleSourceStatus(_) => unreachable!(),
+            ScanEvent::BleSourceStatus(_) | ScanEvent::WifiReplayStatus(_) => unreachable!(),
+            ScanEvent::Replay { .. } => return Err(io::Error::other("nested replay envelope")),
             ScanEvent::BlePacket(ref packet) => {
                 let state = *control.subscribe().borrow();
                 let accepted_generation = if state.shutdown {
@@ -1090,7 +1122,6 @@ async fn filter_task<W: Write, O: Write>(
                 // Retain observations and attach evidence; legacy match records remain additive.
                 handle_wifi_event(wifi_event, &cfg, &mac_index, start_time, &mut output)?;
             }
-            #[cfg(any(target_os = "linux", test))]
             ScanEvent::Odid(ref event) => {
                 if cfg.wifi_enabled && event.rssi >= cfg.min_rssi {
                     if let Some(frame) = airhound::odid::parse_odid_service_info(&event.raw_data) {
@@ -1338,7 +1369,6 @@ async fn input_command_loop(
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn emit_odid(
     frame: &airhound::odid::OdidFrame,
     event: &airhound::scanner::OdidEvent,

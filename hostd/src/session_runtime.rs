@@ -151,6 +151,7 @@ async fn start_source(
             )
             .await
         }
+        Source::WifiPcap { path } => wifi_pcap::scan(path, tx, control).await,
         Source::BlePcap { path } => {
             ble_source::scan(ble_source::Source::Pcap(path), tx, control).await
         }
@@ -217,7 +218,12 @@ where
         tokio::spawn(gpsd::run(options, source, control.subscribe()))
     });
     #[cfg(all(target_os = "macos", not(test)))]
-    location_macos::start();
+    if receivers
+        .iter()
+        .any(|receiver| receiver.assignment["mode"] != "replay")
+    {
+        location_macos::start();
+    }
     let budget = receivers
         .iter()
         .map(|r| r.shutdown_budget)
@@ -389,6 +395,7 @@ pub(crate) struct SourceWriter<'a, W> {
     output: &'a mut W,
     source: Option<&'a EventSource>,
     pending: Vec<u8>,
+    pub replay: Option<&'a crate::wifi_pcap::Metadata>,
 }
 impl<'a, W: Write> SourceWriter<'a, W> {
     pub fn new(output: &'a mut W, source: Option<&'a EventSource>) -> Self {
@@ -396,14 +403,15 @@ impl<'a, W: Write> SourceWriter<'a, W> {
             output,
             source,
             pending: Vec::new(),
+            replay: None,
         }
     }
 }
 impl<W: Write> Write for SourceWriter<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let Some(source) = self.source else {
+        if self.source.is_none() && self.replay.is_none() {
             return self.output.write(bytes);
-        };
+        }
         for chunk in bytes.split_inclusive(|b| *b == b'\n') {
             if self.pending.len() + chunk.len() > LINE_LIMIT {
                 return Err(io::Error::other("source record exceeds output bound"));
@@ -412,13 +420,22 @@ impl<W: Write> Write for SourceWriter<'_, W> {
             if chunk.last() == Some(&b'\n') {
                 let mut value: serde_json::Value =
                     serde_json::from_slice(&self.pending).map_err(io::Error::other)?;
-                value
+                let object = value
                     .as_object_mut()
-                    .ok_or_else(|| io::Error::other("source record is not an object"))?
-                    .insert(
+                    .ok_or_else(|| io::Error::other("source record is not an object"))?;
+                if let Some(source) = self.source {
+                    object.insert(
                         "session_source".into(),
                         serde_json::to_value(source).map_err(io::Error::other)?,
                     );
+                }
+                if let Some(replay) = self.replay {
+                    object.insert("replay".into(), true.into());
+                    object.insert(
+                        "capture".into(),
+                        serde_json::to_value(replay).map_err(io::Error::other)?,
+                    );
+                }
                 observation::write_json(self.output, &value)?;
                 self.pending.clear();
             }

@@ -31,6 +31,7 @@ are labeled separately.
 - [Concurrent desktop receivers, configuration and source identity](multi-receiver-sessions.md)
 - [Marauder / AWOK saved Wi-Fi capture import](marauder-import.md)
 - [WiFi receive frequency and band](wifi-observation-contract.md)
+- [Offline WiFi PCAP replay](wifi-pcap-replay.md): bounded radiotap replay, 6 GHz metadata and capture-time exports.
 - [Typed BLE observation contract](ble-observation-contract.md)
 - [Desktop Remote ID decoding and reception limits](desktop-remote-id.md)
 - [External WiFi file format](external-wifi-v1.md) and [live process protocol](external-scanner-stream-v1.md)

@@ -108,6 +108,13 @@ With `--session-config`, Sniffle and native BLE can run as separate receivers.
 Complete advertiser packets enter CSV; all captured packets remain in NDJSON.
 Extended-chain reassembly and live Coded-PHY validation remain follow-ups.
 
+## Offline WiFi replay
+
+Saved WiFi radiotap captures can be replayed with `--wifi-pcap capture.pcap`
+(with no live radio initialization), or combined as `wifi_pcap` session receivers.
+See [offline WiFi replay](../docs/wifi-pcap-replay.md) for timestamp, location,
+format limits and rejection accounting.
+
 ## External GNSS location
 
 Use `--gpsd 127.0.0.1:2947` to geotag WiGLE rows from an external receiver on

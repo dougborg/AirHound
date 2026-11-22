@@ -49,6 +49,9 @@ pub enum Source {
     BlePcap {
         path: PathBuf,
     },
+    WifiPcap {
+        path: PathBuf,
+    },
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -193,7 +196,7 @@ impl SessionConfig {
                         usb_selector.as_deref().unwrap_or("default")
                     )
                 }
-                Source::BlePcap { path } => {
+                Source::BlePcap { path } | Source::WifiPcap { path } => {
                     if path.as_os_str().is_empty() {
                         return Err(invalid("empty replay path"));
                     }
@@ -252,7 +255,7 @@ impl Source {
             } => {
                 serde_json::json!({"mode":"channel_plan","channels":channels,"dwell_ms":dwell_ms,"usb_selector":usb_selector})
             }
-            Self::BlePcap { .. } => serde_json::json!({"mode":"replay"}),
+            Self::BlePcap { .. } | Self::WifiPcap { .. } => serde_json::json!({"mode":"replay"}),
         }
     }
 }

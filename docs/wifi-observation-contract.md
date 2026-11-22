@@ -46,6 +46,7 @@ configuration. Neither device has been validated with AirHound.
 
 [#235](https://github.com/dougborg/AirHound/issues/235) tracks WiFi PCAP replay, the
 separate live helper, firmware prerequisites, topology-safe selection, and hardware
-acceptance. The current PCAP replay CLI is BLE-only. The existing MT7610U helper is
+acceptance. Classic radiotap captures can be [replayed offline](wifi-pcap-replay.md); this
+does not start a live receiver. The existing MT7610U helper is
 a different driver and cannot activate these adapters. Supporting 6 GHz metadata
 in Linux radiotap ingestion does not establish an AXML/A9000 capture backend.
