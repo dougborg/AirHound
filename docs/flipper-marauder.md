@@ -111,7 +111,7 @@ support. Longer scans, reconnects, capture transfer and import remain
 
 ## Current binary-capture limitation
 
-The newer acceptance runs in the [hardware ledger](attached-hardware-validation.md#flipper-and-awok-follow-up)
+Earlier acceptance runs in the [hardware ledger](attached-hardware-validation.md#flipper-and-awok-follow-up)
 failed to produce a complete binary capture. The accumulating mJS approach led to
 an out-of-memory screen. The installed v0.7.6 companion later displayed beacon
 reception but crashed with a NULL-pointer screen, leaving empty files. The precise
@@ -124,10 +124,13 @@ does not mean the scanner is idle. Console acknowledgment text is not authentica
 and does not prove complete RF reception or a hardware-level stop.
 
 The isolated [AirHound diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic)
-uses fixed memory and device-local timing. It must pass build, UART-free load/exit,
-headroom and synthetic replay checks before a separately reviewed live test.
-This is a diagnostic application, not a full firmware rewrite or a demonstrated
-fix for the third-party companion crash.
+uses fixed memory and device-local timing. Revision `b0c26fa` passed UART-free
+load/exit, stop-only acknowledgment, and one bounded passive acquisition: 85
+complete packets passed strict import and private service/SQLite replay with
+unknown radio/location fields preserved. This is a diagnostic application, not
+a full firmware rewrite or a demonstrated fix for the third-party companion
+crash. Normal backend-controlled concurrent capture remains in development;
+the diagnostic file workflow does not yet provide that integration.
 
 A simpler fallback is Momentum's built-in **GPIO → USB-UART Bridge**, configured
 for USART pins 13/14 at 115200 baud and **USB channel 1** so channel 0 can retain
