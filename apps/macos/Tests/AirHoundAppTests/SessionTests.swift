@@ -82,5 +82,75 @@ final class SessionTests: XCTestCase {
     XCTAssertEqual(runs.runs.count, 1)
     XCTAssertEqual(runs.runs.first?.id, accepted["run_id"]?.string)
     XCTAssertTrue(service.isRunning)
+
+    // Synthetic receiver obeys the real helper protocol; it never opens hardware.
+    let helper = root.appendingPathComponent("fake-receiver.sh")
+    let script = #"""
+      #!/bin/sh
+      printf '%s\n' '{"type":"hello","protocol_version":1}' '{"type":"status","state":"running"}'
+      while IFS= read -r command; do
+      id=${command##*:}; id=${id%?}
+      case "$command" in
+      *pause*) printf '{"type":"status","state":"paused","cleanup_verified":true,"request_id":%s}\n' "$id";;
+      *resume*) printf '{"type":"status","state":"running","request_id":%s}\n' "$id";;
+      *stop*) printf '{"type":"stopped","cleanup_verified":true,"request_id":%s}\n' "$id"; exit 0;;
+      esac
+      done
+      exit 3
+      """#
+    try Data(script.utf8).write(to: helper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+    let firmware = root.appendingPathComponent("unused-test-firmware")
+    try Data().write(to: firmware)
+    let liveConfig = try JSONValue.object([
+      "version": .integer(1),
+      "receivers": .array([
+        .object([
+          "id": .string("synthetic"),
+          "source": .object([
+            "kind": .string("external_wifi"), "executable": .string(helper.path),
+            "firmware": .string(firmware.path), "channels": .array([.integer(1)]),
+            "dwell_ms": .integer(500),
+          ]),
+        ])
+      ]),
+    ]).data()
+    replacement.configText = String(decoding: liveConfig, as: UTF8.self)
+    replacement.start()
+    try await waitIdle(replacement)
+    XCTAssertNil(replacement.error)
+    XCTAssertTrue(replacement.isActive)
+    let activeRun = try XCTUnwrap(replacement.activeID)
+    replacement.disconnect()
+    let afterDisconnect = try await client.status()
+    XCTAssertEqual(afterDisconnect["run_id"]?.string, activeRun)
+    XCTAssertEqual(afterDisconnect["active"], .bool(true))
+    replacement.connect(executable: URL(fileURLWithPath: path))
+    try await waitIdle(replacement)
+    XCTAssertEqual(replacement.activeID, activeRun)
+    replacement.control(.pause)
+    try await waitIdle(replacement)
+    XCTAssertNil(replacement.error)
+    XCTAssertEqual(replacement.state, "paused")
+    replacement.control(.resume)
+    try await waitIdle(replacement)
+    XCTAssertNil(replacement.error)
+    XCTAssertEqual(replacement.state, "recording")
+    replacement.control(.finish)
+    try await waitIdle(replacement)
+    XCTAssertNil(replacement.error)
+    XCTAssertFalse(replacement.isActive)
+    XCTAssertEqual(replacement.state, "finished")
+    let finishedRuns = try await client.recordings()
+    XCTAssertEqual(finishedRuns.runs.first?.id, activeRun)
+    XCTAssertEqual(finishedRuns.runs.first?.state, "finished")
   }
+  private func waitIdle(_ model: SessionModel) async throws {
+    for _ in 0..<200 {
+      if !model.busy { return }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    XCTFail("Presentation operation did not finish in time")
+  }
+
 }
