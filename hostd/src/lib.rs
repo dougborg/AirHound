@@ -4,6 +4,7 @@ pub mod external_identity;
 pub mod external_wifi;
 
 pub mod flipper_bridge;
+pub mod flipper_rpc_session;
 pub mod flipper_rpc_transport;
 pub mod marauder;
 pub mod marauder_stream;

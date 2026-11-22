@@ -438,3 +438,45 @@ fn external_identity_requires_exact_selector_and_current_owner() {
     history.reuse_active_metadata(&json!({"active":false,"last":health}));
     assert!(history.devices[0].candidates[0].external_identity.is_none());
 }
+
+#[test]
+fn active_flipper_hello_identifies_bridge_not_downstream_radio_and_never_stale_owner() {
+    let mut device = raw(0x0483, 0x5740);
+    device.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/cu.flipper-fixture".into(),
+    });
+    let inventory = || assemble(vec![device.clone()], vec![], "macos", &Options::default());
+    let mut status = json!({"active":true,"receiver_health":{"receivers":[{"receiver":{"backend":"flipper_marauder","adapter_id":"/dev/tty.flipper-fixture","availability":"available","bridge_identity":{"application":{"evidence":"ahfb_hello","version":"fixture"},"awok_firmware":null}},"scanners":{"wifi":{"state":"initializing"}}}]}});
+    let mut active = inventory();
+    active.reuse_active_metadata(&status);
+    let candidate = &active.devices[0].candidates[0];
+    assert_eq!(candidate.label, "AirHound Flipper bridge");
+    assert_eq!(candidate.support, "available");
+    assert_eq!(
+        candidate.bridge_identity.as_ref().unwrap()["awok_firmware"],
+        Value::Null
+    );
+    assert!(!candidate
+        .evidence
+        .iter()
+        .any(|s| s.contains("reception verified")));
+    status["receiver_health"]["receivers"][0]["scanners"]["wifi"]["state"] = "running".into();
+    let mut running = inventory();
+    running.reuse_active_metadata(&status);
+    assert_eq!(
+        running.devices[0].candidates[0].label,
+        "AirHound Flipper bridge"
+    );
+    for mode in ["failed", "stopped", "unavailable"] {
+        status["receiver_health"]["receivers"][0]["receiver"]["availability"] = mode.into();
+        let mut stale = inventory();
+        stale.reuse_active_metadata(&status);
+        assert!(stale.devices[0].candidates[0].bridge_identity.is_none());
+    }
+    status["active"] = false.into();
+    status["receiver_health"]["receivers"][0]["receiver"]["availability"] = "available".into();
+    let mut stale = inventory();
+    stale.reuse_active_metadata(&status);
+    assert!(stale.devices[0].candidates[0].bridge_identity.is_none());
+}

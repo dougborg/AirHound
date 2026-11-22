@@ -74,6 +74,10 @@ pub struct Receiver {
     pub producer_identity: Option<ProducerIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_identity: Option<airhound_hostd::external_identity::Identity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_identity: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_status: Option<serde_json::Value>,
 }
 
 pub fn backend() -> &'static str {
@@ -133,6 +137,8 @@ fn descriptor(
     Ok(Receiver {
         producer_identity: None,
         external_identity: None,
+        bridge_identity: None,
+        bridge_status: None,
         backend: platform,
         adapter_id,
         adapter_info: info,

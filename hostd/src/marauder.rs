@@ -160,6 +160,19 @@ pub fn observation(
     source_id: &str,
     index: &airhound::mac_index::MacIndex,
 ) -> serde_json::Value {
+    observation_with_policy(
+        record,
+        source_id,
+        index,
+        airhound::evidence::AlertPolicy::Silent,
+    )
+}
+fn observation_with_policy(
+    record: Record<'_>,
+    source_id: &str,
+    index: &airhound::mac_index::MacIndex,
+    policy: airhound::evidence::AlertPolicy,
+) -> serde_json::Value {
     let identity = supported_management(record.frame)
         .then(|| airhound::scanner::parse_wifi_identity(record.frame))
         .flatten()
@@ -192,8 +205,7 @@ pub fn observation(
         );
         value["identity"] = serde_json::json!({"transmitter": identity.mac, "ssid": identity.ssid.as_str(), "frame_type": identity.frame_type.as_str()});
         value["detection"] =
-            serde_json::to_value(result.detection(airhound::evidence::AlertPolicy::Silent))
-                .expect("serializable evidence");
+            serde_json::to_value(result.detection(policy)).expect("serializable evidence");
     }
     value
 }
@@ -205,7 +217,32 @@ pub fn normalized_observation(
     source_id: &str,
     index: &airhound::mac_index::MacIndex,
 ) -> serde_json::Value {
-    let mut value = observation(record, source_id, index);
+    normalized_with_policy(
+        record,
+        source_id,
+        index,
+        airhound::evidence::AlertPolicy::Silent,
+    )
+}
+/// Live packets share parsing and matching with replay, while the caller retains
+/// live transport/time provenance and supplies the selected signature policy.
+pub fn normalized_live_observation(
+    record: Record<'_>,
+    source_id: &str,
+    index: &airhound::mac_index::MacIndex,
+    policy: airhound::evidence::AlertPolicy,
+) -> serde_json::Value {
+    let mut value = normalized_with_policy(record, source_id, index, policy);
+    value["replay"] = false.into();
+    value
+}
+fn normalized_with_policy(
+    record: Record<'_>,
+    source_id: &str,
+    index: &airhound::mac_index::MacIndex,
+    policy: airhound::evidence::AlertPolicy,
+) -> serde_json::Value {
+    let mut value = observation_with_policy(record, source_id, index, policy);
     value["type"] = "wifi_packet_observation".into();
     value["mac"] = value["identity"]["transmitter"]
         .as_array()
@@ -400,6 +437,23 @@ mod tests {
         assert_eq!(value["firmware_version_verified"], false);
         assert!(!value["detection"]["sig"].as_array().unwrap().is_empty());
         assert_eq!(value["detection"]["policy"], "silent");
+        let live = normalized_live_observation(
+            Record {
+                timestamp_micros32: 42,
+                frame: &frame,
+            },
+            "live-bridge",
+            &index,
+            airhound::evidence::AlertPolicy::AllMatches,
+        );
+        assert_eq!(live["replay"], false);
+        assert_eq!(live["detection"]["policy"], "all_matches");
+        assert_eq!(live["timestamp_micros32"], 42);
+        assert_eq!(live["frame_bytes"], value["frame_bytes"]);
+        assert_eq!(live["source_id"], "live-bridge");
+        for field in ["rssi_dbm", "receive_channel", "gps"] {
+            assert!(live[field].is_null());
+        }
         let unknown = observation(
             Record {
                 timestamp_micros32: 0,

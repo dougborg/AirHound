@@ -347,6 +347,8 @@ pub async fn scan(
     control.set_receiver(crate::receiver::Receiver {
         producer_identity: None,
         external_identity: None,
+        bridge_identity: None,
+        bridge_status: None,
         backend,
         adapter_id: id,
         adapter_info: info,
@@ -806,6 +808,8 @@ with h.borrowed_port_lease(a.port,a.lease_fd):
         c.set_receiver(crate::receiver::Receiver {
             producer_identity: None,
             external_identity: None,
+            bridge_identity: None,
+            bridge_status: None,
             backend: "sniffle",
             adapter_id: "sniffle:/dev/test".into(),
             adapter_info: "unidentified".into(),

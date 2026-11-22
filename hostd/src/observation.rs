@@ -12,6 +12,12 @@ pub enum ScanEvent {
     BlePacket(Box<crate::ble_packet::Packet>),
     BleSourceStatus(serde_json::Value),
     WifiReplayStatus(serde_json::Value),
+    MarauderLive {
+        packet: airhound_hostd::flipper_bridge::Packet,
+        app_instance: u64,
+        ingestion_generation: u64,
+        received_at: String,
+    },
     MarauderReplay {
         timestamp_micros32: u32,
         frame: Vec<u8>,

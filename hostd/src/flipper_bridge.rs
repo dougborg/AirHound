@@ -21,7 +21,7 @@ pub struct Session {
     failed: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
     pub generation: u32,
     /// FAP UART receipt uptime, not an AWOK clock or wall timestamp.
@@ -35,6 +35,7 @@ pub struct Packet {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Event {
     Hello {
+        app_instance: u64,
         version: String,
         revision: String,
         modified: u8,
@@ -159,6 +160,7 @@ impl Session {
                 self.pending = None;
                 self.state = Some(State::Ready);
                 Ok(Event::Hello {
+                    app_instance: message.header.app_instance,
                     version: hello.app_version.into(),
                     revision: hello.source_revision.into(),
                     modified: hello.source_modified,

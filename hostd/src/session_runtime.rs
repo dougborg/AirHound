@@ -195,6 +195,7 @@ async fn start_source(
                 Err(io::Error::other("native WiFi unavailable"))
             }
         }
+        Source::FlipperMarauder { port } => crate::flipper_source::scan(port, tx, control).await,
         Source::AirhoundSerial { port, baud } => {
             crate::serial_source::scan(&port, baud, tx, control).await
         }
