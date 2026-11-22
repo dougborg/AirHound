@@ -1,5 +1,7 @@
 # Flipper companion prototype
 
+For the working stock-firmware setup, see [Flipper and AWOK Marauder](../../docs/flipper-marauder.md). The third-party Marauder companion is distinct from this AirHound prototype.
+
 [Project home](../../README.md) · [Firmware stream](../../docs/firmware-streaming.md) · [Companion plan #34](https://github.com/dougborg/AirHound/issues/34)
 
 This is a **receive-parser and synthetic FAP feasibility milestone**, not a working

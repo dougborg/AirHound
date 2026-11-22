@@ -95,8 +95,8 @@
     "platform": "Research",
     "status": "Research only",
     "state": "research",
-    "limits": "Exact board/firmware integration remains under investigation. No supported AirHound firmware or desktop ingestion.",
-    "guide": "/reference/docs/awok-integration/",
+    "limits": "Original Dual Touch v3 stock Marauder v1.21.0 boot/GPIO smoke-tested. Offline capture importer exists; live AirHound ingestion and native firmware remain pending.",
+    "guide": "/reference/docs/flipper-marauder/",
     "evidence": "https://github.com/dougborg/AirHound/issues/181"
   },
   {
@@ -105,8 +105,8 @@
     "platform": "Research",
     "status": "Research only",
     "state": "research",
-    "limits": "Companion and additional-radio work is on the roadmap. No released Flipper or sub-GHz observation integration.",
-    "guide": "https://github.com/dougborg/AirHound/issues/34",
+    "limits": "AirHound parser/synthetic FAP prototype exists. Stock Marauder GPIO control tested separately; no released AirHound companion or sub-GHz observation source.",
+    "guide": "/reference/docs/flipper-marauder/",
     "evidence": "https://github.com/dougborg/AirHound/issues/42"
   }
 ]
