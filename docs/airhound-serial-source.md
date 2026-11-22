@@ -49,7 +49,11 @@ Close other serial monitors first. Port ownership stays exclusive until finish.
   identifier, so the host does not guess which observation they annotate.
 - `ts` remains device uptime milliseconds, **not UTC or host capture time**.
   Connection and boot generations delimit reconnects and observed uptime resets.
-  These generations are host boundaries, not hardware boot IDs. Status `uptime`
+  These generations are host boundaries, not hardware boot IDs. Reset detection
+  uses periodic status uptime (normally every 30 seconds), so observations after
+  an unexpected reboot can retain the preceding generation until the next status
+  arrives. `boot_generation_basis` states that sampled limitation; it is not exact
+  event-to-boot attribution. Status `uptime`
   is seconds. Original producer records are not changed.
 - `airhound_device_status` retains the reported board, version, uptime and memory
   values. Active receiver identity is populated only after that status arrives;
