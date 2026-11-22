@@ -310,10 +310,18 @@ that the installed companion is safe.
 
 The next isolated implementation is the [AirHound UART diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic):
 fixed memory, one UART command owner, device-local stop timing, immutable UI text,
-and storage only after RX shutdown. It is **not yet hardware accepted**, is not a
-fix for the unknown native fault, and does not replace or flash either firmware.
-Its default launch is UART-free. Installation/load/exit, memory headroom, synthetic
-replay and separately reviewed passive acquisition remain distinct gates.
+and storage only after RX shutdown. It is **not capture accepted**, is not a fix for the unknown native fault, and
+does not replace or flash either firmware.
+Its default launch is UART-free. The unique `de00984` build passed actual synthetic
+load/selftest/exit with 53,048 bytes free heap while loaded and 127,752 after exit;
+its original companion hash stayed unchanged. One capture-mode attempt then
+aborted in preflight: `start_sent: false`, no scan command issued, closed empty raw
+file, zero reported UART drops/errors/unread bytes. Because that build did not
+retain preflight bytes, silence versus line mismatch remains unknown. A subsequent
+stop-only recovery returned two stop acknowledgments in 85 hash-verified bytes,
+ending in `stopscan` with idle loader and released transport. No RF retry occurred.
+The follow-up retains bounded preflight bytes and adds a mode that cannot emit
+Start, so transport diagnosis precedes another capture attempt.
 
 ## Remaining acceptance
 
@@ -329,8 +337,9 @@ replay and separately reviewed passive acquisition remain distinct gates.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Validate the isolated diagnostic's UART-free load/exit and memory headroom,
-  then its bounded passive acquisition and a genuine complete capture/import.
+- Validate the isolated diagnostic's new stop-only preflight mode, then its
+  bounded passive acquisition and a genuine complete capture/import. The earlier
+  revision passed UART-free load/exit and measured headroom only.
   Fresh identity/control and displayed beacon text do not replace a complete
   binary capture. Preserve the acknowledged-stop state; do not retry the
   crashing third-party acquisition path without a reviewed mitigation.
