@@ -21,7 +21,7 @@ import time
 
 # Shared across backend sockets, app bundles and TMPDIR environments for this UID.
 # Keep lock files after release: unlinking a locked inode permits split ownership.
-LEASE_ROOT = Path('/tmp') / ('airhound-sniffle-' + str(os.getuid()))
+LEASE_ROOT = Path('/tmp') / ('airhound-serial-' + str(os.geteuid()))
 
 
 def port_identity(port):
@@ -44,21 +44,27 @@ def port_lease(port):
     except FileExistsError:
         pass
     metadata = LEASE_ROOT.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
         raise RuntimeError('Sniffle lease directory must be owned and private (0700)')
     name = hashlib.sha256(port_identity(port).encode()).hexdigest() + '.lock'
     fd = os.open(str(LEASE_ROOT / name), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
+    acquired = False
     try:
         metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
             raise RuntimeError('Sniffle lease must be an owned private regular file')
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise RuntimeError('Sniffle port is already owned by another AirHound helper') from error
+            raise RuntimeError('Sniffle port is already owned by another AirHound source') from error
+        acquired = True
         yield
     finally:
-        os.close(fd)
+        try:
+            if acquired:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def main():

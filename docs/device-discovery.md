@@ -291,7 +291,12 @@ and is shared across backend sockets and temporary-directory environments for
 the same user. A busy lease rejects the second helper before any UART open or
 write. It remains held until the first helper closes its transport or exits.
 
-The private lease directory is `/tmp/airhound-sniffle-<uid>`. Lock files remain
+The Rust `serial_lease::acquire` API uses the same key and namespace for M5 UART
+and managed GPS source owners; callers acquire before transport open/child spawn
+and retain the lease through pause/recovery until transport close/child reap.
+Sniffle acquires inside its helper, so its parent must not double-acquire.
+
+The private lease directory is `/tmp/airhound-serial-<uid>`. Lock files remain
 after release to avoid splitting ownership across unlinked lock inodes. This is
 coordination between current AirHound helpers, not an assertion of exclusive
 hardware ownership against unrelated programs, other users, or older helper
