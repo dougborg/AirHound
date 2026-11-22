@@ -305,6 +305,9 @@ final class SetupPresentationTests: XCTestCase {
     try await idle()
     let review = try XCTUnwrap(session.setupReview)
     XCTAssertEqual(review.id, submittedID, "Queued Load uses the setup selected at click time")
+    XCTAssertEqual(
+      review.name, "M5 and GPS",
+      "The review sheet names the captured setup, not the changed picker selection")
     XCTAssertEqual(session.plannedReceivers.count, 0, "Review must not apply automatically")
     session.applySetup(review)
     XCTAssertEqual(
@@ -380,12 +383,24 @@ final class SetupPresentationTests: XCTestCase {
     session.capture = .object([
       "active": .bool(false), "last": .object(["state": .string("finished")]),
     ])
-    let historical = try JSONDecoder().decode(
-      JSONValue.self,
+    let health: JSONValue = .object([
+      "receivers": .array(
+        ["macos-wifi", "macos-bluetooth", "m5stickc-plus2", "catsniffer", "alfa-mt7610u"].map {
+          .object([
+            "id": .string($0), "scanners": .object(["ble": .object(["state": .string("running")])]),
+          ])
+        }),
+      "location": .object([
+        "state": .string("fix"), "kind": .string("gpsd"), "endpoint": .string("127.0.0.1:2947"),
+      ]),
+    ])
+    session.receiverStatuses = ReceiverStatus.decode(
+      .object(["receiver_health": health]), sourceEvents: [:])
+    session.runs = try JSONDecoder().decode(
+      [StoredRun].self,
       from: Data(
-        #"{"receiver_health":{"receivers":[{"id":"cat","scanners":{"ble":{"state":"running"}}}]}}"#
+        #"[{"id":"saved-fixture","state":"finished","mode":"live","started_at_us":1795375196480683,"ended_at_us":1795375241748756,"record_count":9857,"config":{}}]"#
           .utf8))
-    session.receiverStatuses = ReceiverStatus.decode(historical, sourceEvents: [:])
     session.configText =
       #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/cu.example-gps"},"receivers":[{"id":"system-ble","source":{"kind":"native_ble"}},{"id":"m5","source":{"kind":"airhound_serial","port":"/dev/cu.example-m5","baud":460800}},{"id":"cat","source":{"kind":"sniffle","port":"/dev/cu.example-cat","python":"/example/python","helper":"/example/sniffle-source.py","channel":37}}]}"#
     let decoder = JSONDecoder()
@@ -397,10 +412,19 @@ final class SetupPresentationTests: XCTestCase {
           .utf8)
     ).profiles
     session.selectedSetupID = "car"
-    for (name, scheme, appearance) in [
-      ("light", ColorScheme.light, NSAppearance.Name.aqua),
-      ("dark", ColorScheme.dark, NSAppearance.Name.darkAqua),
+    for (name, scheme, appearance, active) in [
+      ("light", ColorScheme.light, NSAppearance.Name.aqua, false),
+      ("dark", ColorScheme.dark, NSAppearance.Name.darkAqua, false),
+      ("active-light", ColorScheme.light, NSAppearance.Name.aqua, true),
+      ("active-dark", ColorScheme.dark, NSAppearance.Name.darkAqua, true),
     ] {
+      session.capture =
+        active
+        ? .object([
+          "active": .bool(true), "state": .string("recording"), "run_id": .string("active-fixture"),
+          "receiver_health": health,
+        ])
+        : .object(["active": .bool(false), "last": .object(["state": .string("finished")])])
       let window = NSWindow(
         contentRect: NSRect(x: -3000, y: -3000, width: 1020, height: 600), styleMask: [.titled],
         backing: .buffered, defer: false)

@@ -82,86 +82,92 @@ struct SessionView: View {
             }
           }
         }.formStyle(.grouped).frame(minWidth: 390, idealWidth: 490)
-        VStack(alignment: .leading, spacing: 16) {
-          Text(session.receiverStatusHeading).font(.title2)
-          if !session.receiverStatusIsCurrent {
-            Text(
-              session.connected
-                ? "Historical receiver reports from the last recording. No recording is running."
-                : "Last reported receiver status. Connect to check the current recording."
-            ).font(.callout).foregroundStyle(.secondary)
-          }
-          if let failure = session.captureFailure {
-            Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
-              .textSelection(.enabled)
-          }
-          ForEach(session.receiverStatuses) { receiver in
-            VStack(alignment: .leading, spacing: 4) {
-              Text(receiver.id).font(.headline)
-              Text(
-                session.receiverStatusIsCurrent
-                  ? receiver.phases : "Last reported: \(receiver.phases)")
-              Text(receiver.detail).font(.caption).foregroundStyle(.secondary)
-              Text(
-                "Recovery attempts: \(receiver.recovery) · Host drops: \(receiver.hostDrops) · Producer drops: \(receiver.producerDrops)"
-              )
-              .font(.caption).monospacedDigit()
-            }
-          }
-          if session.isActive, let location = session.capture?["receiver_health"]?["location"],
-            location != .null
-          {
-            LocationProviderStatus(status: location, connected: session.connected)
-          }
-          if session.healthCatchingUp {
-            Text(
-              session.receiverStatusIsCurrent
-                ? "Catching up on receiver metrics; counters may be behind capture."
-                : "Loading historical receiver reports…"
-            ).font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          Text("Radio loss is unknown unless the receiver reports it.").font(.caption)
-            .foregroundStyle(.secondary)
-          DisclosureGroup("Raw receiver status") {
-            ScrollView {
-              Text(session.healthText).font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 200)
-          }
-          Divider()
-          HStack {
-            Text("Recordings").font(.headline)
-            Spacer()
-            Button("Refresh") { session.refreshHistory() }
-            Button("Export Archive…") { session.export() }
-          }.disabled(!session.canSubmitAction)
-          List(session.runs) { run in
-            HStack {
-              VStack(alignment: .leading, spacing: 4) {
-                Text(run.startedAt, style: .date) + Text(" at ") + Text(run.startedAt, style: .time)
-                Text("\(run.state.capitalized) · \(run.recordCount) records")
-                  .font(.caption).foregroundStyle(.secondary)
-              }
-              Spacer()
-              Button("Open") { session.open(run, app: app) }
-                .disabled(!session.canSubmitAction)
-            }.padding(.vertical, 4)
-          }.overlay {
-            if session.runs.isEmpty {
-              ContentUnavailableView(
-                "No recordings", systemImage: "waveform",
-                description: Text(
+        VSplitView {
+          ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+              Text(session.receiverStatusHeading).font(.title2)
+              if !session.receiverStatusIsCurrent {
+                Text(
                   session.connected
-                    ? "Start a recording to save observations here."
-                    : "Connect to view saved recordings."))
+                    ? "Historical receiver reports from the last recording. No recording is running."
+                    : "Last reported receiver status. Connect to check the current recording."
+                ).font(.callout).foregroundStyle(.secondary)
+              }
+              if let failure = session.captureFailure {
+                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                  .textSelection(.enabled)
+              }
+              ForEach(session.receiverStatuses) { receiver in
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(receiver.id).font(.headline)
+                  Text(
+                    session.receiverStatusIsCurrent
+                      ? receiver.phases : "Last reported: \(receiver.phases)")
+                  Text(receiver.detail).font(.caption).foregroundStyle(.secondary)
+                  Text(
+                    "Recovery attempts: \(receiver.recovery) · Host drops: \(receiver.hostDrops) · Producer drops: \(receiver.producerDrops)"
+                  )
+                  .font(.caption).monospacedDigit()
+                }
+              }
+              if session.isActive, let location = session.capture?["receiver_health"]?["location"],
+                location != .null
+              {
+                LocationProviderStatus(status: location, connected: session.connected)
+              }
+              if session.healthCatchingUp {
+                Text(
+                  session.receiverStatusIsCurrent
+                    ? "Catching up on receiver metrics; counters may be behind capture."
+                    : "Loading historical receiver reports…"
+                ).font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              Text("Radio loss is unknown unless the receiver reports it.").font(.caption)
+                .foregroundStyle(.secondary)
+              DisclosureGroup("Raw receiver status") {
+                ScrollView {
+                  Text(session.healthText).font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 200)
+              }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+          }.frame(minHeight: 120, idealHeight: 280)
+          VStack(alignment: .leading, spacing: 16) {
+            HStack {
+              Text("Recordings").font(.headline)
+              Spacer()
+              Button("Refresh") { session.refreshHistory() }
+              Button("Export Archive…") { session.export() }
+            }.disabled(!session.canSubmitAction)
+            List(session.runs) { run in
+              HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(run.startedAt, style: .date) + Text(" at ")
+                    + Text(run.startedAt, style: .time)
+                  Text("\(run.state.capitalized) · \(run.recordCount) records")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Open") { session.open(run, app: app) }
+                  .disabled(!session.canSubmitAction)
+              }.padding(.vertical, 4)
+            }.overlay {
+              if session.runs.isEmpty {
+                ContentUnavailableView(
+                  "No recordings", systemImage: "waveform",
+                  description: Text(
+                    session.connected
+                      ? "Start a recording to save observations here."
+                      : "Connect to view saved recordings."))
+              }
             }
-          }
-          if session.nextRun != nil {
-            Button("Older Recordings") { session.refreshHistory(more: true) }.disabled(
-              !session.canSubmitAction)
-          }
-        }.padding(20).frame(minWidth: 430)
+            if session.nextRun != nil {
+              Button("Older Recordings") { session.refreshHistory(more: true) }.disabled(
+                !session.canSubmitAction)
+            }
+          }.padding(20).frame(minHeight: 180)
+        }.frame(minWidth: 430)
       }
     }
     .confirmationDialog(
