@@ -84,7 +84,6 @@ pub async fn scan(
                     controller_phy: None,
                     capability_query: "firmware_reported",
                 });
-                health(&control, Phase::Initializing, "firmware_status_pending");
                 let before = stats.records;
                 let result = consume(&mut serial, port, &tx, &control, &mut stats).await;
                 if stats.records > before {
@@ -133,6 +132,23 @@ async fn consume<R: AsyncRead + Unpin>(
     stats: &mut Stats,
 ) -> io::Result<()> {
     let mut state = control.subscribe();
+    // A reconnect can begin while already paused; watch::changed does not emit
+    // the subscription's initial value, so publish that state before reading.
+    let enabled = state.borrow().enabled;
+    health(
+        control,
+        if enabled {
+            Phase::Initializing
+        } else {
+            Phase::Paused
+        },
+        if enabled {
+            "firmware_status_pending"
+        } else {
+            "serial_ingestion_paused_device_continues"
+        },
+    );
+    control.set_receiver_availability(if enabled { "initializing" } else { "paused" });
     let mut line = Vec::with_capacity(MAX_LINE);
     let mut discard = false;
     let mut bytes = [0u8; 1024];
@@ -290,6 +306,35 @@ mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
     const WIFI:&[u8]=b"{\"type\":\"wifi\",\"mac\":\"02:00:00:00:00:01\",\"ssid\":\"test\",\"rssi\":-40,\"ch\":1,\"frame\":\"beacon\",\"ts\":1}\n";
+    #[tokio::test]
+    async fn reconnect_while_paused_preserves_both_health_states() {
+        let (mut writer, mut reader) = tokio::io::duplex(8192);
+        let (tx, mut rx) = mpsc::channel(16);
+        let control = ScanControl::new(false);
+        health(&control, Phase::Initializing, "fixture_reconnecting");
+        let c = control.clone();
+        let task = tokio::spawn(async move {
+            let mut stats = Stats::default();
+            let result = consume(&mut reader, "fixture", &tx, &c, &mut stats).await;
+            (stats, result)
+        });
+        writer.write_all(b"{\"type\":\"status\",\"board\":\"fixture\",\"version\":\"0.1.1\",\"uptime\":1,\"scanning\":true,\"heap_free\":3000}\n").await.unwrap();
+        writer.write_all(WIFI).await.unwrap();
+        drop(writer);
+        let (stats, result) = task.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(stats.paused_discarded, 1);
+        assert_eq!(control.health().wifi.state, Phase::Paused);
+        assert_eq!(control.health().ble.state, Phase::Paused);
+        assert_eq!(
+            control.health_message()["receiver"]["availability"],
+            "paused"
+        );
+        while let Some(event) = rx.recv().await {
+            assert!(!matches!(event, ScanEvent::Firmware { .. }));
+        }
+    }
+
     #[tokio::test]
     async fn framing_recovers_from_oversized_and_malformed_lines() {
         let (mut writer, mut reader) = tokio::io::duplex(8192);
