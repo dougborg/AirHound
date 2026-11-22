@@ -1,9 +1,10 @@
 # Flipper live producer (development)
 
 This separate `airhound-live-bridge` target implements the device side of the
-[AHFB protocol](flipper-bridge-protocol.md). It has not been installed or accepted
-on hardware. The diagnostic application's successful 85-packet file acquisition
-is evidence for its UART/parser foundation, not live RPC acceptance.
+[AHFB protocol](flipper-bridge-protocol.md). Revision `f457474` passed a bounded
+UART-free RPC load/Hello/Stop/exit check on the attached Flipper. Live UART
+streaming is not yet accepted. The diagnostic application's successful 85-packet
+file acquisition is separate evidence for its UART/parser foundation.
 
 Launch is RPC-only. Default/standalone launch and Hello do not open UART. An
 explicit bound StartBeacon first obtains the UART, sends a line-synchronized stop,
@@ -61,7 +62,32 @@ target/audit-env/bin/python scripts/test-diagnostic-artifacts.py target/live-bri
 ```
 
 The outputs retain DWARF, matching code/data and debuglink CRC, exact source/SDK
-hashes and an explicit `hardware_tested: false`. Required next gates are independent
-runtime review, paired host/device fault tests, actual UART-free RPC load/exit and
-memory checks, then separately authorized passive capture and watchdog/stop tests.
-The installed diagnostic and original Marauder companion remain unchanged.
+hashes and an explicit `hardware_tested: false`; acceptance evidence remains
+separate from immutable build metadata. Independent source/artifact review and the
+UART-free device check below passed. Remaining gates include production Rust-host
+UART-free acceptance, paired fault tests, and separately reviewed passive
+streaming/watchdog/stop tests. The diagnostic and original Marauder companion
+remain preserved.
+
+## UART-free device evidence (2026-11-22)
+
+The reviewed `f457474` artifact (SHA-256
+`40652e454a05d28a63dec7f94d77b8bb10d9095a4c12d317abb466dbfd63d976`,
+25,012 file bytes and 12,521 allocated ELF bytes) was installed create-only at
+`/ext/apps/GPIO/airhound_bridge.fap`. Fresh device identity, API87.1, idle-loader,
+heap and original-companion hash checks preceded installation; the uploaded hash
+matched. No existing app or firmware was replaced.
+
+A bounded Python harness using the pinned official RPC schema received exact
+Hello build/capability metadata, then Ready at app uptime 206 ms. Explicit Stop
+produced an accepted acknowledgment and Stopped at 212 ms, with generation zero,
+zero evidence bits and zero UART/drop/error/unread counters. No Start command was
+sent and UART was never acquired. This terminal state means app cleanup, not an
+assertion about the independently powered AWOK radio.
+
+Owned RPC SessionClose restored the CLI; the loader returned idle, the original
+companion hash was unchanged, and USB ownership was released. Free heap was
+117,336 bytes before load and 125,272 after exit. Loaded-app heap was not sampled.
+The initial sandbox-denied USB-open invocation is retained separately and made
+no device change. This proves the tested device protocol/lifetime path, not the
+production host source or live concurrent capture.
