@@ -40,6 +40,15 @@ Linux needs BlueZ, D-Bus development headers and libpcap headers (Ubuntu:
 externally configured monitor-mode interface with capture permission. Linux
 location is available through the optional gpsd provider. The default Linux configuration scans BLE only.
 
+## Multiple receivers
+
+Use `--session-config session.json` to run several explicitly selected native,
+Sniffle, Linux monitor, external MT7610U, or replay sources together. Each has its
+own health and bounded ingress queue; NDJSON records retain source identity.
+The [multi-receiver guide](../docs/multi-receiver-sessions.md) includes configuration
+examples, channel-assignment behavior, lifecycle and loss limits. This mode is
+source-build functionality and is not in the published 0.2.0 preview archives.
+
 ## Receiving detector-device data
 
 `hostd` currently scans native host radios or supervises the external receiver
@@ -63,8 +72,9 @@ USB ingestion remain pending. See [usage, framing and limits](../docs/marauder-i
 
 Use `--sniffle-port` with the separate `scripts/sniffle-source.py` helper for live
 passive BLE capture, or `--ble-pcap` to replay classic DLT256 captures. These
-sources replace native BLE in the session and feed typed observations and the
+single-source flags replace native BLE in the session and feed typed observations and the
 shared signature/evidence engine. See [setup, output and limits](../docs/sniffle-source.md).
+With `--session-config`, Sniffle and native BLE can run as separate receivers.
 Complete advertiser packets enter CSV; all captured packets remain in NDJSON.
 Extended-chain reassembly and live Coded-PHY validation remain follow-ups.
 

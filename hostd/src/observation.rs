@@ -5,6 +5,11 @@ use airhound::scanner::{BleEvent, WiFiEvent};
 
 #[derive(Clone)]
 pub enum ScanEvent {
+    Sourced {
+        identity: crate::session_runtime::EventSource,
+        control: crate::control::ScanControl,
+        event: Box<ScanEvent>,
+    },
     BlePacket(Box<crate::ble_packet::Packet>),
     BleSourceStatus(serde_json::Value),
     // Legacy synthetic inputs remain for regression fixtures; live adapters use BleSnapshot.

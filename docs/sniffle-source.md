@@ -3,8 +3,10 @@
 AirHound accepts live Sniffle USB capture and saved classic PCAP files with
 LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR (256). Both feed the same bounded Rust parser,
 typed BLE fields, signature matcher, evidence policy and WiGLE exporter.
-The source replaces the native BLE backend for that session; WiFi and gpsd can
-still run alongside it. It does not turn CatSniffer into a CoreBluetooth adapter.
+The single-source flags replace the native BLE backend for that session; WiFi and
+gpsd can still run alongside it. Use a [multi-receiver session](multi-receiver-sessions.md)
+to run Sniffle alongside native BLE or additional Sniffle receivers. It does not
+turn CatSniffer into a CoreBluetooth adapter.
 
 ## Live capture
 

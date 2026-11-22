@@ -15,6 +15,8 @@ mod control;
 mod gpsd;
 mod health;
 mod receiver;
+mod session_resources;
+mod session_runtime;
 use health::{Phase, Scanner};
 mod ble_packet;
 mod ble_source;
@@ -67,6 +69,10 @@ use wigle::{Location, WigleWriter};
 )]
 #[cfg_attr(target_os = "linux", command(group(clap::ArgGroup::new("wifi_source").args(["wifi_interface", "external_scanner"]))))]
 struct Args {
+    /// Concurrent receivers described by a versioned JSON session file
+    #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "no_ble", "no_wifi"])]
+    #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
+    session_config: Option<PathBuf>,
     /// List BLE receivers and capability evidence as JSON, without starting a scan
     #[arg(long, conflicts_with_all = ["output", "overwrite", "no_ble", "ble_adapter"])]
     list_ble_adapters: bool,
@@ -224,6 +230,24 @@ async fn main() -> io::Result<()> {
                 "type":"ble_adapters", "schema_version":1, "backend":receiver::backend(), "adapters":descriptions
             }),
         );
+    }
+    if let Some(path) = args.session_config.as_ref() {
+        let plan = session_runtime::load(path)?;
+        let receivers = session_runtime::prepare(plan).await?;
+        let writer = prepare_output(&args)?;
+        return session_runtime::run(
+            receivers,
+            args.filter_config(),
+            writer,
+            io::stdout(),
+            args.gpsd.clone().map(|endpoint| gpsd::Options {
+                endpoint,
+                device: args.gpsd_device.clone(),
+            }),
+            stdin_command_loop,
+            shutdown_signal(),
+        )
+        .await;
     }
     if args.external_scanner.is_some() {
         let channels = &args.external_channels;
@@ -593,6 +617,16 @@ async fn filter_task<W: Write, O: Write>(
                 continue;
             }
         };
+        let (event, source, event_control) = match event {
+            ScanEvent::Sourced {
+                identity,
+                control,
+                event,
+            } => (*event, Some(identity), control),
+            event => (event, None, control.clone()),
+        };
+        let control = event_control;
+        let mut output = session_runtime::SourceWriter::new(&mut output, source.as_ref());
         if let ScanEvent::ExternalStatus {
             ref state,
             dropped,
@@ -638,6 +672,7 @@ async fn filter_task<W: Write, O: Write>(
         let location = get_location(&control);
 
         match event {
+            ScanEvent::Sourced { .. } => return Err(io::Error::other("nested receiver envelope")),
             ScanEvent::BleSourceStatus(_) => unreachable!(),
             ScanEvent::BlePacket(ref packet) => {
                 let state = *control.subscribe().borrow();
@@ -1049,15 +1084,24 @@ fn handle_wifi_event(
     };
 
     let result = filter_wifi_with_rules(&input, cfg, &defaults::DEFAULT_RULE_DB, mac_index);
-    if !result.matched {
-        return Ok(());
-    }
 
     let mut mac_str = protocol::MacString::new();
     protocol::format_mac(&event.mac, &mut mac_str);
 
     let ts = start_time.elapsed().as_millis() as u32;
 
+    observation::write_json(
+        output,
+        &serde_json::json!({
+            "type":"wifi_observation", "mac":mac_str.as_str(), "ssid":event.ssid.as_str(),
+            "rssi":event.rssi, "ch":event.channel, "frame":event.frame_type.as_str(),
+            "security":event.security.as_str(), "ts":ts,
+            "detection":result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist)
+        }),
+    )?;
+    if !result.matched {
+        return Ok(());
+    }
     let msg = DeviceMessage::WiFiScan {
         mac: &mac_str,
         ssid: &event.ssid,
@@ -1228,6 +1272,28 @@ mod tests {
         assert_eq!(args.rssi, -128);
         assert!(args.no_wifi);
         assert_eq!(args.verbose, 2);
+        assert!(super::Args::try_parse_from(["hostd", "--session-config", "session.json"]).is_ok());
+        for option in [
+            "--sniffle-python",
+            "--sniffle-channel",
+            "--external-channels",
+            "--external-dwell-ms",
+            "--ble-adapter",
+            "--ble-pcap",
+        ] {
+            assert!(
+                super::Args::try_parse_from([
+                    "hostd",
+                    "--session-config",
+                    "session.json",
+                    option,
+                    "37"
+                ])
+                .is_err(),
+                "{option}"
+            );
+        }
+
         for flags in [
             vec!["--rssi", "1"],
             vec!["--rssi", "-129"],
@@ -1291,7 +1357,7 @@ mod tests {
             .filter(|line| {
                 !matches!(
                     serde_json::from_str::<serde_json::Value>(line).unwrap()["type"].as_str(),
-                    Some("scanner_health" | "detection")
+                    Some("scanner_health" | "detection" | "wifi_observation")
                 )
             })
             .collect::<Vec<_>>()
@@ -1647,6 +1713,12 @@ mod tests {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
+        let observations: Vec<_> = all
+            .iter()
+            .filter(|r| r["type"] == "wifi_observation")
+            .collect();
+        assert_eq!(observations.len(), 2);
+        assert!(observations.iter().any(|r| r["ssid"] == "Home"));
         let evidence: Vec<_> = all.iter().filter(|r| r["type"] == "detection").collect();
         assert_eq!(evidence.len(), 2);
         for e in evidence {

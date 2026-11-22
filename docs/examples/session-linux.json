@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "receivers": [
+    { "id": "ble-internal", "source": { "kind": "native_ble", "adapter": "hci0" } },
+    { "id": "ble-usb", "source": { "kind": "native_ble", "adapter": "hci1" } },
+    { "id": "wifi-monitor", "source": { "kind": "linux_wifi", "interface": "wlan0mon" } }
+  ]
+}

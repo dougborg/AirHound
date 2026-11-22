@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "receivers": [
+    { "id": "mac-wifi", "source": { "kind": "native_wifi" } },
+    { "id": "mac-ble", "source": { "kind": "native_ble" } },
+    {
+      "id": "catsniffer",
+      "source": {
+        "kind": "sniffle",
+        "port": "/dev/cu.REPLACE_WITH_VERIFIED_CATSNIFFER_PORT",
+        "python": "/absolute/path/to/venv/bin/python",
+        "helper": "/absolute/path/to/AirHound/scripts/sniffle-source.py",
+        "module_path": "/absolute/path/to/Sniffle/python_cli",
+        "channel": 37,
+        "coded": false
+      }
+    }
+  ]
+}
