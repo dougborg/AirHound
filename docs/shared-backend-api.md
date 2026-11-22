@@ -2,8 +2,10 @@
 
 The first implemented slice is a passive local Unix-socket service. It supports
 `hello`, `status`, `devices.list` and `session.validate` through shared Rust API
-and client crates. Capture/session control, event subscriptions, TUI/MCP adapters,
-remote phone access (#246) and automotive displays (#247) are subsequent slices.
+and client crates. The [TUI](../clients/tui/README.md) and
+[MCP adapter](../clients/mcp/README.md) use this same client for passive queries.
+Capture/session control, event subscriptions, remote phone access (#246) and
+automotive displays (#247) are subsequent slices.
 The sections marked **planned** describe that direction, not existing behavior.
 The recording/inventory SwiftUI app does not yet attach through this API.
 
@@ -110,8 +112,8 @@ workspace migration or dependency changes to the no_std firmware package:
 | Shared client crate | `hostd/crates/airhound-client` | Unix-socket framing, handshake, request correlation, deadlines and typed errors; subscriptions/gap detection are planned. Depends on api; no frontend rendering or hardware. |
 | Backend service modules | `hostd/src/service.rs` and `service_cli.rs` | Passive connections, permissions and request dispatch; canonical preview/discovery calls. Capture state, reservations and events are planned. |
 | CLI adapter | Existing hostd CLI first, optional `airhound` binary later | Arguments, typed client calls, human/JSON rendering and exit codes. |
-| TUI adapter | Separate target after client/service acceptance | Terminal state and views consuming the same client. No process scraping. |
-| MCP adapter | Separate target after client/service acceptance | MCP tool/resource schemas, explicit operation calls, summaries and subscriptions through the same client. No duplicated radio/session logic. |
+| TUI adapter | `clients/tui` (independent Cargo root) | Terminal state and views consuming the same client. No process scraping. |
+| MCP adapter | `clients/mcp` (independent Cargo root) | MCP tool/resource schemas, explicit operation calls, summaries and subscriptions through the same client. No duplicated radio/session logic. |
 | SwiftUI adapter | `apps/macos` | Thin framed-protocol adapter and presentation; generated/fixture-checked wire contract rather than a parallel planner. |
 
 Do not extract all of hostd into new crates in one change. Move shared wire DTOs
