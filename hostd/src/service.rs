@@ -268,6 +268,7 @@ async fn reply(stream: &mut UnixStream, response: Response) -> io::Result<()> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use airhound_client::Client;
@@ -339,6 +340,14 @@ mod tests {
         let mut b = connect(&path).await;
         assert_eq!(a.hello.instance_id, b.hello.instance_id);
         assert_eq!(a.devices(true).await.unwrap()["all"], true);
+        assert!(matches!(
+            a.validate(json!({"version":1,"padding":"x".repeat(MAX_CONFIG_BYTES)}))
+                .await,
+            Err(airhound_client::ClientError::Remote(ApiError {
+                code: ErrorCode::InvalidSession,
+                ..
+            }))
+        ));
         assert_eq!(
             b.validate(json!({"version":1})).await.unwrap()["readiness"],
             "unverified"
@@ -375,6 +384,46 @@ mod tests {
         drop(listener);
         drop(guard);
         assert_eq!(std::fs::read(&path).unwrap(), b"replacement");
+    }
+    #[tokio::test]
+    async fn pending_client_does_not_block_another_and_shutdown_cancels_it() {
+        struct Waiting(Arc<tokio::sync::Notify>);
+        impl Backend for Waiting {
+            fn devices(&self, _: bool) -> BackendResult {
+                Box::pin(async { Ok(json!({})) })
+            }
+            fn validate(&self, _: Value) -> BackendResult {
+                let entered = self.0.clone();
+                Box::pin(async move {
+                    entered.notify_one();
+                    std::future::pending().await
+                })
+            }
+        }
+        let dir = Directory::new();
+        let path = dir.socket();
+        let server_path = path.clone();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let backend = Arc::new(Waiting(entered.clone()));
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            serve(&server_path, backend, async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+        });
+        let mut a = connect(&path).await;
+        let mut b = connect(&path).await;
+        let pending = tokio::spawn(async move { a.validate(json!({})).await });
+        tokio::time::timeout(Duration::from_secs(1), entered.notified())
+            .await
+            .unwrap();
+        assert_eq!(b.status().await.unwrap()["mode"], "passive_control");
+        stop.send(()).unwrap();
+        server.await.unwrap();
+        assert!(pending.await.unwrap().is_err());
+        assert!(!path.exists());
     }
     #[tokio::test]
     async fn protocol_rejects_capture_unknown_version_and_reused_ids() {

@@ -14,3 +14,6 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }

@@ -114,6 +114,7 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     #[tokio::test]
