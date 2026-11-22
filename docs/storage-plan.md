@@ -105,3 +105,7 @@ not establish complete RF coverage or production readiness.
 - [JSON functions and JSONB](https://www.sqlite.org/json1.html)
 - [Generated columns](https://www.sqlite.org/gencol.html)
 - [Spatial R-tree module](https://www.sqlite.org/rtree.html)
+
+Implementation and staged validation are tracked in the
+[storage acceptance record](storage-acceptance.md). It distinguishes offline
+fixtures, short live checks and outstanding hardware/soak validation.
