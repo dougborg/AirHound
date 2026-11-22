@@ -7,6 +7,12 @@ on:
   pull_request:
     paths: ['apps/macos/**', 'hostd/**', 'Cargo.toml', '.github/workflows/macos-app.yml']
 
+# Supersede only earlier runs for this pull request. Other events retain
+# independent groups so a PR update cannot cancel main or release validation.
+concurrency:
+  group: macos-app-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
