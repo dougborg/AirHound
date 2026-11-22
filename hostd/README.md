@@ -195,7 +195,12 @@ including commit, dirty-tree status, toolchain, OS, architecture, samples and
 summary statistics. It runs three 100,000-event batches for each identity mode:
 hardware MAC and platform UUID. Each batch contains 20% matching BLE and 80%
 unmatched WiFi. It exercises the production bounded channel, filtering, timestamp
-conversion, CSV and NDJSON output, then validates row counts outside the timer.
+conversion, CSV and NDJSON output, then validates row counts and classification
+outside the timer. Report schema v2 counts BLE/WiFi observations, matched
+observations, legacy BLE/detection records, health records and total NDJSON records
+separately. This replaces the ambiguous v1 `matches` record count; the additive
+unmatched WiFi observation stream increases output volume, so timings are not
+directly comparable to older reports.
 Temporary observation files are removed. Writes are buffered/cached, without
 `fsync`; results exclude live radio acquisition, private address lookup and GUI
 work. Compare repeated runs on the same hardware; do not treat events/s as scan

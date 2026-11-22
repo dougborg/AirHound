@@ -788,7 +788,7 @@ async fn filter_task<W: Write, O: Write>(
                     location.as_ref(),
                 )?;
 
-                // Run filter and emit NDJSON if matched
+                // Retain observations and attach evidence; legacy match records remain additive.
                 handle_ble_event(ble_event, &cfg, &mac_index, start_time, &mut output)?;
             }
             ScanEvent::BleSnapshot {
@@ -980,7 +980,7 @@ async fn filter_task<W: Write, O: Write>(
                     location.as_ref(),
                 )?;
 
-                // Run filter and emit NDJSON if matched
+                // Retain observations and attach evidence; legacy match records remain additive.
                 handle_wifi_event(wifi_event, &cfg, &mac_index, start_time, &mut output)?;
             }
             #[cfg(any(target_os = "linux", test))]
@@ -1658,6 +1658,33 @@ mod tests {
             raw_ies: Default::default(),
             security: "[WPA2-PSK]".try_into().unwrap(),
         })
+    }
+
+    #[test]
+    fn weak_wifi_is_retained_without_legacy_match_or_alert() {
+        let ScanEvent::WiFi(mut event) = wifi_match() else {
+            unreachable!()
+        };
+        event.rssi = -110;
+        let mut output = Vec::new();
+        handle_wifi_event(
+            &event,
+            &FilterConfig::new(),
+            &MacIndex::from_defaults(),
+            Instant::now(),
+            &mut output,
+        )
+        .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        let rows: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["type"], "wifi_observation");
+        assert_eq!(rows[0]["rssi"], -110);
+        assert_eq!(rows[0]["ssid"], "Flock-123456");
+        assert_eq!(rows[0]["detection"]["alert"], "none");
     }
 
     fn recorded(writer: &RecordingWriter) -> String {

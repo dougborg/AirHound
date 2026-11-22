@@ -45,7 +45,7 @@ def main():
             raise RuntimeError(f'Incomplete scenario: {scenario}')
         summaries[scenario] = {'median_events_per_s': statistics.median(rates), 'min_events_per_s': min(rates), 'max_events_per_s': max(rates)}
     report = {
-        'schema_version': 1,
+        'schema_version': 2,
         'timestamp_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'git_commit': command('git', 'rev-parse', 'HEAD'),
         'working_tree_dirty': bool(command('git', 'status', '--porcelain')),
