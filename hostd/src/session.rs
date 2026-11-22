@@ -18,6 +18,11 @@ pub struct SessionConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LocationConfig {
+    ManagedGpsd {
+        endpoint: String,
+        device: String,
+        executable: PathBuf,
+    },
     Gpsd {
         endpoint: String,
         device: Option<String>,
@@ -25,7 +30,38 @@ pub enum LocationConfig {
 }
 impl LocationConfig {
     pub fn validate(&self) -> io::Result<()> {
-        let Self::Gpsd { endpoint, device } = self;
+        let (endpoint, device) = match self {
+            Self::Gpsd { endpoint, device } => (endpoint, device.as_deref()),
+            Self::ManagedGpsd {
+                endpoint,
+                device,
+                executable,
+            } => {
+                use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+                if !endpoint
+                    .parse::<std::net::SocketAddr>()
+                    .is_ok_and(|a| a.ip() == std::net::Ipv4Addr::LOCALHOST && a.port() >= 1024)
+                {
+                    return Err(invalid(
+                        "managed gpsd requires 127.0.0.1 and an unprivileged port",
+                    ));
+                }
+                if !executable.is_absolute()
+                    || !std::fs::metadata(executable)
+                        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                {
+                    return Err(invalid(
+                        "managed gpsd requires an absolute path to an installed executable",
+                    ));
+                }
+                if !device.starts_with("/dev/")
+                    || !std::fs::metadata(device).is_ok_and(|m| m.file_type().is_char_device())
+                {
+                    return Err(invalid("managed gpsd requires an explicitly selected local character device under /dev"));
+                }
+                (endpoint, Some(device.as_str()))
+            }
+        };
         if endpoint
             .parse::<std::net::SocketAddr>()
             .ok()
@@ -35,7 +71,7 @@ impl LocationConfig {
         {
             return Err(invalid("gpsd endpoint must be a concrete IP address and nonzero port (for example 127.0.0.1:2947)"));
         }
-        if device.as_ref().is_some_and(|value| {
+        if device.is_some_and(|value| {
             value.trim().is_empty() || value.len() > 1024 || value.chars().any(char::is_control)
         }) {
             return Err(invalid(
@@ -172,11 +208,17 @@ impl SessionConfig {
         let mut resources = HashSet::new();
         // Local gpsd already owns its selected serial port. Reserve it against
         // capture sources, including macOS callout/dial-in aliases.
-        if let Some(LocationConfig::Gpsd {
-            endpoint,
-            device: Some(device),
-        }) = &self.location
-        {
+        let local_location = match &self.location {
+            Some(LocationConfig::Gpsd {
+                endpoint,
+                device: Some(device),
+            })
+            | Some(LocationConfig::ManagedGpsd {
+                endpoint, device, ..
+            }) => Some((endpoint, device)),
+            _ => None,
+        };
+        if let Some((endpoint, device)) = local_location {
             if endpoint
                 .parse::<std::net::SocketAddr>()
                 .is_ok_and(|address| address.ip().is_loopback())
@@ -862,5 +904,41 @@ mod incomplete_setup_tests {
     fn optional_sniffle_module_path_remains_optional() {
         let value = serde_json::json!({"version":1,"receivers":[{"id":"sniffer","source":{"kind":"sniffle","port":"/dev/test","python":"python3","helper":"helper.py","module_path":null}}]});
         assert!(SessionConfig::from_json(value).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod managed_location_tests {
+    use super::*;
+    #[test]
+    fn managed_gpsd_is_explicit_local_and_reserves_the_serial_device() {
+        let location = serde_json::json!({"kind":"managed_gpsd","endpoint":"127.0.0.1:12947","device":"/dev/null","executable":"/bin/sh"});
+        let value = serde_json::json!({"version":1,"location":location,"receivers":[{"id":"ble","source":{"kind":"native_ble"}}]});
+        let config = SessionConfig::from_json(value.clone())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert_eq!(serde_json::to_value(config).unwrap()["location"], location);
+        assert_eq!(crate::profiles::check_resources(&value)["valid"], true);
+        for (field, bad) in [
+            ("endpoint", "192.0.2.1:12947"),
+            ("endpoint", "127.0.0.1:80"),
+            ("executable", "gpsd"),
+            ("device", "tcp://127.0.0.1:2000"),
+            ("device", "/tmp/no-device"),
+        ] {
+            let mut invalid = value.clone();
+            invalid["location"][field] = serde_json::json!(bad);
+            assert!(SessionConfig::from_json(invalid)
+                .unwrap()
+                .resolve()
+                .is_err());
+        }
+        let mut conflict = value;
+        conflict["receivers"] = serde_json::json!([{"id":"sensor","source":{"kind":"airhound_serial","port":"/dev/null","baud":115200}}]);
+        assert!(SessionConfig::from_json(conflict)
+            .unwrap()
+            .resolve()
+            .is_err());
     }
 }

@@ -90,7 +90,10 @@ mod passive_cli {
         assert_eq!(first["build"]["component"], "airhound-hostd");
         assert_eq!(first["build"]["control_protocol"], 1);
         assert!(first["build"]["display_version"].is_string());
-        assert_eq!(first["location_providers"], serde_json::json!(["gpsd"]));
+        assert_eq!(
+            first["location_providers"],
+            serde_json::json!(["gpsd", "managed_gpsd"])
+        );
         let history = client(&["recordings", "--limit", "1"]);
         assert!(
             history.status.success(),

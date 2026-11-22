@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
+mod managed;
+
 const MAX_LINE: usize = 16 * 1024;
 const MAX_AGE: Duration = Duration::from_secs(5);
 const FUTURE_TOLERANCE_MS: i64 = 2_000;
@@ -16,13 +18,25 @@ const RETRY: Duration = Duration::from_secs(2);
 pub struct Options {
     pub endpoint: String,
     pub device: Option<String>,
+    pub managed_executable: Option<std::path::PathBuf>,
 }
 impl From<&airhound_hostd::session::LocationConfig> for Options {
     fn from(value: &airhound_hostd::session::LocationConfig) -> Self {
-        let airhound_hostd::session::LocationConfig::Gpsd { endpoint, device } = value;
-        Self {
-            endpoint: endpoint.clone(),
-            device: device.clone(),
+        match value {
+            airhound_hostd::session::LocationConfig::Gpsd { endpoint, device } => Self {
+                endpoint: endpoint.clone(),
+                device: device.clone(),
+                managed_executable: None,
+            },
+            airhound_hostd::session::LocationConfig::ManagedGpsd {
+                endpoint,
+                device,
+                executable,
+            } => Self {
+                endpoint: endpoint.clone(),
+                device: Some(device.clone()),
+                managed_executable: Some(executable.clone()),
+            },
         }
     }
 }
@@ -261,7 +275,14 @@ async fn session(options: &Options, source: &Source) -> io::Result<()> {
     }
 }
 
-pub async fn run(
+pub async fn run(options: Options, source: Source, state: watch::Receiver<crate::control::State>) {
+    if options.managed_executable.is_some() {
+        managed::run(options, source, state).await;
+    } else {
+        run_external(options, source, state).await;
+    }
+}
+async fn run_external(
     options: Options,
     source: Source,
     mut state: watch::Receiver<crate::control::State>,
@@ -505,6 +526,7 @@ mod tests {
     async fn bounded_transport_and_orderly_shutdown() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let options = Options {
+            managed_executable: None,
             endpoint: listener.local_addr().unwrap().to_string(),
             device: None,
         };
@@ -536,6 +558,7 @@ mod tests {
     async fn reconnects_after_eof_and_cancels_an_idle_connection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let options = Options {
+            managed_executable: None,
             endpoint: listener.local_addr().unwrap().to_string(),
             device: None,
         };

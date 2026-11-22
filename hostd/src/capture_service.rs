@@ -425,6 +425,7 @@ mod tests {
             Some(crate::gpsd::Options {
                 endpoint,
                 device: Some("fixture-gps".into()),
+                managed_executable: None,
             }),
         );
         let (handle, actor) = spawn_with_active(fixture.path(), Some(active));

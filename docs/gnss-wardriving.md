@@ -11,6 +11,59 @@ in the session plan. Live NDJSON/SQLite observations then retain the receiver's
 position and fix provenance; see below. This is not in the published 0.2.0 preview
 archives.
 
+## Save a GPS setup without a terminal launch each session
+
+The native app supports two GPSD lifecycles. **Connect to an existing server**
+keeps the external-server behavior. **Start GPSD with this recording** lets the
+Rust service own a foreground, read-only helper for that recording.
+
+For an attached USB GPS and an already installed gpsd:
+
+1. Under Available devices, expand the GPS and choose **Use for Location**.
+2. In Location, enable **Start GPSD with this recording** and choose the installed
+   `gpsd` executable. On this tested Apple Silicon/Homebrew setup it is
+   `/opt/homebrew/sbin/gpsd`. The executable is not bundled or installed by AirHound.
+3. Confirm the explicit GPS device path and unused local endpoint (the form uses
+   `127.0.0.1:12947`, separate from the conventional external-server port).
+4. Save the setup. On later sessions, load/review/apply it and Start Recording.
+   No separate terminal daemon command is needed. Changed USB paths still require
+   explicit review; AirHound does not silently choose another GPS.
+
+The saved provider is:
+
+```json
+{"kind":"managed_gpsd","endpoint":"127.0.0.1:12947","device":"/dev/cu.usbmodem112201","executable":"/opt/homebrew/sbin/gpsd"}
+```
+
+Validation only checks configuration and local file metadata. It never opens the
+GPS or starts the daemon. Clients check `status.location_providers` for
+`managed_gpsd` before offering this mode. Loading a saved setup does not start it.
+
+At recording start the service takes a per-device AirHound lease, checks the
+endpoint is unused, and starts only the selected helper with `-N -b -n -S PORT
+DEVICE`. It verifies the exact child owns the IPv4 localhost listener before
+sending WATCH or accepting location data. gpsd handles serial exclusivity and
+framing; capture-plan validation also rejects a capture receiver sharing that
+GPS endpoint, including macOS cu/tty aliases. A busy endpoint or AirHound lease
+fails explicitly. AirHound never adopts or terminates a preexisting gpsd.
+
+Finish/shutdown stops and reaps the owned helper; closing the GUI leaves it with
+the service-owned recording. Child exit clears current fixes and daemon metadata
+before at most three total attempts, spaced two seconds apart. Exhausting that
+budget leaves an explicit provider error; finish and restart the recording after
+correcting the problem. Process-wide force termination can leave a child behind;
+a later run reports the occupied endpoint rather than taking ownership of it.
+No login item or persistent OS service is installed.
+
+Health reports the version from the actual gpsd VERSION message. This is **host
+software**, not firmware on the GPS receiver. A running daemon also does not imply
+a valid satellite fix. Existing freshness, device-binding and rig-position rules
+apply to both modes.
+
+The fixed `-b` flag prevents receiver writes; `-N` keeps the child in the foreground.
+See the [gpsd options](https://gpsd.io/gpsd.html) and
+[device ownership FAQ](https://gpsd.gitlab.io/gpsd/faq.html).
+
 ## Shared service and session plans
 
 Select location separately from capture receivers:
@@ -221,3 +274,16 @@ it does not establish USB unplug/replug, moving-route accuracy, or capture-time
 synchronization. Raw positions, wireless identifiers, plans, SQLite databases and
 logs stay in private local test directories. Only aggregate evidence is retained
 in this repository.
+
+### Managed provider acceptance (2026-11-22)
+
+A private service saved and loaded a managed GPS + CatSniffer setup, then started
+and finished a 20-second recording using the installed gpsd executable and stable
+Sniffle helper assets. It retained 1,356 BLE packet observations, including 1,346
+with fresh receiver/rig location (ten startup packets were correctly unlocated).
+Health reported gpsd 3.27.5/protocol 16.1 and Sniffle firmware 1.11.0/API 0.
+Explicit Finish returned `finished`; the owned helper and private service exited,
+and both serial endpoints were released. A prior 30-second run also verified
+service-shutdown cleanup. Neither run used native radios or changed the desktop's
+installed service/default recordings. This verifies the Rust lifecycle; the new
+native controls still need an actual-window usability check after integration.

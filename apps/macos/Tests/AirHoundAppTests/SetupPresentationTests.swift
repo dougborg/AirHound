@@ -91,6 +91,29 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
   }
 
+  func testManagedGPSDeviceSelectionPreservesHelperAndOtherPlanFields() throws {
+    let suite = "gps-edit-" + UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let session = SessionModel(preferences: defaults)
+    session.configText =
+      #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/cu.old"},"receivers":[{"id":"ble","source":{"kind":"native_ble"}}]}"#
+    session.setManagedLocation(true)
+    session.setLocationField("executable", value: .string("/opt/homebrew/sbin/gpsd"))
+    session.selectLocationDevice(
+      .object(["kind": .string("gpsd"), "device": .string("/dev/cu.new")]))
+    XCTAssertEqual(session.planLocation?["kind"], .string("managed_gpsd"))
+    XCTAssertEqual(session.planLocation?["executable"], .string("/opt/homebrew/sbin/gpsd"))
+    XCTAssertEqual(session.planLocation?["device"], .string("/dev/cu.new"))
+    let config = try JSONDecoder().decode(JSONValue.self, from: Data(session.configText.utf8))
+    XCTAssertEqual(config["alert_policy"], .string("silent"))
+    XCTAssertEqual(session.plannedReceivers.first?.id, "ble")
+    session.setManagedLocation(false)
+    XCTAssertEqual(session.planLocation?["kind"], .string("gpsd"))
+    XCTAssertNil(session.planLocation?["executable"])
+    XCTAssertEqual(session.planLocation?["device"], .string("/dev/cu.new"))
+  }
+
   func testSelectedBackendProfilesPreserveM5GPSPlanWithoutStartingCapture() async throws {
     guard let backend = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
       throw XCTSkip("Set AIRHOUND_TEST_BACKEND for combined setup lifecycle tests.")
@@ -162,7 +185,7 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertTrue(session.connected, session.error ?? session.message)
     XCTAssertFalse(session.captureEnabled, "This test service must never allow radio capture")
     XCTAssertTrue(session.setupsAvailable)
-    XCTAssertEqual(session.locationProviders, ["gpsd"])
+    XCTAssertEqual(session.locationProviders, ["gpsd", "managed_gpsd"])
     let plan =
       #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/cu.fixture-gps"},"receivers":[{"id":"custom-m5","source":{"kind":"airhound_serial","port":"/dev/cu.fixture-m5","baud":460800}}]}"#
     session.configText = plan
