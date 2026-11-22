@@ -7,7 +7,7 @@ those results through native controls. Linux GUI work remains deferred.
 
 ## Build and run
 
-Use Xcode command-line tools with Swift 5.9 or later and stable Rust. From the
+Use Xcode command-line tools with Swift 5.9 or later, Python 3.11 or later, and stable Rust. From the
 repository root:
 
 ```sh
@@ -42,6 +42,12 @@ Rebuilding the app or backend can invalidate a previous privacy grant even when
 the identifier and install path stay the same. A stable developer signing
 identity is needed for reliable permission continuity across builds; this
 preview does not weaken signature requirements or reset privacy settings.
+
+The native **About AirHound** panel reports the project package version and GUI
+source commit, exact tag when present, and tracked-source modification state.
+These are stamped during bundling rather than inferred from the connected
+backend. An unbundled/source-archive build reports unavailable provenance
+explicitly. Package version and source tag do not imply a published release.
 
 ## Connect and capture
 
