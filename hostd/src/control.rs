@@ -77,6 +77,13 @@ impl ScanControl {
             .as_ref()
             .map(|source| source.location())
     }
+    pub fn external_location_evidence(&self) -> Option<serde_json::Value> {
+        self.3
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|source| source.evidence())
+    }
     pub fn health(&self) -> Snapshot {
         *self.1.lock().unwrap_or_else(|e| e.into_inner())
     }

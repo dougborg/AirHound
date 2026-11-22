@@ -9,7 +9,41 @@ pub struct SessionConfig {
     /// Signature alert policy for this session; absence preserves the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alert_policy: Option<airhound::evidence::AlertPolicy>,
+    /// Optional rig location provider. Absence preserves platform defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<LocationConfig>,
     pub receivers: Vec<ReceiverConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocationConfig {
+    Gpsd {
+        endpoint: String,
+        device: Option<String>,
+    },
+}
+impl LocationConfig {
+    pub fn validate(&self) -> io::Result<()> {
+        let Self::Gpsd { endpoint, device } = self;
+        if endpoint
+            .parse::<std::net::SocketAddr>()
+            .ok()
+            .is_none_or(|address| {
+                address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast()
+            })
+        {
+            return Err(invalid("gpsd endpoint must be a concrete IP address and nonzero port (for example 127.0.0.1:2947)"));
+        }
+        if device.as_ref().is_some_and(|value| {
+            value.trim().is_empty() || value.len() > 1024 || value.chars().any(char::is_control)
+        }) {
+            return Err(invalid(
+                "gpsd device selection must contain 1..1024 bytes without control characters",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -116,11 +150,43 @@ impl SessionConfig {
     /// Pins may intentionally overlap; more than three receivers also overlap.
     /// This is a requested fixed assignment, not a promise of gap-free RF coverage.
     pub fn resolve(mut self) -> io::Result<Self> {
+        if let Some(location) = &self.location {
+            location.validate()?;
+        }
         if self.version != 1 || self.receivers.is_empty() || self.receivers.len() > 16 {
             return Err(invalid("session version must be 1 with 1..=16 receivers"));
         }
+        if self.location.is_some()
+            && self.receivers.iter().all(|receiver| {
+                matches!(
+                    receiver.source,
+                    Source::BlePcap { .. } | Source::WifiPcap { .. }
+                )
+            })
+        {
+            return Err(invalid(
+                "a live location provider cannot be assigned to a replay-only session",
+            ));
+        }
         let mut ids = HashSet::new();
         let mut resources = HashSet::new();
+        // Local gpsd already owns its selected serial port. Reserve it against
+        // capture sources, including macOS callout/dial-in aliases.
+        if let Some(LocationConfig::Gpsd {
+            endpoint,
+            device: Some(device),
+        }) = &self.location
+        {
+            if endpoint
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|address| address.ip().is_loopback())
+                && device.starts_with("/dev/")
+            {
+                let canonical =
+                    std::fs::canonicalize(device).unwrap_or_else(|_| PathBuf::from(device));
+                resources.insert(serial_resource(&canonical));
+            }
+        }
         let mut external_count = 0;
         let mut default_external = false;
         let mut channel_load = [0usize; 3];
@@ -322,10 +388,51 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn location_configuration_is_explicit_and_never_resolves_network_names() {
+        let plan = |endpoint: &str, device: serde_json::Value| {
+            SessionConfig::from_json(json!({"version":1,"location":{"kind":"gpsd","endpoint":endpoint,"device":device},"receivers":[{"id":"ble","source":{"kind":"native_ble"}}]})).unwrap()
+        };
+        for endpoint in ["127.0.0.1:2947", "[::1]:2947", "192.0.2.1:1234"] {
+            assert!(plan(endpoint, json!("/dev/gps")).resolve().is_ok());
+        }
+        for endpoint in [
+            "localhost:2947",
+            "127.0.0.1",
+            "0.0.0.0:2947",
+            "127.0.0.1:0",
+            "[::]:2947",
+            "224.0.0.1:2947",
+            "http://127.0.0.1:2947",
+        ] {
+            assert!(plan(endpoint, json!(null)).resolve().is_err());
+        }
+        for device in ["", "\n/dev/gps", &"x".repeat(1025)] {
+            assert!(plan("127.0.0.1:2947", json!(device)).resolve().is_err());
+        }
+        let mut shared_port = plan("127.0.0.1:2947", json!("/dev/cu.gps-fixture"));
+        shared_port.receivers[0].source = Source::Sniffle {
+            port: "/dev/tty.gps-fixture".into(),
+            python: "/unused/python".into(),
+            helper: "/unused/helper".into(),
+            module_path: None,
+            channel: Some(37),
+            coded: false,
+        };
+        assert!(shared_port.resolve().is_err());
+        let mut replay = plan("127.0.0.1:2947", json!(null));
+        replay.receivers[0].source = Source::BlePcap {
+            path: "fixture.pcap".into(),
+        };
+        assert!(replay.resolve().is_err());
+        assert!(SessionConfig::from_json(json!({"version":1,"location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","configure_receiver":true},"receivers":[]})).is_err());
+    }
+
     fn plan(sources: Vec<Source>) -> SessionConfig {
         SessionConfig {
             version: 1,
             alert_policy: None,
+            location: None,
             receivers: sources
                 .into_iter()
                 .enumerate()

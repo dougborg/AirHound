@@ -510,3 +510,29 @@ async fn delayed_external_status_cannot_resurrect_finished_receiver() {
         "unavailable"
     );
 }
+
+#[test]
+fn receiver_location_attaches_to_live_evidence_but_never_replay() {
+    for replay in [false, true] {
+        let mut bytes = Vec::new();
+        let mut output = SourceWriter::new(&mut bytes, None);
+        output.receiver_location = Some(
+            serde_json::json!({"position_of":"receiver_rig","latitude":10.,"association":"host_processing_time"}),
+        );
+        observation::write_json(
+            &mut output,
+            &serde_json::json!({"type":"remote_id","replay":replay,"latitude":25.,"ts":123}),
+        )
+        .unwrap();
+        output.flush().unwrap();
+        drop(output);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["latitude"], 25.);
+        assert_eq!(value["ts"], 123);
+        if replay {
+            assert!(value.get("receiver_location").is_none());
+        } else {
+            assert_eq!(value["receiver_location"]["latitude"], 10.);
+        }
+    }
+}
