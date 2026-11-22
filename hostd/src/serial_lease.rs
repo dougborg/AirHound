@@ -107,9 +107,104 @@ fn acquire_in(directory: &Path, identity: &str, uid: u32) -> io::Result<Lease> {
 mod tests {
     use super::*;
     use std::{
-        io::{BufRead, BufReader, Write},
-        process::{Command, Stdio},
+        io::{Read, Write},
+        process::{Child, ChildStdout, Command, ExitStatus, Stdio},
+        time::{Duration, Instant},
     };
+    struct OwnedChild(Child);
+    impl OwnedChild {
+        fn wait_bounded(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
+            let deadline = Instant::now() + timeout;
+            loop {
+                if let Some(status) = self.0.try_wait()? {
+                    return Ok(status);
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "test helper did not exit",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        fn terminate_and_reap(&mut self) -> io::Result<()> {
+            if self.0.try_wait()?.is_none() {
+                self.0.kill()?;
+            }
+            // Only wait after exit was observed or SIGKILL was issued.
+            self.0.wait()?;
+            Ok(())
+        }
+    }
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            let _ = self.terminate_and_reap();
+        }
+    }
+    fn read_line_bounded(output: &mut ChildStdout, timeout: Duration) -> io::Result<String> {
+        let fd = output.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let deadline = Instant::now() + timeout;
+        let mut line = Vec::new();
+        loop {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "test helper response timed out",
+                ));
+            }
+            let mut byte = [0];
+            match output.read(&mut byte) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "test helper closed stdout",
+                    ))
+                }
+                Ok(_) => {
+                    line.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        return String::from_utf8(line)
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
+                    }
+                    if line.len() > 4096 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "test helper line exceeds limit",
+                        ));
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => (),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    #[test]
+    fn unresponsive_test_child_times_out_and_is_reaped() {
+        let mut child = OwnedChild(
+            Command::new("python3")
+                .args(["-c", "import time;time.sleep(30)"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut output = child.0.stdout.take().unwrap();
+        assert_eq!(
+            read_line_bounded(&mut output, Duration::from_millis(50))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        child.terminate_and_reap().unwrap();
+        assert!(child.0.try_wait().unwrap().is_some());
+    }
     #[test]
     fn alias_keys_match_python_contract() {
         assert_eq!(
@@ -182,37 +277,39 @@ os.close(m);os.close(slave)
 "#;
         for mode in ["python_first", "rust_first"] {
             let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/sniffle-source.py");
-            let mut child = Command::new("python3")
-                .args(["-B", "-c", script])
-                .arg(helper)
-                .arg(mode)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap();
-            let mut input = child.stdin.take().unwrap();
-            let mut output = BufReader::new(child.stdout.take().unwrap());
-            let mut line = String::new();
-            output.read_line(&mut line).unwrap();
+            let mut child = OwnedChild(
+                Command::new("python3")
+                    .args(["-B", "-c", script])
+                    .arg(helper)
+                    .arg(mode)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .unwrap(),
+            );
+            let mut input = child.0.stdin.take().unwrap();
+            let mut output = child.0.stdout.take().unwrap();
+            let line = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
             let port = line.trim();
             if mode == "python_first" {
                 assert_eq!(acquire(port).unwrap_err().kind(), io::ErrorKind::WouldBlock);
                 writeln!(input, "release").unwrap();
-                let mut released = String::new();
-                output.read_line(&mut released).unwrap();
+                let released = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
                 assert_eq!(released.trim(), "released");
                 let _lease = acquire(port).unwrap();
                 writeln!(input, "finish").unwrap();
             } else {
                 let _lease = acquire(port).unwrap();
                 writeln!(input, "attempt").unwrap();
-                let mut response = String::new();
-                output.read_line(&mut response).unwrap();
+                let response = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
                 assert_eq!(response.trim(), "denied_without_bytes");
                 writeln!(input, "finish").unwrap();
             }
-            assert!(child.wait().unwrap().success());
+            assert!(child
+                .wait_bounded(Duration::from_secs(5))
+                .unwrap()
+                .success());
         }
     }
 }
