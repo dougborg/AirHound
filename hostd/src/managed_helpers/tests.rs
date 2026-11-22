@@ -1,0 +1,176 @@
+use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+static NEXT: AtomicU64 = AtomicU64::new(0);
+struct Temp(PathBuf);
+impl Temp {
+    fn new() -> Self {
+        let p = std::env::temp_dir().join(format!(
+            "airhound-helpers-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&p).unwrap();
+        Self(p)
+    }
+}
+impl Drop for Temp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn fixture(dir: &Path) -> Manifest {
+    let runtime = std::env::current_exe().unwrap();
+    let content = b"fixture";
+    let names = [
+        "sniffle/python",
+        "sniffle/helper.py",
+        "sniffle/modules/sniffle/sniffle_hw.py",
+        "sniffle/modules/serial/__init__.py",
+        "license1",
+        "license2",
+    ];
+    let files = names
+        .iter()
+        .map(|name| {
+            let p = dir.join(name);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, content).unwrap();
+            Entry {
+                path: (*name).into(),
+                bytes: content.len() as u64,
+                sha256: hex_bytes(&Sha256::digest(content)),
+                executable: *name == "sniffle/python",
+            }
+        })
+        .collect();
+    Manifest {
+        schema_version: 1,
+        platform: std::env::consts::OS.into(),
+        architecture: std::env::consts::ARCH.into(),
+        files,
+        sniffle: Some(Sniffle {
+            python: "sniffle/python".into(),
+            helper: "sniffle/helper.py".into(),
+            module_path: "sniffle/modules".into(),
+            runtime_path: runtime,
+            runtime_sha256: "0".repeat(64),
+            runtime_version: "test".into(),
+            runtime_base_prefix: "test".into(),
+            source_revision: "1".repeat(40),
+            version: "1.11.0".into(),
+            pyserial_version: "3.5".into(),
+            licenses: vec!["license1".into(), "license2".into()],
+        }),
+        alfa: None,
+    }
+}
+#[test]
+fn rejects_paths_versions_sizes_and_missing_licenses() {
+    let t = Temp::new();
+    let mut m = fixture(&t.0);
+    m.sniffle.as_mut().unwrap().runtime_path = "/usr/bin/python3".into();
+    assert!(m.validate().is_ok());
+    for path in ["../escape", "/absolute", "a/../b", ""] {
+        let mut bad = m.clone();
+        bad.files[0].path = path.into();
+        assert!(bad.validate().is_err());
+    }
+    let mut bad = m.clone();
+    bad.schema_version = 2;
+    assert!(bad.validate().is_err());
+    let mut bad = m.clone();
+    bad.files[0].bytes = MAX_FILE + 1;
+    assert!(bad.validate().is_err());
+    let mut bad = m;
+    bad.sniffle.as_mut().unwrap().licenses.clear();
+    assert!(bad.validate().is_err());
+}
+#[test]
+fn passive_missing_store_does_not_create_it() {
+    let t = Temp::new();
+    let root = t.0.join("missing");
+    assert_eq!(status(&root)["state"], "not_installed");
+    assert!(!root.exists());
+}
+#[test]
+fn no_follow_and_nonblocking_reject_symlink_fifo() {
+    let t = Temp::new();
+    fs::write(t.0.join("file"), b"x").unwrap();
+    std::os::unix::fs::symlink(t.0.join("file"), t.0.join("link")).unwrap();
+    assert!(regular(&t.0.join("link")).is_err());
+    let path = std::ffi::CString::new(t.0.join("fifo").to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    assert!(regular(&t.0.join("fifo")).is_err());
+    assert!(check_tree(&t.0, "link").is_err());
+}
+#[test]
+fn failed_copy_does_not_publish_defaults() {
+    let t = Temp::new();
+    let source = t.0.join("source");
+    fs::create_dir(&source).unwrap();
+    let mut m = fixture(&source);
+    m.sniffle.as_mut().unwrap().runtime_path = "/usr/bin/python3".into();
+    m.files[0].sha256 = "0".repeat(64);
+    fs::write(
+        source.join("manifest.json"),
+        serde_json::to_vec(&m).unwrap(),
+    )
+    .unwrap();
+    let root = t.0.join("helpers");
+    assert!(install(&root, &source, false).is_err());
+    assert!(!root.join("current").exists());
+    assert_eq!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".pending"))
+            .count(),
+        0
+    );
+}
+fn write_fixture(source: &Path) -> Manifest {
+    fs::create_dir(source).unwrap();
+    let mut m = fixture(source);
+    let s = m.sniffle.as_mut().unwrap();
+    s.runtime_path = fs::canonicalize("/usr/bin/true").unwrap();
+    s.runtime_sha256 = digest_file(&s.runtime_path).unwrap();
+    write_manifest(source, &m);
+    m
+}
+fn write_manifest(source: &Path, m: &Manifest) {
+    fs::write(source.join("manifest.json"), serde_json::to_vec(m).unwrap()).unwrap();
+}
+#[test]
+fn import_is_private_immutable_and_requires_explicit_replace() {
+    let t = Temp::new();
+    let source = t.0.join("source");
+    let mut m = write_fixture(&source);
+    let root = t.0.join("helpers");
+    let first = install(&root, &source, false).unwrap();
+    assert_eq!(verify(&root).unwrap()["integrity"], "verified");
+    assert_eq!(status(&root)["validation_scope"], "manifest_only");
+    assert!(install(&root, &source, false).is_err());
+    let old_path = PathBuf::from(first["defaults"]["sniffle"]["helper"].as_str().unwrap());
+    assert_eq!(fs::metadata(&old_path).unwrap().mode() & 0o777, 0o600);
+    m.sniffle.as_mut().unwrap().runtime_version = "updated description".into();
+    write_manifest(&source, &m);
+    let second = install(&root, &source, true).unwrap();
+    assert_ne!(first["bundle_id"], second["bundle_id"]);
+    assert!(old_path.exists());
+    let current = PathBuf::from(second["defaults"]["sniffle"]["helper"].as_str().unwrap());
+    fs::write(current, b"tampered").unwrap();
+    assert!(verify(&root).is_err());
+}
+#[test]
+fn failed_runtime_check_preserves_old_pointer() {
+    let t = Temp::new();
+    let source = t.0.join("source");
+    let mut m = write_fixture(&source);
+    let root = t.0.join("helpers");
+    let first = install(&root, &source, false).unwrap();
+    m.sniffle.as_mut().unwrap().runtime_sha256 = "0".repeat(64);
+    write_manifest(&source, &m);
+    assert!(install(&root, &source, true).is_err());
+    assert_eq!(status(&root)["bundle_id"], first["bundle_id"]);
+    assert!(verify(&root).is_ok());
+}
