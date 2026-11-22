@@ -536,3 +536,13 @@ fn receiver_location_attaches_to_live_evidence_but_never_replay() {
         }
     }
 }
+
+#[tokio::test]
+async fn explicit_gps_preserves_only_native_wifi_location_permission_requirement() {
+    let config = |kind: &str| {
+        SessionConfig::from_json(serde_json::json!({"version":1,"location":{"kind":"gpsd","endpoint":"127.0.0.1:2947"},"receivers":[{"id":"test","source":{"kind":kind}}]})).unwrap()
+    };
+    assert!(!prepare(config("native_ble")).await.unwrap()[0].needs_macos_location);
+    #[cfg(target_os = "macos")]
+    assert!(prepare(config("native_wifi")).await.unwrap()[0].needs_macos_location);
+}
