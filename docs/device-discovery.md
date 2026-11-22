@@ -265,3 +265,19 @@ firmware identity. This validates the identity path, not board revision,
 extended/Coded-PHY reception or endurance. Synthetic tests cover incompatible
 versions, malformed/oversized output, timeout, endpoint mismatch, generic-UART
 rejection, and stale-owner exclusion.
+
+### Sniffle ownership across backend processes
+
+Capture and explicit identification share a helper-side lease acquired before
+constructing upstream `SniffleHW` (whose constructor can already write a marker).
+The lease uses the canonical serial endpoint, normalizes macOS `cu`/`tty` aliases,
+and is shared across backend sockets and temporary-directory environments for
+the same user. A busy lease rejects the second helper before any UART open or
+write. It remains held until the first helper closes its transport or exits.
+
+The private lease directory is `/tmp/airhound-sniffle-<uid>`. Lock files remain
+after release to avoid splitting ownership across unlinked lock inodes. This is
+coordination between current AirHound helpers, not an assertion of exclusive
+hardware ownership against unrelated programs, other users, or older helper
+versions. Stop old helper processes before switching to the updated managed
+bundle. Discovery does not acquire leases or open serial endpoints.
