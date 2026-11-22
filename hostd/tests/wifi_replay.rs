@@ -173,3 +173,25 @@ fn replay_rejects_bad_files_and_live_source_conflicts() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
     }
 }
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn replay_rejects_directories_and_fifos_without_waiting_for_a_writer() {
+    use std::os::unix::ffi::OsStrExt;
+    let fixture = Fixture::new();
+    let fifo = fixture.path("capture.fifo");
+    let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    for (index, input) in [&fixture.0, &fifo].into_iter().enumerate() {
+        let csv = fixture.path(&format!("nonregular-{index}.csv"));
+        let output = run(&[
+            "--wifi-pcap".as_ref(),
+            input.as_os_str(),
+            "--output".as_ref(),
+            csv.as_os_str(),
+        ]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("regular saved PCAP file"));
+    }
+}

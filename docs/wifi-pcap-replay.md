@@ -55,9 +55,20 @@ replay queues apply backpressure rather than deliberately dropping observations.
 Rejected records include incomplete captures (`captured_len < original_len`), bad
 FCS, missing/unsupported receive metadata and frames the parser cannot interpret.
 
+## Alert policy
+
+WiFi PCAP replay uses the shared WiFi matcher and the host session's alert policy;
+replay is not an automatic `silent` override. Select `silent` when only evidence
+inspection is wanted once configurable session policies are available. This is
+separate from external/import paths that deliberately force silent evidence.
+Every replay observation and paired detection is marked `replay: true`; consumers
+must keep recorded results distinct from live notifications. This CLI writes
+records and does not itself trigger a desktop notification or a hardware buzzer.
+
 ## Limits and acceptance
 
-Only regular saved files, PCAP 2.4, and exact link type 127 (radiotap) are accepted.
+The opened file handle is checked for regular-file type; Unix opens are nonblocking
+so a FIFO replacement cannot wait for a writer. Only PCAP 2.4, and exact link type 127 (radiotap) are accepted.
 Both byte orders and microsecond/nanosecond timestamp magic values are supported.
 PCAPNG and other link types are rejected; convert explicitly with a separate tool
 if needed. Each captured record is limited to 65,536 bytes before allocation;
