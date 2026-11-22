@@ -188,8 +188,11 @@ impl Backend for LocalBackend {
                     )
                 }
                 Command::ProfilesLoad { id } => {
-                    let profile = tokio::task::spawn_blocking(move || {
-                        profiles::Store::open(&directory)?.load(&id)
+                    let (profile, origin_check) = tokio::task::spawn_blocking(move || {
+                        let store = profiles::Store::open(&directory)?;
+                        let profile = store.load(&id)?;
+                        let origin_check = store.origin_check(&profile);
+                        Ok::<_, io::Error>((profile, origin_check))
                     })
                     .await
                     .map_err(|_| ApiError::new(ErrorCode::Internal, "profile task failed"))?
@@ -209,7 +212,7 @@ impl Backend for LocalBackend {
                     let bindings = profiles::check_bindings(&profile, &inventory);
                     let resources = profiles::check_resources(&profile.config);
                     Ok(
-                        serde_json::json!({"schema_version":1,"profile":profile,"validation":validation,"resources":resources,"bindings":bindings,"inventory_diagnostics":inventory.diagnostics,"reception":"not_tested","applied":false}),
+                        serde_json::json!({"schema_version":1,"profile":profile,"validation":validation,"resources":resources,"bindings":bindings,"origin_check":origin_check,"inventory_diagnostics":inventory.diagnostics,"reception":"not_tested","applied":false}),
                     )
                 }
                 Command::ProfilesList {} | Command::ProfilesDelete { .. } => {
@@ -486,6 +489,72 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn profile_load_returns_editable_configuration_after_serial_alias_collision() {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let root = std::env::temp_dir().join(format!(
+            "ah-profile-load-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        for name in ["one", "two", "python", "helper"] {
+            std::fs::write(root.join(name), b"never execute this fixture").unwrap();
+        }
+        std::fs::set_permissions(root.join("python"), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(root.join("two"), &alias).unwrap();
+        let source = |port: PathBuf| serde_json::json!({"kind":"sniffle","port":port,"python":root.join("python"),"helper":root.join("helper")});
+        let config = serde_json::json!({"version":1,"receivers":[{"id":"one","source":source(root.join("one"))},{"id":"two","source":source(alias.clone())}]});
+        let inventory = airhound_hostd::discovery::Inventory {
+            schema_version: 1,
+            mode: "passive",
+            platform: std::env::consts::OS.into(),
+            devices: vec![],
+            diagnostics: vec![],
+        };
+        let store = airhound_hostd::profiles::Store::open(&root.join("profiles")).unwrap();
+        store
+            .save(
+                "fixture".into(),
+                "Fixture".into(),
+                config.clone(),
+                &inventory,
+                false,
+            )
+            .unwrap();
+        drop(store);
+        std::fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(root.join("one"), &alias).unwrap();
+        let backend = LocalBackend {
+            profiles: Some(root.join("profiles")),
+            ..Default::default()
+        };
+        let result = backend
+            .profiles(airhound_api::Command::ProfilesLoad {
+                id: "fixture".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["profile"]["config"], config);
+        assert_eq!(result["validation"]["valid"], false);
+        assert_eq!(result["applied"], false);
+        assert_eq!(result["origin_check"]["state"], "same_store");
+    }
     #[tokio::test]
     async fn backend_preview_reuses_canonical_validation() {
         let config = serde_json::json!({"version":1,"receivers":[{"id":"one","source":{"kind":"native_ble"}}]});

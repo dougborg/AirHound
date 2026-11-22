@@ -108,3 +108,20 @@ the GUI bundle, device firmware, permission status, or an RF capability.
 The current build stamp tracks Git-managed source changes. Untracked files and
 external helper versions are not covered by that stamp; receiver identity and
 helper setup remain separate evidence.
+
+## Profile origin and changed device paths
+
+New profiles include optional `origin: {platform, store_id}`. The backend creates
+an opaque namespace in its private `.origin.json` file and retains it across
+service and app restarts. Loading reports `origin_check.state` as `same_store`,
+`different_store`, `different_platform`, or `unknown` for older profiles. This is
+advisory configuration provenance, not a physical computer/device identity or an
+authentication claim: copying a whole store also copies its namespace. No machine
+serial number, hostname, credentials, or raw observations are recorded.
+
+The store continues to reject malformed JSON, unsupported profile/session schema
+versions and unsafe files. Loading does not require the current hardware layout
+to resolve successfully. If serial symlinks now point to the same endpoint, for
+example, load still returns the saved configuration with `validation.valid:false`
+so a client can show and repair it. Save continues to require strict current
+configuration validation and does not overwrite the last valid profile on error.
