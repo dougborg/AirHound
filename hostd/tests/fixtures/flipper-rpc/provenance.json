@@ -1,0 +1,76 @@
+{
+  "schema_revision": "ea4f185f5eaa265955c520eae2832887ee6aa5e4",
+  "generator": "official protobuf Python modules regenerated from the pinned schema",
+  "fixtures": [
+    {
+      "name": "start",
+      "field": "app_start_request",
+      "command_id": 1,
+      "command_status": 0,
+      "sha256": "ce3dcc4980fbb27d415680a83d0a24914eef9ca4214f0cf13ebccc914a0b3621"
+    },
+    {
+      "name": "exit",
+      "field": "app_exit_request",
+      "command_id": 2,
+      "command_status": 0,
+      "sha256": "0c045064cd26591b9232c9a7391e0af4ec7f0393719735592271cc86e4fe6f8d"
+    },
+    {
+      "name": "data",
+      "field": "app_data_exchange_request",
+      "command_id": 3,
+      "command_status": 0,
+      "sha256": "cf0faa1fb0aa8bde656d1b007f19e2c96f729a3b05547c4f740ca7cb33849af8"
+    },
+    {
+      "name": "event",
+      "field": "app_data_exchange_request",
+      "command_id": 0,
+      "command_status": 0,
+      "sha256": "a27d2c11b390378bba771f5a2cb3c56f6d07f75bfef17aa91072e70f1069f75e"
+    },
+    {
+      "name": "ack",
+      "field": "empty",
+      "command_id": 3,
+      "command_status": 0,
+      "sha256": "d2cf8741726c47ed3c829e6644cdf76648fa722d23b3653c2bca0f4ffca5185f"
+    },
+    {
+      "name": "busy",
+      "field": "empty",
+      "command_id": 1,
+      "command_status": 17,
+      "sha256": "d5ae7e11660220dc0dd467f15dd6175f3327d0ea375a312d8ace174a60584bc1"
+    },
+    {
+      "name": "started",
+      "field": "app_state_response",
+      "command_id": 0,
+      "command_status": 0,
+      "sha256": "3e734f641b7c688709fdd46d616f797365f0c20592e0c3351dc3421d9e3235b7"
+    },
+    {
+      "name": "stop_session",
+      "field": "stop_session",
+      "command_id": 4,
+      "command_status": 0,
+      "sha256": "6bf6cacdbb75518abd66ff77f11e5056e8fff6297cfa831d511e48f5404ab415"
+    },
+    {
+      "name": "ping",
+      "field": "system_ping_request",
+      "command_id": 5,
+      "command_status": 0,
+      "sha256": "7ddbd702a5f69a570fc6e685e664ddec052a31b04d4416958cb88d2a0ee7c3b8"
+    },
+    {
+      "name": "pong",
+      "field": "system_ping_response",
+      "command_id": 5,
+      "command_status": 0,
+      "sha256": "4d110dc85ca5798777aec63df6762d799798790bd3c4f7d7e8709c73eecad2b1"
+    }
+  ]
+}

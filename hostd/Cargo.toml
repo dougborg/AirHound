@@ -16,12 +16,16 @@ default = ["macos-private-addresses"]
 macos-private-addresses = ["dep:corebluetooth-address"]
 
 [dependencies]
+airhound-flipper = { path = "../companions/flipper", default-features = false }
 airhound-api = { path = "crates/airhound-api" }
 airhound-client = { path = "crates/airhound-client" }
 airhound = { path = "..", default-features = false, features = ["board-host"] }
 btleplug = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time", "process", "io-util", "net", "fs"] }
 futures-lite = "2"
+# Generated official protobuf types only; AirHound owns async transport/leases.
+flipper-rpc = { version = "=0.9.5", default-features = false, features = ["proto"] }
+prost = "0.14"
 log = "0.4"
 env_logger = "0.11"
 heapless = { version = "0.9.4", features = ["serde"] }
