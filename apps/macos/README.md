@@ -71,6 +71,14 @@ explicitly. Package version and source tag do not imply a published release.
    complete JSON plan or a plan file, including replay sources.
 7. Use **Pause**, **Resume**, and **Finish Recording** to control the service.
 
+**Add Saved Marauder Capture** appears when the connected backend advertises
+Marauder replay support. Choose **PCAP…** or **Serial capture…**, then select the
+saved file. This adds a replay source to the plan; it does not connect to the
+board or start recording. Expand its row to change the file or explicit format,
+then validate and start the plan. The backend must be able to read that path.
+Missing signal strength, channel and location remain unknown; boot-relative
+packet times are not treated as wall-clock timestamps.
+
 **Saved setups** stores profiles on the connected backend. **Save Setup…** saves
 the current plan; replacement requires an explicit choice. **Load** first shows
 the backend's current binding and helper-resource checks. **Use Setup** applies
