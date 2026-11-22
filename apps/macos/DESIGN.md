@@ -11,15 +11,13 @@ sidebar is 210–320 points and the inspector 260–420 points. Long names remai
 available in the inspector; original records use selectable monospaced text.
 System controls supply focus, disabled, hover and keyboard behavior.
 
-The first integrated slice opens empty, with an explicit action to open a
-recording or example. The Devices sheet separates passive candidate inventory
-from recorded receivers. No live status, scan controls or signal estimates are
-invented. Details retain the backend's complete evidence object.
+The Devices sheet separates passive candidate inventory from recorded receivers.
+Details retain the backend's complete evidence object. Capture operations belong
+to the shared Rust service, while SwiftUI presents state and controls.
 
-The earlier standalone comparison was approved interactively. This integrated
-revision has compiler/model/lifecycle/bundle validation; rendered light/dark,
-keyboard and VoiceOver acceptance remain pending. No screenshot or visual-review
-approval is claimed for the unlaunched integrated app.
+Dark-mode rendering, native capture controls, observation browsing and actual
+window close/reopen have been exercised locally. Full VoiceOver and light-mode
+acceptance are not claimed; see ACCEPTANCE.md for test scope.
 
 ## Capture integration
 
@@ -32,8 +30,8 @@ the existing table and inspector, adding bounded page/follow controls.
 
 Capture belongs to the Rust service. The interface distinguishes requested run
 state, observed receiver health, and unavailable counters. Closing the app does
-not imply stopping capture. No visual acceptance is claimed until a rendered
-inspection and actual close/reopen check have been completed.
+not imply stopping capture. The rendered inspection and actual close/reopen check are recorded in
+ACCEPTANCE.md.
 
 Service connection occupies a compact bottom status bar shared by both tabs.
 Its text and green/red indicator report connected, disconnected or error state;

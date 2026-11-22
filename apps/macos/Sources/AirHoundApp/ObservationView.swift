@@ -30,7 +30,7 @@ struct MainView: View {
           ForEach(Array(Set(observations.map(\.receiver))).sorted(), id: \.self) { id in
             receiverLabel(
               id, id: id, icon: "antenna.radiowaves.left.and.right",
-              assignment: "Recorded source; not live")
+              assignment: "Source of retained observations")
           }
         }
       }

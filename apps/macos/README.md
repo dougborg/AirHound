@@ -104,14 +104,13 @@ that subprocess does not cancel an already accepted service command. Reconnect
 and query state after uncertain outcomes. The service process has no pipes tied
 to the app and is not terminated on app disconnect.
 
-Hardware and visual acceptance are separate from compiler/unit tests. The
-current integration is still under acceptance: packaged CatSniffer/replay GUI
-controls and full window close/reopen acceptance remain pending. ALFA MCU recovery
-and combined ALFA/CatSniffer acceptance are separate hardware follow-ups; they
-are not prerequisites for this native preview. CatSniffer reception and real-service
-replay, idempotent retry, history/export, and app-model service reconnection have
-been exercised locally. Do not treat those narrower checks as full hardware or
-UI acceptance.
+Hardware and visual acceptance are separate from compiler/unit tests. Packaged
+CatSniffer capture, GUI pause/resume/finish, actual window close/reopen, retained
+observation browsing, synthetic replay/failure display and SQLite archive export
+have been exercised locally. ALFA MCU recovery and combined ALFA/CatSniffer
+acceptance remain separate hardware follow-ups. Dark-mode rendering was checked;
+full VoiceOver and light-appearance review are not claimed. See ACCEPTANCE.md for
+the evidence and limits.
 
 When no recording is open, switching to Observations selects the service’s active
 run or most recently completed run. Active runs enable Follow Live; an explicitly

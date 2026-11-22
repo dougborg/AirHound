@@ -7,6 +7,14 @@ final class CoreTests: XCTestCase {
   private let inventory =
     #"{"schema_version":1,"mode":"passive","platform":"macos","devices":[{"id":"usb:example","identity_scope":"attachment_topology","name":"Example bridge","endpoints":[{"kind":"serial","path":"/dev/example"}],"candidates":[{"kind":"future_backend","label":"Future role","support":"candidate","state":"needs_identification","evidence":["Generic bridge"],"requirements":[{"name":"firmware","state":"unknown","detail":"Inspect manually"}],"capabilities":{"scope":"unknown"}}]}],"diagnostics":[{"backend":"ioreg","message":"Partial inventory"}]}"#
 
+  func testUnnamedObservationsUseAvailableIdentity() throws {
+    let input = #"{"type":"ble_observation","name":"","mac":"02:00:00:00:00:01"}"#
+    let row = try XCTUnwrap(Recording.decode(Data(input.utf8)).observations.first)
+    XCTAssertEqual(row.name, "02:00:00:00:00:01")
+    let named = input.replacingOccurrences(of: "\"name\":\"\"", with: "\"name\":\"Sensor\"")
+    XCTAssertEqual(try Recording.decode(Data(named.utf8)).observations.first?.name, "Sensor")
+  }
+
   func testInventoryKeepsUncertaintyAndUnknownCandidates() throws {
     let value = try Inventory.decode(Data(inventory.utf8))
     XCTAssertEqual(value.devices[0].candidates[0].state, "needs_identification")

@@ -75,6 +75,12 @@ public struct Recording {
       let externalName = (object["ssid_bytes"] as? [UInt8]).flatMap {
         String(bytes: $0, encoding: .utf8)
       }
+      let address = ["mac", "address", "bssid", "peripheral_id"]
+        .compactMap { object[$0] as? String }.first { !$0.isEmpty }
+      let name =
+        [object["ssid"] as? String, object["name"] as? String, externalName]
+        .compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        ?? address ?? "Unnamed observation"
       let pretty = try JSONSerialization.data(
         withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
       // Native WiFi ch=0 means unavailable; BLE data channel 0 is valid.
@@ -87,12 +93,10 @@ public struct Recording {
       rows.append(
         Observation(
           id: lineNumber,
-          name: object["ssid"] as? String ?? object["name"] as? String ?? externalName
-            ?? "Unnamed observation", medium: type.hasPrefix("ble_") ? "Bluetooth" : "Wi-Fi",
+          name: name, medium: type.hasPrefix("ble_") ? "Bluetooth" : "Wi-Fi",
           receiver: source["receiver_id"] as? String ?? object["source_id"] as? String
             ?? "Not reported",
-          address: object["mac"] as? String ?? object["address"] as? String ?? object["bssid"]
-            as? String ?? object["peripheral_id"] as? String ?? "Not reported", rssi: signal,
+          address: address ?? "Not reported", rssi: signal,
           channel: channelNumber.map(String.init) ?? "Not reported",
           frequency: (object["frequency_mhz"] as? Int).map { "\($0) MHz" } ?? "Not reported",
           band: object["band"] as? String ?? "Not reported",
