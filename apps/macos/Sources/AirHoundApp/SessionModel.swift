@@ -452,7 +452,7 @@ final class SessionModel: ObservableObject {
   }
 
   func showCurrentRecordingIfNeeded(app: AppModel) {
-    guard connected, !busy, browsingRun == nil, app.recording == nil,
+    guard connected, !busy, !app.loadingRecording, browsingRun == nil, app.recording == nil,
       let id = activeID ?? capture?["last"]?["run_id"]?.string,
       let run = runs.first(where: { $0.id == id })
     else { return }
@@ -461,6 +461,7 @@ final class SessionModel: ObservableObject {
 
   func open(_ run: StoredRun, app: AppModel) {
     guard !busy else { return }
+    app.beginRecordingSelection()
     browsingRun = run.id
     observationApp = app
     window = RecordWindow()
@@ -489,27 +490,39 @@ final class SessionModel: ObservableObject {
   private func fetchRecords() async throws {
     guard let client, let id = browsingRun, let app = observationApp else { return }
     let epoch = recordingEpoch
+    let selection = app.recordingSelection
     let current = window
-    let page = try await client.records(runID: id, after: current.cursor, limit: 500)
-    guard recordingEpoch == epoch, browsingRun == id else { return }
-    // Serialization, decoding and evidence formatting can take several frames.
-    // Keep that work off the main actor while the native table is scrolling.
-    let updated = try await Task.detached(priority: .userInitiated) {
-      var updated = current
-      try updated.append(page)
-      return updated
-    }.value
-    try Task.checkCancellation()
-    guard recordingEpoch == epoch, browsingRun == id, observationApp === app else { return }
-    window = updated
-    hasMoreRecords = page.hasMore
-    // Polling an unchanged recording must not invalidate every table row.
-    guard !page.records.isEmpty || !hasPresentedWindow else { return }
-    app.recording = try window.observations()
-    app.recordingLabel =
-      "\(window.records.count) recent records · \(window.omitted) earlier records outside this view"
-    app.isExample = false
-    hasPresentedWindow = true
+    do {
+      let page = try await client.records(runID: id, after: current.cursor, limit: 500)
+      guard recordingEpoch == epoch, browsingRun == id, app.recordingSelection == selection else {
+        return
+      }
+      // Serialization, decoding and evidence formatting can take several frames.
+      // Keep that work off the main actor while the native table is scrolling.
+      let updated = try await Task.detached(priority: .userInitiated) {
+        var updated = current
+        try updated.append(page)
+        return updated
+      }.value
+      try Task.checkCancellation()
+      guard recordingEpoch == epoch, browsingRun == id, observationApp === app,
+        app.recordingSelection == selection
+      else { return }
+      window = updated
+      hasMoreRecords = page.hasMore
+      // Polling an unchanged recording must not invalidate every table row.
+      guard !page.records.isEmpty || !hasPresentedWindow else { return }
+      app.recording = try window.observations()
+      app.recordingLabel =
+        "\(window.records.count) recent records · \(window.omitted) earlier records outside this view"
+      app.isExample = false
+      hasPresentedWindow = true
+    } catch {
+      guard recordingEpoch == epoch, browsingRun == id, observationApp === app,
+        app.recordingSelection == selection
+      else { return }
+      throw error
+    }
   }
 
   func leaveRecording() {
