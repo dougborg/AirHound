@@ -335,3 +335,10 @@ observations use the shared filter and WiGLE writer; Remote ID
 NAN/beacon/probe-response payloads also emit `drone` messages. Security fields
 remain unknown; optional gpsd supplies valid location when configured.
 Hardware/driver compatibility and RF loss still need live validation.
+
+## Shared local control API
+
+The source-built `serve --socket PATH` and `client --socket PATH` commands expose
+passive device inventory, status and session validation through a shared Rust
+client. They do not start scans. See the [control API guide](../docs/shared-backend-api.md)
+for private socket setup, framing, bounds and planned multi-client capture control.

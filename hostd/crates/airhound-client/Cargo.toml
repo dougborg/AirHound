@@ -10,6 +10,7 @@ airhound-api = { path = "../airhound-api" }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["net", "io-util", "time"] }
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "sync"] }

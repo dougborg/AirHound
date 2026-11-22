@@ -68,3 +68,9 @@ These do not claim production integration or validated support for every listed 
 
 The [SwiftUI app](../apps/macos/README.md) browses hostd recordings and lists passive
 device candidates. Capture control remains in the CLI for now.
+
+## Shared backend control
+
+The [local control API](shared-backend-api.md) provides passive discovery and
+validation for multiple clients, with Rust API/client crates shared by future
+CLI, TUI and MCP interfaces. Capture control is not implemented by this first slice.
