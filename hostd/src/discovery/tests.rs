@@ -234,3 +234,75 @@ fn ordered_mt76_devices_are_unverified_and_cannot_activate_old_helper() {
         assert!(classify(&raw(vid, pid), "macos", &Options::default()).is_empty());
     }
 }
+
+#[test]
+fn roles_distinguish_controllers_location_and_unknown_transport() {
+    for (vid, pid, role) in [
+        (0x1546, 0x01a8, "location_source"),
+        (0x0483, 0x5740, "controller_or_companion"),
+        (0x1a86, 0x55d4, "unknown"),
+        (0x2e8a, 0xc0, "capture_receiver"),
+    ] {
+        let c = classify(&raw(vid, pid), "macos", &Options::default());
+        assert_eq!(c[0].role, role);
+        assert!(c[0].identification.is_none());
+        assert!(c[0]
+            .support_issue
+            .unwrap()
+            .starts_with("https://github.com/dougborg/AirHound/issues/"));
+    }
+}
+#[test]
+fn identification_requires_current_candidate_and_explicit_owned_endpoint() {
+    let mut d = raw(0x2e8a, 0xc0);
+    d.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/cu.test".into(),
+    });
+    let inventory = assemble(vec![d], vec![], "macos", &Options::default());
+    let mut request = identify::Request {
+        protocol: "sniffle".into(),
+        device_id: "usb:1".into(),
+        port: "/dev/cu.test".into(),
+        python: "python3".into(),
+        helper: "helper.py".into(),
+        module_path: None,
+    };
+    request.validate(&inventory).unwrap();
+    request.port = "/dev/cu.wrong".into();
+    assert!(request.validate(&inventory).is_err());
+    request.port = "/dev/cu.test".into();
+    request.device_id = "removed".into();
+    assert!(request.validate(&inventory).is_err());
+    request.device_id = "usb:1".into();
+    let mut generic = raw(0x1a86, 0x55d4);
+    generic.endpoints = inventory.devices[0].endpoints.clone();
+    let inventory = assemble(vec![generic], vec![], "macos", &Options::default());
+    assert!(request.validate(&inventory).is_err());
+}
+#[test]
+fn active_firmware_metadata_is_endpoint_scoped_and_never_cached_across_discovery() {
+    let mut d = raw(0x2e8a, 0xc0);
+    d.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/cu.test".into(),
+    });
+    let health = json!({"active":true,"run_id":"run","receiver_health":{"receivers":[{"id":"cat","receiver":{"adapter_id":"sniffle:/dev/cu.test","firmware":{"type":"sniffle_identity","schema_version":1,"major":1,"minor":11,"patch":0,"api_level":0}}}]}});
+    let mut inventory = assemble(vec![d.clone()], vec![], "macos", &Options::default());
+    inventory.reuse_active_metadata(&health);
+    let c = &inventory.devices[0].candidates[0];
+    assert_eq!(c.state, "in_use");
+    assert_eq!(c.support, "available");
+    let id = c.identification.as_ref().unwrap();
+    assert_eq!(id.firmware_version.as_deref(), Some("1.11.0"));
+    assert_eq!(id.reception, "not_tested");
+    assert_eq!(inventory.mode, "passive_with_active_metadata");
+    let mut fresh = assemble(vec![d.clone()], vec![], "macos", &Options::default());
+    fresh.reuse_active_metadata(&json!({"active":false,"last":health}));
+    assert!(fresh.devices[0].candidates[0].identification.is_none());
+    d.endpoints[0].path = "/dev/cu.replaced".into();
+    let mut replaced = assemble(vec![d], vec![], "macos", &Options::default());
+    replaced.reuse_active_metadata(&health);
+    assert!(replaced.devices[0].candidates[0].identification.is_none());
+    assert_eq!(replaced.mode, "passive");
+}

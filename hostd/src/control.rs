@@ -119,6 +119,26 @@ impl ScanControl {
     pub fn set_receiver(&self, receiver: crate::receiver::Receiver) {
         *self.2.lock().unwrap_or_else(|e| e.into_inner()) = Some(receiver);
     }
+    pub fn set_receiver_firmware(
+        &self,
+        firmware: Option<airhound_hostd::discovery::identify::Firmware>,
+    ) {
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            if receiver.backend == "sniffle" {
+                receiver.adapter_info = firmware
+                    .as_ref()
+                    .map(|firmware| {
+                        format!(
+                            "Sniffle {}/API{} (reported by firmware)",
+                            firmware.version(),
+                            firmware.api_level
+                        )
+                    })
+                    .unwrap_or_else(|| "Sniffle source; firmware not currently identified".into());
+            }
+            receiver.firmware = firmware;
+        }
+    }
     pub fn receiver_id(&self) -> Option<String> {
         self.2
             .lock()

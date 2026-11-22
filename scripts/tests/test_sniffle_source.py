@@ -1,6 +1,7 @@
 """Boundary tests for the separate GPL Sniffle helper; no upstream code imported."""
 import importlib.util
 import io
+import json
 from pathlib import Path
 import sys
 import types
@@ -13,7 +14,7 @@ SPEC.loader.exec_module(helper)
 
 
 class SniffleHelperTests(unittest.TestCase):
-    def run_helper(self, version=(1, 11, 0, 0), errors=False):
+    def run_helper(self, version=(1, 11, 0, 0), errors=False, identify=False):
         state = {'writes': 0, 'closed': False, 'signals': {}}
 
         class Packet:
@@ -60,13 +61,35 @@ class SniffleHelperTests(unittest.TestCase):
             module = types.ModuleType(name)
             module.__dict__.update(values)
             modules[name] = module
-        stdout = types.SimpleNamespace(buffer=io.BytesIO())
-        with patch.dict(sys.modules, modules), patch.object(sys, 'argv', ['helper', '--port', 'fixture', '--channel', '39', '--coded']), patch.object(sys, 'stdout', stdout), patch.object(sys, 'stderr', io.StringIO()), patch.object(helper.time, 'sleep'), patch.object(helper.signal, 'signal', side_effect=lambda signal, callback: state['signals'].update({signal: callback})):
+        stdout = io.StringIO()
+        stdout.buffer = io.BytesIO()
+        stderr = io.StringIO()
+        arguments = ['helper', '--port', 'fixture', '--channel', '39', '--coded']
+        if identify:
+            arguments.append('--identify-only')
+        with patch.dict(sys.modules, modules), patch.object(sys, 'argv', arguments), patch.object(sys, 'stdout', stdout), patch.object(sys, 'stderr', stderr), patch.object(helper.time, 'sleep'), patch.object(helper.signal, 'signal', side_effect=lambda signal, callback: state['signals'].update({signal: callback})):
             try:
                 helper.main()
             except Exception as exc:
                 state['error'] = exc
+        state['stdout'] = stdout.getvalue()
+        state['stderr'] = stderr.getvalue()
         return state
+
+    def test_identification_reports_actual_version_without_starting_capture(self):
+        for version in [(1, 11, 0, 0), (1, 10, 0, 0), (1, 11, 0, 1)]:
+            state = self.run_helper(version=version, identify=True)
+            report = json.loads(state['stdout'])
+            self.assertEqual(report['type'], 'sniffle_identity')
+            self.assertEqual(report['minor'], version[1])
+            self.assertEqual(report['api_level'], version[3])
+            self.assertNotIn('setup', state)
+            self.assertNotIn('header_written', state)
+            self.assertTrue(state['closed'])
+        state = self.run_helper(version=None, identify=True)
+        self.assertIsInstance(state['error'], RuntimeError)
+        self.assertNotIn('setup', state)
+        self.assertTrue(state['closed'])
 
     def test_passive_mode_explicit_port_and_cleanup(self):
         state = self.run_helper()
