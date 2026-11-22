@@ -161,6 +161,42 @@ final class SessionTests: XCTestCase {
     let finishedRuns = try await client.recordings()
     XCTAssertEqual(finishedRuns.runs.first?.id, activeRun)
     XCTAssertEqual(finishedRuns.runs.first?.state, "finished")
+    // A file load is already awaiting completion when the user explicitly
+    // chooses service history. Neither its success nor its error may win later.
+    for fail in [false, true] {
+      replacement.leaveRecording()
+      let filePresentation = AppModel()
+      let gate = RecordingLoadGate()
+      let loading = filePresentation.loadRecording(root.appendingPathComponent("late.ndjson")) {
+        _ in
+        await gate.wait()
+        if fail { throw ModelError.invalid("late file failure") }
+        return try Recording.decode(Data())
+      }
+      for _ in 0..<100 {
+        if await gate.entered { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let entered = await gate.entered
+      XCTAssertTrue(entered, "File load must be outstanding before service selection")
+      replacement.showCurrentRecordingIfNeeded(app: filePresentation)
+      XCTAssertNil(
+        replacement.browsingRun, "Automatic following must not replace an explicit file load")
+      replacement.open(try XCTUnwrap(finishedRuns.runs.first), app: filePresentation)
+      try await waitIdle(replacement)
+      let serviceRevision = try XCTUnwrap(filePresentation.recording?.revision)
+      let serviceLabel = filePresentation.recordingLabel
+      await gate.release()
+      await loading.value
+      XCTAssertEqual(filePresentation.recording?.revision, serviceRevision)
+      XCTAssertEqual(filePresentation.recordingLabel, serviceLabel)
+      XCTAssertNil(
+        filePresentation.error, "A stale file error must not interrupt the selected recording")
+      XCTAssertFalse(filePresentation.loadingRecording)
+    }
+
+    replacement.open(try XCTUnwrap(finishedRuns.runs.first), app: completedPresentation)
+    try await waitIdle(replacement)
     let unchangedRevision = try XCTUnwrap(completedPresentation.recording?.revision)
     replacement.loadMoreRecords()
     try await waitIdle(replacement)
@@ -224,4 +260,17 @@ final class SessionTests: XCTestCase {
     XCTFail("Presentation operation did not finish in time")
   }
 
+}
+
+private actor RecordingLoadGate {
+  private(set) var entered = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  func wait() async {
+    entered = true
+    await withCheckedContinuation { continuation = $0 }
+  }
+  func release() {
+    continuation?.resume()
+    continuation = nil
+  }
 }
