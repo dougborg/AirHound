@@ -7,11 +7,11 @@ public enum DiscoveryError: LocalizedError, Equatable {
   public var errorDescription: String? {
     switch self {
     case .invalidExecutable: return "Choose an executable airhound-hostd file."
-    case .timedOut: return "Device discovery timed out. Check the backend and try again."
-    case .outputLimit: return "Device discovery exceeded its output limit."
-    case .cancelled: return "Device discovery cancelled."
+    case .timedOut: return "Backend command timed out. Reconnect to check its current state."
+    case .outputLimit: return "Backend command exceeded its output limit."
+    case .cancelled: return "Backend command cancelled."
     case .failed(let status, let message):
-      return "Device discovery exited with status \(status). \(message)"
+      return "Backend command exited with status \(status). \(message)"
     }
   }
 }
@@ -34,7 +34,10 @@ private final class Cancellation: @unchecked Sendable {
 
 public struct DiscoveryProcess {
   public init() {}
-  public func run(executable: URL, timeout: TimeInterval = 15, outputLimit: Int = 4 * 1024 * 1024)
+  public func run(
+    executable: URL, arguments: [String] = ["devices", "list", "--json"],
+    timeout: TimeInterval = 15, outputLimit: Int = 4 * 1024 * 1024
+  )
     async throws -> Data
   {
     let cancellation = Cancellation()
@@ -45,7 +48,8 @@ public struct DiscoveryProcess {
             continuation.resume(
               with: Result {
                 try Self.collect(
-                  executable, timeout: timeout, limit: outputLimit, cancellation: cancellation)
+                  executable, arguments: arguments, timeout: timeout, limit: outputLimit,
+                  cancellation: cancellation)
               })
           }
         }
@@ -60,7 +64,8 @@ public struct DiscoveryProcess {
   }
 
   private static func collect(
-    _ executable: URL, timeout: TimeInterval, limit: Int, cancellation: Cancellation
+    _ executable: URL, arguments: [String] = ["devices", "list", "--json"], timeout: TimeInterval,
+    limit: Int, cancellation: Cancellation
   ) throws -> Data {
     guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path),
       timeout > 0, limit > 0
@@ -68,7 +73,7 @@ public struct DiscoveryProcess {
     if cancellation.isCancelled { throw DiscoveryError.cancelled }
     let process = Process()
     process.executableURL = executable
-    process.arguments = ["devices", "list", "--json"]
+    process.arguments = arguments
     process.standardInput = FileHandle.nullDevice
     let stdout = Pipe()
     let stderr = Pipe()

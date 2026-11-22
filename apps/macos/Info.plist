@@ -9,4 +9,6 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSBluetoothAlwaysUsageDescription</key><string>AirHound uses Bluetooth to observe nearby advertisements when you start a Bluetooth receiver.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>macOS requires location access to report nearby Wi-Fi network identities.</string>
 </dict></plist>

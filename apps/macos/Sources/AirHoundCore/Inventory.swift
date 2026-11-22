@@ -49,6 +49,7 @@ public struct Candidate: Decodable {
   public let state: String
   public let evidence: [String]
   public let requirements: [Requirement]
+  public let configurationHint: JSONValue?
 }
 public struct Requirement: Decodable {
   public let name: String

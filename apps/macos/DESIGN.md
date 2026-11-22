@@ -20,3 +20,17 @@ The earlier standalone comparison was approved interactively. This integrated
 revision has compiler/model/lifecycle/bundle validation; rendered light/dark,
 keyboard and VoiceOver acceptance remain pending. No screenshot or visual-review
 approval is claimed for the unlaunched integrated app.
+
+## Capture integration
+
+The integration extends the native system-control style with Capture and
+Observations tabs. Capture uses a split view: connection/receiver configuration
+on the left, active lifecycle, receiver health and saved recordings on the
+right. Receiver setup uses standard text fields, file pickers and disclosures;
+raw JSON remains available for advanced configurations. Observations retains
+the existing table and inspector, adding bounded page/follow controls.
+
+Capture belongs to the Rust service. The interface distinguishes requested run
+state, observed receiver health, and unavailable counters. Closing the app does
+not imply stopping capture. No visual acceptance is claimed until a rendered
+inspection and actual close/reopen check have been completed.

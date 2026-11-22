@@ -11,5 +11,6 @@ let package = Package(
       name: "AirHoundApp", dependencies: ["AirHoundCore"],
       resources: [.copy("Resources/example.ndjson")]),
     .testTarget(name: "AirHoundCoreTests", dependencies: ["AirHoundCore"]),
+    .testTarget(name: "AirHoundAppTests", dependencies: ["AirHoundApp", "AirHoundCore"]),
   ]
 )

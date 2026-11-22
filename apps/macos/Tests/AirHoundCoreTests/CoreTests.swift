@@ -177,6 +177,126 @@ final class CoreTests: XCTestCase {
       } catch { XCTAssertEqual(error as? DiscoveryError, .outputLimit) }
     }
   }
+  func testSharedClientArgumentsDoNotInterpretShellCharacters() async throws {
+    let executable = try script(
+      "[ \"$#\" = 4 ] && [ \"$1\" = client ] && [ \"$2\" = --socket ] && [ \"$3\" = '/tmp/socket with $characters' ] && [ \"$4\" = status ] || exit 9\nprintf '{}'\n"
+    )
+    let client = BackendClient(
+      executable: executable, socket: URL(fileURLWithPath: "/tmp/socket with $characters"))
+    let data = try await client.request(["status"])
+    XCTAssertEqual(String(decoding: data, as: UTF8.self), "{}")
+  }
+
+  func testHistoryPagePreservesEvidenceAndLargeIntegerCursors() throws {
+    let data = Data(
+      #"{"records":[{"cursor":9007199254740993,"source_id":"cat","kind":"ble_packet_observation","received_at_us":1795335411990197,"payload":{"type":"ble_packet_observation","session_source":{"receiver_id":"cat"},"detection":{"sig":[12],"future":{"counter":9007199254740993}}}}],"next_after":9007199254740993,"has_more":true}"#
+        .utf8)
+    let page = try JSONDecoder().decode(RecordPage.self, from: data)
+    XCTAssertEqual(page.nextAfter, 9_007_199_254_740_993)
+    XCTAssertTrue(page.hasMore)
+    let observations = try page.observations()
+    XCTAssertEqual(observations.observations.first?.receiver, "cat")
+    XCTAssertTrue(observations.observations.first?.raw.contains("9007199254740993") == true)
+    let value = try JSONDecoder().decode(JSONValue.self, from: data)
+    XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: value.data()), value)
+  }
+
+  func testRecordWindowEvictsPresentationOnlyAndRejectsCursorRegression() throws {
+    var window = RecordWindow()
+    for cursor in 1...1005 {
+      let json =
+        "{\"records\":[{\"cursor\":\(cursor),\"source_id\":\"test\",\"kind\":\"wifi_observation\",\"received_at_us\":1,\"payload\":{\"type\":\"wifi_observation\"}}],\"next_after\":\(cursor),\"has_more\":true}"
+      try window.append(JSONDecoder().decode(RecordPage.self, from: Data(json.utf8)))
+    }
+    XCTAssertEqual(window.records.count, 1000)
+    XCTAssertEqual(window.omitted, 5)
+    XCTAssertEqual(window.cursor, 1005)
+    XCTAssertEqual(try window.observations().observations.count, 1000)
+    let invalid = try JSONDecoder().decode(
+      RecordPage.self, from: Data(#"{"records":[],"next_after":3,"has_more":false}"#.utf8))
+    XCTAssertThrowsError(try window.append(invalid))
+    XCTAssertEqual(window.cursor, 1005)
+  }
+
+  func testPlanReadRejectsNonregularAndOversizedFiles() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try LocalFiles.privateDirectory(directory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let fifo = directory.appendingPathComponent("fifo")
+    XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+    XCTAssertThrowsError(try LocalFiles.read(fifo, limit: 64))
+    XCTAssertThrowsError(try LocalFiles.read(directory, limit: 64))
+    let file = directory.appendingPathComponent("plan")
+    try Data(repeating: 65, count: 65).write(to: file)
+    XCTAssertThrowsError(try LocalFiles.read(file, limit: 64))
+    XCTAssertEqual(try LocalFiles.read(file, limit: 65).count, 65)
+    let link = directory.appendingPathComponent("link")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+    XCTAssertThrowsError(try LocalFiles.privateDirectory(link))
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+    XCTAssertThrowsError(try LocalFiles.privateDirectory(directory))
+  }
+
+  func testConfigurationHintPreservesBackendFieldNames() throws {
+    let json = inventory.replacingOccurrences(
+      of: "\"capabilities\":{",
+      with:
+        "\"configuration_hint\":{\"kind\":\"sniffle\",\"module_path\":\"/example\",\"usb_selector\":null},\"capabilities\":{"
+    )
+    let hint = try Inventory.decode(Data(json.utf8)).devices[0].candidates[0].configurationHint
+    XCTAssertEqual(hint?["module_path"], .string("/example"))
+    XCTAssertEqual(hint?["usb_selector"], .null)
+  }
+
+  func testReceiverMetricsPreserveUnknownVersusZero() throws {
+    let data = Data(
+      #"{"receiver_health":{"receivers":[{"id":"alfa","scanners":{"wifi":{"state":"unavailable","reason":"receiver_task_failed"},"ble":{"state":"disabled","reason":"not_assigned"}}}]}}"#
+        .utf8)
+    let capture = try JSONDecoder().decode(JSONValue.self, from: data)
+    let missing = try XCTUnwrap(ReceiverStatus.decode(capture, sourceEvents: [:]).first)
+    XCTAssertEqual(missing.hostDrops, "Not reported")
+    XCTAssertEqual(missing.recovery, "Not reported")
+    XCTAssertEqual(missing.phases, "Wi-Fi: unavailable")
+    let reported = try XCTUnwrap(
+      ReceiverStatus.decode(
+        capture,
+        sourceEvents: [
+          "alfa": .object([
+            "host_dropped_observations": .integer(0), "producer_dropped_observations": .integer(5),
+            "reconnect_attempts": .integer(2),
+          ])
+        ]
+      ).first)
+    XCTAssertEqual(reported.hostDrops, "0")
+    XCTAssertEqual(reported.producerDrops, "5")
+    XCTAssertEqual(reported.recovery, "2")
+  }
+
+  func testPendingStartSurvivesRecreationAndRefusesReplacement() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try LocalFiles.privateDirectory(root)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let socket = root.appendingPathComponent("service.sock")
+    let store = PendingStartStore(socket: socket)
+    XCTAssertNil(try store.load())
+    let config = Data("{\"version\":1}".utf8)
+    let pending = try store.prepare(socket: socket, config: config)
+    let reopened = PendingStartStore(socket: socket)
+    XCTAssertEqual(try reopened.load(), pending)
+    XCTAssertEqual(
+      try reopened.prepare(socket: socket, config: config).requestID, pending.requestID)
+    XCTAssertThrowsError(try reopened.prepare(socket: socket, config: Data("{}".utf8)))
+    XCTAssertEqual(try reopened.load(), pending)
+    try reopened.clear(pending)
+    XCTAssertNil(try store.load())
+    XCTAssertNotEqual(
+      try store.prepare(socket: socket, config: config).requestID, pending.requestID)
+    XCTAssertThrowsError(try store.clear(pending))
+    let file = root.appendingPathComponent("service.sock.pending-start.json")
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+    XCTAssertThrowsError(try store.load())
+  }
+
   func testMissingExecutable() async {
     do {
       _ = try await DiscoveryProcess().run(executable: URL(fileURLWithPath: "/does-not-exist"))
