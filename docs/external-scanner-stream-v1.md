@@ -56,6 +56,31 @@ the soak harness fails acceptance if this counter is nonzero, even when the
 receiver resumes. Persistent startup timeouts require operator investigation
 and may require an unplug/replug; the process does not retry indefinitely.
 
+## Optional producer identity
+
+Protocol 1 accepts older helpers with no version metadata; omission means
+unreported. New helpers include `hello.helper_build` with `component`,
+`package_version`, optional `git_revision`/`source_tag`/`tracked_source_modified`,
+and a `display_version`. These describe the executable that owns the pipe; a
+package version is not proof of a published release or genuine hardware.
+
+Each status may include `firmware` with `supplied_image` (raw header `version`,
+`build_version`, `build_time`, SHA-256), `load_state`, `uploaded_image` and
+`evidence:"companion_bootstrap"`. The load state is one of:
+
+- `uploaded_this_initialization`: initialization uploaded this file and completed;
+  `uploaded_image` equals the supplied image metadata.
+- `running_image_unverified`: initialization reused an already-ready MCU;
+  `uploaded_image` is null. The input file is not evidence of running firmware.
+- `not_initialized`: no current completed initialization; `uploaded_image` is null.
+
+Pause/stop/recovery clears uploaded-image metadata. The helper does not read back
+MCU memory to authenticate it. Host parsing bounds text and validates state/image
+consistency before retaining an allowlisted identity object in receiver health
+and `external_scanner_status.identity`. Malformed metadata fails the companion
+session through the existing cleanup path. Identity does not change RF capability,
+RSSI validity, calibration or permission claims.
+
 ## Host observations and export policy
 
 The host emits `external_wifi_observation`, retaining the original nullable RSSI,
