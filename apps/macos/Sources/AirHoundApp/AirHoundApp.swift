@@ -4,6 +4,8 @@ import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
+  let session = SessionModel()
+  @Published var selectedTab = "capture"
   @Published var recording: Recording?
   @Published var loadingRecording = false
   @Published var recordingLabel = "No recording open"
@@ -28,7 +30,7 @@ final class AppModel: ObservableObject {
     let panel = NSOpenPanel()
     panel.title = "Choose airhound-hostd"
     panel.message =
-      "Choose a trusted AirHound backend executable. It will be run only when you click Refresh."
+      "Choose a trusted AirHound backend executable. AirHound runs it for discovery, service startup and capture controls."
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
     if panel.runModal() == .OK {
@@ -54,12 +56,14 @@ final class AppModel: ObservableObject {
   }
   func cancelDiscovery() { discoveryTask?.cancel() }
   func shutdown() async {
+    session.disconnect()
     discoveryTask?.cancel()
     await discoveryTask?.value
   }
 
   func loadExample() {
     guard !loadingRecording else { return }
+    session.leaveRecording()
     do {
       guard
         let url = Bundle.main.url(forResource: "example", withExtension: "ndjson")
@@ -68,6 +72,7 @@ final class AppModel: ObservableObject {
         throw ModelError.invalid("Bundled example is missing")
       }
       recording = try Recording.load(url)
+      selectedTab = "observations"
       recordingLabel = "Example recording"
       isExample = true
       recordingRevision = UUID()
@@ -75,6 +80,7 @@ final class AppModel: ObservableObject {
   }
   func openRecording() {
     guard !loadingRecording else { return }
+    session.leaveRecording()
     let panel = NSOpenPanel()
     panel.title = "Open hostd recording"
     panel.message =
@@ -89,6 +95,7 @@ final class AppModel: ObservableObject {
         let loaded = try await Task.detached(priority: .userInitiated) { try Recording.load(url) }
           .value
         recording = loaded
+        selectedTab = "observations"
         recordingLabel = "Recording: " + url.lastPathComponent
         isExample = false
         recordingRevision = UUID()
@@ -117,7 +124,13 @@ struct AirHoundApp: App {
   @StateObject private var model = AppModel()
   var body: some Scene {
     Window("AirHound", id: "main") {
-      MainView(model: model).onAppear { delegate.model = model }
+      TabView(selection: $model.selectedTab) {
+        SessionView(session: model.session, app: model).tabItem {
+          Label("Capture", systemImage: "antenna.radiowaves.left.and.right")
+        }.tag("capture")
+        MainView(model: model).tabItem { Label("Observations", systemImage: "list.bullet") }.tag(
+          "observations")
+      }.frame(minWidth: 1020, minHeight: 650).onAppear { delegate.model = model }
     }
     .defaultSize(width: 1280, height: 820)
     .commands {

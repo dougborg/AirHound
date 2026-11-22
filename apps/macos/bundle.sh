@@ -11,5 +11,12 @@ cp "$bin_path/AirHound" "$app/Contents/MacOS/AirHound"
 # The app uses its own standard Resources directory; swift run uses Bundle.module.
 cp Sources/AirHoundApp/Resources/example.ndjson "$app/Contents/Resources/example.ndjson"
 cp Info.plist "$app/Contents/Info.plist"
+# Pass a built backend explicitly; never embed a stale binary by guessing a path.
+if [ "$#" -gt 0 ]; then
+  test -x "$1" || { printf 'Backend is not executable: %s\n' "$1" >&2; exit 1; }
+  mkdir -p "$app/Contents/Helpers"
+  cp "$1" "$app/Contents/Helpers/airhound-hostd"
+  codesign --force --sign - "$app/Contents/Helpers/airhound-hostd"
+fi
 codesign --force --sign - "$app"
 printf 'Built %s/%s\n' "$PWD" "$app"

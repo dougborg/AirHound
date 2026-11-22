@@ -1,98 +1,111 @@
 # Native macOS app
 
-AirHound's SwiftUI interface is an early, source-built component for macOS 14 or
-later. It currently browses recorded observations and inventories candidate
-devices through the Rust backend. It does **not** start or control a capture.
-Linux GUI work is deferred; `hostd` remains the shared macOS/Linux backend.
+AirHound's SwiftUI preview controls the shared Rust capture service and browses
+its durable recordings. The Rust backend owns discovery, scan-plan validation,
+receiver management, detection, alert policy and SQLite storage. Swift presents
+those results through native controls. Linux GUI work remains deferred.
 
 ## Build and run
 
-Install Xcode command-line tools with Swift 5.9 or later. No third-party Swift
-packages are required.
+Use Xcode command-line tools with Swift 5.9 or later and stable Rust. From the
+repository root:
 
 ```sh
-cd apps/macos
-swift test --enable-code-coverage
-sh bundle.sh
-open dist/AirHound.app
+cargo +stable build --manifest-path hostd/Cargo.toml --release --locked --bin airhound-hostd
+AIRHOUND_TEST_BACKEND="$PWD/hostd/target/release/airhound-hostd" \
+  swift test --package-path apps/macos --enable-code-coverage
+sh apps/macos/bundle.sh "$PWD/hostd/target/release/airhound-hostd"
+open apps/macos/dist/AirHound.app
 ```
 
-The bundle is locally ad-hoc signed, not notarized or a release distribution.
-Its identifier is `tools.airhound.desktop`, distinct from the existing hostd
-permission bundle. Packaging does not copy a backend or radio firmware. The
-`.app` includes its example recording and can open recordings without hostd.
+The bundle is ad-hoc signed for local testing, not Developer ID signed or
+notarized. Its identifier is `tools.airhound.desktop`. The optional argument to
+`bundle.sh` embeds that exact backend executable. Omitting it builds an app that
+can browse NDJSON and lets you select a trusted backend manually. External radio
+helpers, their runtimes and firmware are not bundled. The native UI targets
+macOS 14; an embedded backend may require a newer version depending on its SDK
+and deployment target. See the packaged backend's platform requirements.
 
-To build the backend, run `just build-hostd` at the repository root. In the app,
-open **Devices**, choose `hostd/target/release/airhound-hostd`, then click
-**Refresh**. A backend at `AirHound.app/Contents/Helpers/airhound-hostd` or a sibling
-`airhound-hostd` executable is located automatically if present. A discovered
-executable is not run automatically. Choose a trusted backend: the operating
-system executes that file directly, without a shell.
+## Connect and capture
 
-## Devices
+1. Open **Capture**. Choose a trusted backend if one is not embedded.
+2. Click **Start Local Service**, or **Connect** if a service already exists.
+3. Select receivers. System Wi-Fi and Bluetooth form the initial suggested plan;
+   selection does not start scanning or prove permission/readiness.
+4. Configure external receivers using **Receiver settings**. ALFA needs its
+   scanner executable, firmware and exact USB selector. CatSniffer needs compatible
+   Sniffle firmware, its serial port, Python runtime and helper/module paths.
+5. **Validate Plan**, then **Start Recording**. Advanced settings also accept a
+   complete JSON plan or a plan file, including replay sources.
+6. Use **Pause**, **Resume**, and **Finish Recording** to control the service.
 
-The app invokes only `airhound-hostd devices list --json`, using the existing
-[passive discovery contract](../../docs/device-discovery.md). It displays device
-identities, endpoints, support/readiness distinctions, requirements and inventory
-diagnostics. Presence is not readiness, and a partial inventory is not proof that
-a missing device is absent. The app does not probe serial interfaces, claim USB
-devices, request radio permissions, or start scanning. Refresh replaces the prior
-snapshot; Cancel stops the owned discovery command.
+Receiver/channel fields serialize configuration; the Rust backend validates it.
+A successful validation is not a radio probe. The recording state describes the
+requested lifecycle; per-receiver readiness can lag or fail independently.
+Reported recovery/drop counters are displayed separately. Missing counters are
+**Not reported**, never zero. Radio loss is generally unknown. Metrics are read
+from retained source events, with a visible catch-up indicator when behind.
 
-Inventory execution has a 15-second deadline, 4 MiB stdout cap and 64 KiB stderr
-cap. Cancellation, output overflow or timeout requests termination, followed by
-SIGKILL after 250 ms if needed; the direct child is reaped before completion.
-Both pipes use checked nonblocking descriptors, including after child exit, so
-an inherited writer cannot make a pipe read hang. Close/Quit cancels and awaits
-the owned command. This ownership adapter does not implement scan-stop semantics
-or claim RF cleanup; it only runs the passive inventory command. An arbitrary
-replacement executable is not sandboxed, and descendants are not managed as a
-scan session.
+**Closing the window or quitting the app leaves the service and capture running.**
+Reopen and Connect to regain control. Finish Recording explicitly stops the run
+and drains its retained data. Pause may stop ingestion without turning off the
+radio firmware. A failed finish remains a failed recording and is not labeled a
+successful capture. A pending start ID/config is flushed to a private file beside the service socket before dispatch;
+**Resolve Pending Start** retries that same request so a lost response cannot
+silently create another recording. Do not change the plan while resolving it.
 
-## Recordings
+The default service socket and database live in
+`~/Library/Application Support/AirHound/`. The directory must be private (0700),
+owned by you and not a symlink. The service validates local socket ownership;
+the app never removes an existing socket to force startup. Advanced connection
+settings can attach to another local socket. No network listener is enabled.
+The preview does not install a login agent or automatically restart a crashed
+service. After a service restart, unfinished recordings become interrupted and
+are not automatically resumed.
 
-**Open Recording** (Command-O) reads hostd NDJSON. **Open Example Recording**
-loads three explicitly illustrative observations; it is never a live session.
-The table supports sorting, receiver/protocol filtering, matching-only filtering
-and text search. Select a row for complete identity, channel/PHY, detection
-evidence and original JSON. Option-Command-I toggles the inspector.
+## Observations and history
 
-Native WiFi, native BLE, BLE packet observations (including CatSniffer/Sniffle)
-and external WiFi observations (including ALFA) are represented. Runtime/health,
-legacy match and unknown record types are counted but not treated as current
-live state or duplicate observations. Missing signal and unvalidated ALFA RSSI
-stay unknown; estimates remain available in raw JSON. BLE platform identifiers
-are not converted to MAC addresses. Band and frequency are shown only when
-explicitly supplied, never inferred from an ambiguous channel number.
+Open a recording from Capture to inspect it in **Observations**. Follow new
+records for a live run or use **Load Next Page** to browse forward. The view keeps
+up to 1,000 records and 4 MiB of serialized payloads; older records leave the
+presentation window, with an explicit omitted count. This does not remove them
+from SQLite. Refresh the history list for updated run counts and use **Older
+Recordings** for further history pages.
 
-The frontend displays the backend's detection metadata; it does not execute
-signatures, allocate channels or decide alert policy. The inspector preserves
-the complete detection object, including rule/signature references, policy,
-provenance and overflow fields. A match is a lead, not confirmed device identity.
+Sort/filter observations by receiver, protocol, text or match. The inspector
+retains the backend's signature/evidence object and original JSON. Native Wi-Fi,
+BLE advertisements, CatSniffer BLE packets and ALFA observations are supported.
+Unknown events and lifecycle records are not presented as duplicate observations.
+Missing signal and unvalidated ALFA RSSI stay unknown. BLE platform identifiers
+are not converted to MAC addresses. A match is evidence, not confirmed identity.
 
-Recording import is atomic and bounded to 8 MiB, 256 KiB per line and 10,000
-observations. Malformed/truncated JSON is rejected rather than silently skipped;
-the previous recording remains open on failure. Imports are not tailing/replay,
-and no export or persistent capture archive is written by this slice.
-Selected recordings are opened nonblocking and verified as regular files using
-the opened descriptor, so FIFOs and devices cannot block import. File reading
-and decoding run off the UI thread; opening another recording is disabled until
-that import completes.
+**Export Archive** writes a consistent standalone SQLite snapshot of all stored
+runs to a new filename. It does not overwrite files. An active run in an export
+reflects its state at snapshot time. Backend size/time limits apply; this is not
+a CSV export or a retention operation.
 
-## Structure and next slice
+Command-O opens bounded NDJSON files (8 MiB / 10,000 observations), and the
+example is explicitly illustrative. Opening a file stops following a service
+recording in the view; it does not stop capture.
 
-- `AirHoundCore`: Foundation presentation decoders and bounded subprocess adapter.
-- `AirHoundApp`: SwiftUI/AppKit application, native table/sidebar/inspector and dialogs.
-- `Tests`: synthetic contract, bounds, timeout, cancellation and failure tests.
+## Architecture and verification
 
-The Rust backend remains the owner of session validation, allocation, detection,
-alert policy and capture/control semantics. The next slice should expose those
-operations through a shared control boundary usable by this app, a TUI and MCP;
-do not duplicate them in Swift. Start/Stop and session configuration are absent
-until that boundary and shutdown acknowledgement are implemented. No background
-capture mode is enabled.
+- `AirHoundCore`: bounded process adapter, shared-client presentation models,
+  evidence/history decoding, bounded record window and file import.
+- `AirHoundApp`: native views and presentation state. Every service operation uses
+  `airhound-hostd client`, which uses the shared Rust API/client and Unix socket.
+- `Tests`: model/bounds tests and optional real-service replay/lifecycle tests.
+  Set `AIRHOUND_TEST_BACKEND` to enable the latter; CI builds and supplies it.
 
-CI builds/tests/packages without radios or permissions. Local compiler, unit
-tests and bundle verification are separate from visual, keyboard, VoiceOver and
-hardware acceptance; those remain manual checks. Current comparison windows are
-not replaced or launched by the build.
+Each client subprocess has a 25-second deadline and bounded output. Cancelling
+that subprocess does not cancel an already accepted service command. Reconnect
+and query state after uncertain outcomes. The service process has no pipes tied
+to the app and is not terminated on app disconnect.
+
+Hardware and visual acceptance are separate from compiler/unit tests. The
+current integration is still under acceptance: ALFA MCU timeouts prevent a
+successful combined ALFA/CatSniffer sign-off, and full window close/reopen and
+rendered UI inspection remain pending. CatSniffer reception and real-service
+replay, idempotent retry, history/export, and app-model service reconnection have
+been exercised locally. Do not treat those narrower checks as full hardware or
+UI acceptance.

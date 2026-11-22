@@ -3,9 +3,9 @@ name: Native macOS app
 on:
   push:
     branches: [main]
-    paths: ['apps/macos/**', '.github/workflows/macos-app.yml']
+    paths: ['apps/macos/**', 'hostd/**', '.github/workflows/macos-app.yml']
   pull_request:
-    paths: ['apps/macos/**', '.github/workflows/macos-app.yml']
+    paths: ['apps/macos/**', 'hostd/**', '.github/workflows/macos-app.yml']
 
 permissions:
   contents: read
@@ -13,17 +13,29 @@ permissions:
 jobs:
   build-test:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Test decoding and owned process lifecycle
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+      - name: Build shared backend
+        run: cargo +stable build --manifest-path hostd/Cargo.toml --release --locked --bin airhound-hostd
+      - name: Test presentation and real service lifecycle
         working-directory: apps/macos
+        env:
+          AIRHOUND_TEST_BACKEND: ${{ github.workspace }}/hostd/target/release/airhound-hostd
         run: swift test --enable-code-coverage
+      - name: Gate presentation-core coverage
+        working-directory: apps/macos
+        run: python3 check-coverage.py "$(swift test --show-codecov-path)"
       - name: Build native app bundle
         working-directory: apps/macos
-        run: sh bundle.sh
+        run: sh bundle.sh "$GITHUB_WORKSPACE/hostd/target/release/airhound-hostd"
       - name: Validate app bundle
         run: |
+          test -x apps/macos/dist/AirHound.app/Contents/Helpers/airhound-hostd
+          apps/macos/dist/AirHound.app/Contents/Helpers/airhound-hostd --help >/dev/null
           plutil -lint apps/macos/dist/AirHound.app/Contents/Info.plist
           codesign --verify --deep --strict apps/macos/dist/AirHound.app
           test -n "$(find apps/macos/dist/AirHound.app -name example.ndjson -print -quit)"

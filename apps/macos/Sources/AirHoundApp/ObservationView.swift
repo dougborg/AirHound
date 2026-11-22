@@ -38,12 +38,13 @@ struct MainView: View {
       .safeAreaInset(edge: .bottom) {
         VStack(alignment: .leading, spacing: 6) {
           Text(model.recordingLabel).font(.headline)
-          Text("Recorded observations only. No active scan.").font(.caption).foregroundStyle(
+          Text("Capture controls are in the Capture tab.").font(.caption).foregroundStyle(
             .secondary)
         }.frame(maxWidth: .infinity, alignment: .leading).padding()
       }
     } detail: {
       VStack(spacing: 0) {
+        RecordNavigation(session: model.session)
         HStack {
           Picker("Protocol", selection: $medium) {
             Text("All types").tag("All types")
@@ -68,7 +69,7 @@ struct MainView: View {
             ContentUnavailableView(
               "Open a recording", systemImage: "doc.text",
               description: Text(
-                "Open a hostd NDJSON file or the example recording. Devices lists attached candidates without starting a scan."
+                "Open a saved recording from Capture, an NDJSON file, or the example recording."
               ))
           } else if filtered.isEmpty {
             ContentUnavailableView.search(text: search)
@@ -78,7 +79,7 @@ struct MainView: View {
         HStack {
           Text("\(filtered.count) of \(observations.count) observations")
           Spacer()
-          Text(model.recordingLabel + " · No live scanning")
+          Text(model.recordingLabel)
         }.font(.caption).foregroundStyle(.secondary).padding(10)
       }
       .navigationTitle("AirHound")
@@ -191,5 +192,22 @@ struct InspectorView: View {
       Text(name).foregroundStyle(.secondary)
       Text(value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
     }.font(.callout)
+  }
+}
+
+struct RecordNavigation: View {
+  @ObservedObject var session: SessionModel
+  var body: some View {
+    if session.browsingRun != nil {
+      HStack {
+        Text("Stored recording").font(.headline)
+        Toggle("Follow new records", isOn: $session.followLive).toggleStyle(.checkbox)
+        Spacer()
+        Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
+          session.loadMoreRecords()
+        }.disabled(session.busy || !session.connected)
+      }.padding(12)
+      Divider()
+    }
   }
 }
