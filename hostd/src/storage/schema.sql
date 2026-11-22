@@ -20,6 +20,11 @@ CREATE TABLE transitions (
     at_us INTEGER NOT NULL CHECK(at_us >= 0),
     reason TEXT NOT NULL
 ) STRICT;
+CREATE TABLE start_requests (
+    request_id TEXT PRIMARY KEY NOT NULL,
+    run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+    request_json TEXT NOT NULL CHECK(json_valid(request_json))
+) STRICT;
 CREATE TABLE sources (
     run_id TEXT NOT NULL REFERENCES runs(id),
     source_id TEXT NOT NULL,

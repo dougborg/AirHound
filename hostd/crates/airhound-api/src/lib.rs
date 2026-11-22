@@ -45,7 +45,7 @@ pub enum Command {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CaptureAction {
-    Start { config: Value },
+    Start { request_id: String, config: Value },
     Pause { run_id: String },
     Resume { run_id: String },
     Finish { run_id: String },

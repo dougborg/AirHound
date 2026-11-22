@@ -15,6 +15,9 @@ use std::{
 pub(crate) enum ClientCommand {
     /// Start a durable session on a service launched with --capture
     Start {
+        /// Stable id for retries of this start request; use a new id for a new run
+        #[arg(long)]
+        request_id: String,
         #[arg(long)]
         session_config: PathBuf,
     },
@@ -113,7 +116,7 @@ impl Backend for LocalBackend {
                 )
             })?;
             let action = match action {
-                CaptureAction::Start { config } => Action::Start(config),
+                CaptureAction::Start { request_id, config } => Action::Start { request_id, config },
                 CaptureAction::Pause { run_id } => Action::Pause(run_id),
                 CaptureAction::Resume { run_id } => Action::Resume(run_id),
                 CaptureAction::Finish { run_id } => Action::Finish(run_id),
@@ -167,6 +170,16 @@ impl Backend for LocalBackend {
 }
 
 pub(crate) async fn serve(path: &Path, database: Option<PathBuf>, capture: bool) -> io::Result<()> {
+    if capture {
+        let path = database
+            .clone()
+            .ok_or_else(|| io::Error::other("capture requires a database"))?;
+        // Recover before advertising capture control; reject a competing writer.
+        // History-only services never create or recover recordings.
+        tokio::task::spawn_blocking(move || airhound_hostd::storage::Store::open(&path).map(drop))
+            .await
+            .map_err(io::Error::other)??;
+    }
     let actor = if capture {
         Some(crate::capture_service::spawn(database.clone().ok_or_else(
             || io::Error::other("capture requires a database"),
@@ -235,9 +248,13 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         .await
         .map_err(io::Error::other)?;
     let result = match command {
-        ClientCommand::Start { session_config } => {
+        ClientCommand::Start {
+            session_config,
+            request_id,
+        } => {
             client
                 .capture(airhound_api::CaptureAction::Start {
+                    request_id,
                     config: read_config(&session_config)?,
                 })
                 .await

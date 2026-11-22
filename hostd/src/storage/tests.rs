@@ -408,3 +408,39 @@ fn run_history_pages_by_bytes_and_cursor_without_skipping() {
         .run_page(Some("00000000000000000000000000000000"), 10)
         .is_err());
 }
+
+#[test]
+fn start_request_identity_commits_atomically_and_survives_restart() {
+    let f = Fixture::new();
+    let request = json!({"version":1,"receivers":[]});
+    let mut store = Store::open(&f.database()).unwrap();
+    let run = store
+        .start_request(
+            RecordingMode::Replay,
+            &json!({}),
+            Some(("retry-key", &request)),
+        )
+        .unwrap();
+    assert!(store
+        .start_request(
+            RecordingMode::Replay,
+            &json!({}),
+            Some(("retry-key", &request))
+        )
+        .is_err());
+    drop(store);
+    let _store = Store::open(&f.database()).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let receipt = reader
+        .start_receipt("retry-key", &request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt["run_id"], run);
+    assert_eq!(receipt["state"], "interrupted");
+    assert_eq!(reader.runs(10).unwrap().len(), 1);
+    assert!(reader
+        .start_receipt("retry-key", &json!({"different":true}))
+        .is_err());
+    assert!(reader.start_receipt("unknown", &request).unwrap().is_none());
+    assert!(reader.start_receipt("", &request).is_err());
+}

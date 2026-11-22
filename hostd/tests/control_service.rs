@@ -215,7 +215,13 @@ fn service_owns_replay_and_commits_before_finish_reply() {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     assert_eq!(client(&["status"])["capture_control"], true);
-    let started = client(&["start", "--session-config", plan.to_str().unwrap()]);
+    let started = client(&[
+        "start",
+        "--request-id",
+        "acceptance-run",
+        "--session-config",
+        plan.to_str().unwrap(),
+    ]);
     let id = started["run_id"].as_str().unwrap();
     // The start client has exited. A new connection finishes the service-owned run.
     let finished = client(&["finish", "--run-id", id]);
@@ -228,6 +234,16 @@ fn service_owns_replay_and_commits_before_finish_reply() {
     assert!(runs[0].record_count > 0);
     assert_eq!(client(&["finish", "--run-id", id])["state"], "finished");
     assert_eq!(client(&["capture-status"])["active"], false);
+    let retried = client(&[
+        "start",
+        "--request-id",
+        "acceptance-run",
+        "--session-config",
+        plan.to_str().unwrap(),
+    ]);
+    assert_eq!(retried["run_id"], id);
+    assert_eq!(retried["reused"], true);
+    assert_eq!(reader.runs(10).unwrap().len(), 1);
     // SAFETY: this is the owned, live child process.
     assert_eq!(
         unsafe { libc::kill(cleanup.0.id() as libc::pid_t, libc::SIGTERM) },
@@ -237,5 +253,32 @@ fn service_owns_replay_and_commits_before_finish_reply() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    assert!(!socket.exists());
+    std::fs::remove_file(&pcap).unwrap();
+    cleanup.0 = Command::new(binary)
+        .args(["serve", "--capture", "--socket"])
+        .arg(&socket)
+        .arg("--database")
+        .arg(&database)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !socket.exists() {
+        assert!(cleanup.0.try_wait().unwrap().is_none());
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let retried = client(&[
+        "start",
+        "--request-id",
+        "acceptance-run",
+        "--session-config",
+        plan.to_str().unwrap(),
+    ]);
+    assert_eq!(retried["run_id"], id);
+    assert_eq!(retried["active"], false);
+    assert_eq!(reader.runs(10).unwrap().len(), 1);
     drop(reader);
 }
