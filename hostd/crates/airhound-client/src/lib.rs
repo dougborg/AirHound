@@ -110,6 +110,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         }
         Ok(client)
     }
+    pub async fn identify_device(&mut self, config: Value) -> Result<Value, ClientError> {
+        self.call(Command::DevicesIdentify { config }).await
+    }
     pub async fn status(&mut self) -> Result<Value, ClientError> {
         self.call(Command::Status {}).await
     }

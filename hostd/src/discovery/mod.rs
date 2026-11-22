@@ -1,5 +1,7 @@
 //! Passive receiver candidates. Enumeration never opens radio or serial transports.
 use serde::Serialize;
+
+pub mod identify;
 use serde_json::{json, Value};
 use std::{
     io,
@@ -42,12 +44,18 @@ pub struct Requirement {
 #[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub kind: &'static str,
+    /// Backend role, not a claim of verified hardware capability.
+    pub role: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support_issue: Option<&'static str>,
     pub label: &'static str,
     pub support: &'static str,
     pub state: &'static str,
     pub evidence: Vec<String>,
     pub requirements: Vec<Requirement>,
     pub capabilities: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identification: Option<identify::Identification>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration_hint: Option<Value>,
 }
@@ -111,6 +119,63 @@ pub async fn discover(options: &Options) -> Inventory {
     assemble(raw, diagnostics, std::env::consts::OS, options)
 }
 
+impl Inventory {
+    /// Attach metadata from the service-owned current run only; never open devices
+    /// or resurrect identity from historical recordings or an earlier inventory.
+    pub fn reuse_active_metadata(&mut self, status: &Value) {
+        if status["active"] != true {
+            return;
+        }
+        let Some(receivers) = status["receiver_health"]["receivers"].as_array() else {
+            return;
+        };
+        for device in &mut self.devices {
+            for candidate in &mut device.candidates {
+                if candidate.kind != "sniffle" {
+                    continue;
+                }
+                let Some((endpoint, _owner)) = device
+                    .endpoints
+                    .iter()
+                    .filter(|endpoint| endpoint.kind == "serial")
+                    .find_map(|endpoint| {
+                        receivers
+                            .iter()
+                            .find(|owner| {
+                                owner["receiver"]["adapter_id"]
+                                    == format!("sniffle:{}", endpoint.path)
+                            })
+                            .map(|owner| (endpoint, owner))
+                    })
+                else {
+                    continue;
+                };
+                let request = identify::Request {
+                    protocol: "sniffle".into(),
+                    device_id: device.id.clone(),
+                    port: endpoint.path.clone(),
+                    python: PathBuf::new(),
+                    helper: PathBuf::new(),
+                    module_path: None,
+                };
+                let identity = identify::Identification::from_active_owner(&request, status);
+                if let (Some(version), Some(api)) =
+                    (&identity.firmware_version, identity.protocol_api)
+                {
+                    if identity.compatible == Some(true) {
+                        candidate.support = "available";
+                    }
+                    candidate.label = "Sniffle BLE receiver";
+                    candidate.evidence.push(format!("Active receiver reported Sniffle {version} / API{api}; board revision is still unknown"));
+                }
+                candidate.state = "in_use";
+                candidate.identification = Some(identity);
+                self.mode = "passive_with_active_metadata";
+            }
+        }
+    }
+}
+
 fn candidate(
     kind: &'static str,
     label: &'static str,
@@ -120,6 +185,22 @@ fn candidate(
 ) -> Candidate {
     Candidate {
         kind,
+        role: match kind {
+            "gps" => "location_source",
+            "flipper" => "controller_or_companion",
+            "serial_unknown" => "unknown",
+            _ => "capture_receiver",
+        },
+        support_issue: match kind {
+            "mt76_wifi" => Some("https://github.com/dougborg/AirHound/issues/235"),
+            "sniffle" => Some("https://github.com/dougborg/AirHound/issues/180"),
+            "external_wifi" => Some("https://github.com/dougborg/AirHound/issues/155"),
+            "gps" => Some("https://github.com/dougborg/AirHound/issues/79"),
+            "flipper" => Some("https://github.com/dougborg/AirHound/issues/181"),
+            "usb_hci" => Some("https://github.com/dougborg/AirHound/issues/176"),
+            "serial_unknown" => Some("https://github.com/dougborg/AirHound/issues/261"),
+            _ => None,
+        },
         label,
         support,
         state,
@@ -146,6 +227,7 @@ fn candidate(
             }
             _ => json!({"scope":"unknown"}),
         },
+        identification: None,
         configuration_hint: None,
     }
 }
@@ -349,7 +431,10 @@ pub fn write_text(inventory: &Inventory, mut out: impl io::Write) -> io::Result<
     for d in &inventory.devices {
         writeln!(out, "{:?}  {:?}", d.id, d.name)?;
         for c in &d.candidates {
-            writeln!(out, "  {}: {} [{}]", c.kind, c.state, c.support)?;
+            writeln!(out, "  {}: {} [{}; {}]", c.kind, c.state, c.support, c.role)?;
+            if let Some(issue) = c.support_issue {
+                writeln!(out, "    support: {issue}")?;
+            }
         }
         for e in &d.endpoints {
             writeln!(out, "  {}: {:?}", e.kind, e.path)?;

@@ -49,6 +49,8 @@ pub struct Receiver {
     pub adapter_id: String,
     pub adapter_info: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub firmware: Option<airhound_hostd::discovery::identify::Firmware>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub controller_address: Option<String>,
     pub selection: &'static str,
     pub availability: &'static str,
@@ -118,6 +120,7 @@ fn descriptor(
         backend: platform,
         adapter_id,
         adapter_info: info,
+        firmware: None,
         controller_address: None,
         selection: if platform == "corebluetooth" {
             "system_managed"

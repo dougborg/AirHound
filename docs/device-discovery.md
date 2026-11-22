@@ -186,7 +186,77 @@ do not run them as a ready-made session.
 - **M5, Flipper, Marauder and Nordic sniffer:** discovery does not add missing live
   ingestion. Follow each component's current integration guide.
 
-Active protocol identification, firmware/version checks and ownership checks
-need a separate explicit probe operation with device-specific behavior. They
-must not be inferred from a successful passive inventory. AirHound does not yet
-provide a general active `devices probe` command.
+## Explicit identification and active-owner metadata
+
+Candidates also expose `role` (`capture_receiver`, `location_source`,
+`controller_or_companion`, or `unknown`) and, where an existing issue is known,
+`support_issue`. A generic UART remains an unknown role. The Flipper candidate
+is a possible controller/companion, not an enabled capture radio.
+
+The service's `devices.list` reuses firmware metadata from an already-owned
+Sniffle receiver. In that case `mode` is `passive_with_active_metadata`, the
+candidate is `in_use`, and `identification` includes the actual firmware/API
+reported by the helper and the owning run/receiver health. It never opens a
+second serial handle. The expected Sniffle version is no longer presented as
+an observed firmware version before the helper answers. Metadata is cleared
+when the helper disconnects, pauses or restarts; an unrelated endpoint or old
+recording is not used to identify a newly discovered device. No identity cache
+is persisted across discovery calls.
+
+For an idle Sniffle candidate, request an explicit query through a service
+launched with `--capture`:
+
+```json
+{
+  "protocol": "sniffle",
+  "device_id": "REPLACE_WITH_CURRENT_INVENTORY_ID",
+  "port": "/dev/cu.REPLACE_WITH_CAPTURE_ENDPOINT",
+  "python": "/absolute/path/to/python",
+  "helper": "/absolute/path/to/scripts/sniffle-source.py",
+  "module_path": "/absolute/path/to/Sniffle/python_cli"
+}
+```
+
+Save that configuration privately and run:
+
+```sh
+airhound-hostd client --socket /absolute/private/control.sock identify --config probe.json
+```
+
+The shared Rust API method is `devices.identify` with this object in `config`.
+Identification requires the new helper's `--identify-only` option. This explicit
+operation opens the selected port and sends Sniffle marker/version queries; it
+does not set a channel, start scanning, flash firmware or test RF reception.
+The endpoint must belong to the currently enumerated Sniffle candidate. Generic
+UARTs are rejected; opening some M5 USB bridges can reset the board even when
+the caller does not intentionally assert DTR/RTS.
+
+The service serializes identification with capture start and other identity
+requests. During capture it returns existing owner metadata, or `busy`, without
+opening any device. Other applications must release the port before an idle
+query. This does not provide exclusive ownership coordination with arbitrary
+third-party processes.
+
+Responses distinguish `identified`, `incompatible`, `in_use`, `busy`,
+`unavailable`, `timed_out`, `permission_denied`, and `failed`. A failed helper
+does not establish which of ownership, protocol or dependency setup failed;
+the response says so. The firmware version and API are actual query results;
+`compatible` means the pinned Sniffle 1.11.0/API0 contract, and `reception` remains
+`not_tested`. `observed_at_ms` timestamps this host result/snapshot, not firmware
+build time. Output is capped at 4 KiB and the helper at eight seconds; registry
+enumeration has its own five-second bound. Helper and Python paths are explicitly
+trusted executable configuration, never chosen from USB descriptor strings.
+
+Firmware identity for M5, Flipper/Marauder and GNSS, saved configuration profiles,
+and native identification controls remain follow-ups in
+[#261](https://github.com/dougborg/AirHound/issues/261). This first operation must
+not be advertised as a general serial probe or as verification of all protocols.
+
+Live acceptance on 2026-11-22 used the attached CatSniffer in an isolated service.
+An idle identity query reported Sniffle 1.11.0/API0; a subsequent capture exposed
+that actual identity through discovery. Identifying during capture reused the
+same owner/run. After finishing, a fresh inventory contained no historical
+firmware identity. This validates the identity path, not board revision,
+extended/Coded-PHY reception or endurance. Synthetic tests cover incompatible
+versions, malformed/oversized output, timeout, endpoint mismatch, generic-UART
+rejection, and stale-owner exclusion.

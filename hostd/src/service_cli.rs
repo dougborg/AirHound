@@ -62,6 +62,11 @@ pub(crate) enum ClientCommand {
         #[arg(long)]
         all: bool,
     },
+    /// Explicitly query Sniffle firmware; may open the selected protocol endpoint
+    Identify {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Validate JSON configuration on the backend without opening receivers
     Validate {
         #[arg(long)]
@@ -154,14 +159,43 @@ impl Backend for LocalBackend {
                 .map_err(io::Error::other)
         })
     }
-    fn devices(&self, all: bool) -> BackendResult {
+    fn identify_device(&self, config: Value) -> BackendResult {
+        let capture = self.capture.clone();
         Box::pin(async move {
-            let inventory =
+            let request = serde_json::from_value(config)
+                .map_err(|error| ApiError::new(ErrorCode::InvalidRequest, error.to_string()))?;
+            let capture = capture.ok_or_else(|| ApiError::new(ErrorCode::UnsupportedMethod, "identification requires a capture-capable service to coordinate device ownership"))?;
+            capture
+                .request(crate::capture_service::Action::Identify(request))
+                .await
+                .map_err(|error| ApiError::new(ErrorCode::Internal, error.to_string()))
+        })
+    }
+    fn devices(&self, all: bool) -> BackendResult {
+        let capture = self.capture.clone();
+        Box::pin(async move {
+            let mut inventory =
                 airhound_hostd::discovery::discover(&airhound_hostd::discovery::Options {
                     all,
                     ..Default::default()
                 })
                 .await;
+            if let Some(capture) = capture {
+                match capture
+                    .request(crate::capture_service::Action::Status)
+                    .await
+                {
+                    Ok(status) => inventory.reuse_active_metadata(&status),
+                    Err(error) => {
+                        inventory
+                            .diagnostics
+                            .push(airhound_hostd::discovery::Diagnostic {
+                                backend: "active_receiver_metadata".into(),
+                                message: error.to_string(),
+                            })
+                    }
+                }
+            }
             serde_json::to_value(inventory)
                 .map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))
         })
@@ -292,6 +326,7 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
             limit,
         } => client.recording_records(run_id, after, limit).await,
         ClientCommand::Devices { all } => client.devices(all).await,
+        ClientCommand::Identify { config } => client.identify_device(read_config(&config)?).await,
         ClientCommand::Validate { session_config } => {
             client.validate(read_config(&session_config)?).await
         }

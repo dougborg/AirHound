@@ -1,4 +1,5 @@
-//! Passive local control service. It does not construct scanners or own capture.
+//! Framed local control service. Backend operations own capture and identification;
+//! this transport does not construct scanners or open device endpoints.
 use airhound_api::{
     ApiError, Command, ErrorCode, Hello, Request, Response, MAX_CONFIG_BYTES, MAX_FRAME_BYTES,
     METHODS, VERSION,
@@ -42,6 +43,14 @@ pub trait Backend: Send + Sync + 'static {
             Err(ApiError::new(
                 ErrorCode::UnsupportedMethod,
                 "capture control is not enabled",
+            ))
+        })
+    }
+    fn identify_device(&self, _config: Value) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "device identification requires a capture-capable service",
             ))
         })
     }
@@ -269,6 +278,17 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 bounded(backend.export_recordings(destination)).await
             }
             Command::DevicesList { all } => bounded(backend.devices(all)).await,
+            Command::DevicesIdentify { config } => {
+                if serde_json::to_vec(&config).map_or(true, |bytes| bytes.len() > MAX_CONFIG_BYTES)
+                {
+                    Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "identification config exceeds 64 KiB",
+                    ))
+                } else {
+                    bounded(backend.identify_device(config)).await
+                }
+            }
             Command::RecordingsList { before, limit } => {
                 bounded(backend.recordings(before, limit)).await
             }

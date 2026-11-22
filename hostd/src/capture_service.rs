@@ -17,6 +17,7 @@ pub(crate) enum Action {
     Resume(String),
     Finish(String),
     Status,
+    Identify(airhound_hostd::discovery::identify::Request),
     Shutdown,
 }
 struct Request {
@@ -94,6 +95,19 @@ fn spawn_with_active(
                         }
                     }
                 }
+                Action::Identify(config) => {
+                    // Actor serialization prevents a capture start or another probe racing
+                    // endpoint ownership. An active run is never interrupted to identify it.
+                    if request.reply.is_closed() {
+                        continue;
+                    }
+                    let result = if let Some(run) = active.as_ref() {
+                        run.identify(&config).await
+                    } else {
+                        airhound_hostd::discovery::identify::query(&config).await
+                    };
+                    serde_json::to_value(result).map_err(io::Error::other)
+                }
                 Action::Status => Ok(active
                     .as_ref()
                     .map(Active::status)
@@ -156,6 +170,18 @@ struct Active {
     task: JoinHandle<io::Result<()>>,
 }
 impl Active {
+    async fn identify(
+        &self,
+        request: &airhound_hostd::discovery::identify::Request,
+    ) -> airhound_hostd::discovery::identify::Identification {
+        use airhound_hostd::discovery::{self, identify::Identification};
+        let inventory = discovery::discover(&discovery::Options::default()).await;
+        if let Err(error) = request.validate(&inventory) {
+            return Identification::new(request, "unavailable", error.to_string());
+        }
+        Identification::from_active_owner(request, &self.status())
+    }
+
     fn status(&self) -> Value {
         json!({"active":true,"run_id":self.id,"state":if self.control.load(Ordering::Relaxed) { "recording" } else { "paused" },"receiver_health":self.control.health_message()})
     }

@@ -10,6 +10,7 @@ pub const METHODS: &[&str] = &[
     "hello",
     "status",
     "devices.list",
+    "devices.identify",
     "session.validate",
     "recordings.list",
     "recordings.records",
@@ -33,6 +34,8 @@ pub enum Command {
         #[serde(default)]
         all: bool,
     },
+    #[serde(rename = "devices.identify")]
+    DevicesIdentify { config: Value },
     #[serde(rename = "session.validate")]
     SessionValidate { config: Value },
     #[serde(rename = "recordings.list")]
@@ -150,6 +153,7 @@ mod tests {
             Command::Hello {},
             Command::Status {},
             Command::DevicesList { all: true },
+            Command::DevicesIdentify { config: serde_json::json!({"device_id":"fixture"}) },
             Command::SessionValidate {
                 config: serde_json::json!({"version":1}),
             },

@@ -105,6 +105,40 @@ async fn consume<R: AsyncRead + Unpin>(
     }
 }
 
+// Drain bounded lines concurrently so diagnostics cannot block the PCAP stream.
+// Only the strict identity message changes metadata; all other stderr is diagnostic.
+async fn read_identity(mut input: impl AsyncRead + Unpin, control: ScanControl) {
+    use tokio::io::AsyncReadExt;
+    let mut chunk = [0u8; 1024];
+    let mut line = Vec::new();
+    let mut oversized = false;
+    while let Ok(count) = input.read(&mut chunk).await {
+        if count == 0 {
+            break;
+        }
+        for byte in &chunk[..count] {
+            if *byte == b'\n' {
+                if !oversized {
+                    if let Ok(firmware) =
+                        airhound_hostd::discovery::identify::Firmware::parse(&line)
+                    {
+                        control.set_receiver_firmware(Some(firmware));
+                    } else if !line.is_empty() {
+                        log::debug!("Sniffle helper: {:?}", String::from_utf8_lossy(&line));
+                    }
+                }
+                line.clear();
+                oversized = false;
+            } else if line.len() < 4096 && !oversized {
+                line.push(*byte);
+            } else {
+                oversized = true;
+                line.clear();
+            }
+        }
+    }
+}
+
 pub async fn scan(
     source: Source,
     tx: mpsc::Sender<ScanEvent>,
@@ -127,7 +161,9 @@ pub async fn scan(
         } => (
             "sniffle",
             format!("sniffle:{port}"),
-            format!("Sniffle 1.11.0/API0, channel {channel}, coded={coded}"),
+            format!(
+                "Sniffle source, channel {channel}, coded={coded}; firmware not yet identified"
+            ),
             "passive_fixed_channel",
         ),
     };
@@ -135,6 +171,7 @@ pub async fn scan(
         backend,
         adapter_id: id,
         adapter_info: info,
+        firmware: None,
         controller_address: None,
         selection: "explicit",
         availability: "initializing",
@@ -207,6 +244,8 @@ pub async fn scan(
                     return Ok(());
                 }
                 stats.generation += 1;
+                control.set_receiver_firmware(None);
+                control.set_receiver_availability("initializing");
                 control.set_health(Scanner::Ble, Phase::Initializing, "sniffle_starting");
                 let mut command = Command::new(&python);
                 command
@@ -217,7 +256,7 @@ pub async fn scan(
                     .arg(channel.to_string())
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
+                    .stderr(Stdio::piped())
                     .kill_on_drop(true);
                 if let Some(path) = &module_path {
                     command.arg("--module-path").arg(path);
@@ -226,6 +265,10 @@ pub async fn scan(
                     command.arg("--coded");
                 }
                 let mut child = command.spawn()?;
+                let identity_control = control.clone();
+                let stderr = child.stderr.take().expect("piped stderr");
+                let identity =
+                    tokio::spawn(async move { read_identity(stderr, identity_control).await });
                 let before = stats.packets;
                 let result = consume(
                     child.stdout.take().expect("piped stdout"),
@@ -239,14 +282,18 @@ pub async fn scan(
                 // Reap on EOF, pause, shutdown, malformed input, and output closure.
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                identity.abort();
+                let _ = identity.await;
                 if state.borrow().shutdown || tx.is_closed() {
                     control.set_health(Scanner::Ble, Phase::Stopped, "sniffle_source_stopped");
+                    control.set_receiver_firmware(None);
                     control.set_receiver_availability("stopped");
                     let _ = tx.send(status(&stats, "stopped")).await;
                     return Ok(());
                 }
                 if !state.borrow().enabled {
                     control.set_health(Scanner::Ble, Phase::Paused, "sniffle_ingestion_paused");
+                    control.set_receiver_firmware(None);
                     control.set_receiver_availability("paused");
                     let _ = tx.send(status(&stats, "paused")).await;
                     continue;
@@ -256,6 +303,8 @@ pub async fn scan(
                 }
                 consecutive += 1;
                 stats.reconnects += 1;
+                control.set_receiver_firmware(None);
+                control.set_receiver_availability("unavailable");
                 control.set_health(Scanner::Ble, Phase::Unavailable, "sniffle_disconnected");
                 let _ = tx.send(status(&stats, "reconnecting")).await;
                 if consecutive >= 3 {
@@ -275,6 +324,43 @@ mod tests {
     use super::*;
     use crate::ble_packet::tests::{frame, pcap};
     use tokio::io::AsyncWriteExt;
+    #[tokio::test]
+    async fn firmware_identity_uses_bounded_valid_messages_and_clears_on_generation_change() {
+        let c = ScanControl::new(true);
+        c.set_receiver(crate::receiver::Receiver {
+            backend: "sniffle",
+            adapter_id: "sniffle:/dev/test".into(),
+            adapter_info: "unidentified".into(),
+            firmware: None,
+            controller_address: None,
+            selection: "explicit",
+            availability: "initializing",
+            scan_configuration: "passive_fixed_channel",
+            extended_advertising: Default::default(),
+            coded_rx: Default::default(),
+            controller_phy: None,
+            capability_query: "raw_packet_metadata_only",
+        });
+        assert!(c.health_message()["receiver"].get("firmware").is_none());
+        let mut bytes = vec![b'x'; 5000];
+        bytes.push(b'\n');
+        bytes.extend_from_slice(b"not identity\n{}\n");
+        bytes.extend_from_slice(br#"{"type":"sniffle_identity","schema_version":1,"major":1,"minor":11,"patch":0,"api_level":0}"#);
+        bytes.push(b'\n');
+        read_identity(bytes.as_slice(), c.clone()).await;
+        let receiver = &c.health_message()["receiver"];
+        assert_eq!(receiver["firmware"]["minor"], 11);
+        assert!(receiver["adapter_info"]
+            .as_str()
+            .unwrap()
+            .contains("reported by firmware"));
+        c.set_receiver_firmware(None);
+        assert!(c.health_message()["receiver"].get("firmware").is_none());
+        assert!(!c.health_message()["receiver"]["adapter_info"]
+            .as_str()
+            .unwrap()
+            .contains("1.11.0"));
+    }
     #[tokio::test]
     async fn stream_pressure_is_counted_but_replay_is_lossless() {
         let bytes = pcap(&vec![frame(0, &[]); 5]);
@@ -448,7 +534,12 @@ mod tests {
             channel: 39,
             coded: true,
         };
-        assert!(scan(source, tx, c).await.is_err());
+        assert!(scan(source, tx, c.clone()).await.is_err());
+        assert!(c.health_message()["receiver"].get("firmware").is_none());
+        assert!(!c.health_message()["receiver"]["adapter_info"]
+            .as_str()
+            .unwrap()
+            .contains("1.11.0"));
         let messages: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         assert_eq!(messages.len(), 3);
     }

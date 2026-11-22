@@ -6,6 +6,7 @@ Writes classic DLT256 PCAP to stdout; diagnostics only to stderr. Never flashes,
 selects an arbitrary serial port, actively scans, or follows connections.
 """
 import argparse
+import json
 import logging
 import signal
 import sys
@@ -18,6 +19,8 @@ def main():
     parser.add_argument('--module-path', help='Directory containing upstream sniffle package')
     parser.add_argument('--channel', type=int, choices=(37, 38, 39), default=37)
     parser.add_argument('--coded', action='store_true')
+    parser.add_argument('--identify-only', action='store_true',
+                        help='Query firmware/API and exit without configuring or starting capture')
     args = parser.parse_args()
     if args.module_path:
         sys.path.insert(0, args.module_path)
@@ -52,6 +55,14 @@ def main():
         time.sleep(0.7)
         hw.cmd_marker(b'airhound')
         version = hw.probe_fw_version()
+        if version is not None:
+            identity = {'type': 'sniffle_identity', 'schema_version': 1,
+                        'major': version.major, 'minor': version.minor,
+                        'patch': version.revision, 'api_level': version.api_level}
+            print(json.dumps(identity), file=sys.stdout if args.identify_only else sys.stderr,
+                  flush=True)
+            if args.identify_only:
+                return
         if version is None or (version.major, version.minor, version.revision, version.api_level) != (1, 11, 0, 0):
             raise RuntimeError('requires verified Sniffle firmware 1.11.0 / API0')
         print('Sniffle 1.11.0/API0: passive advertisements, fixed channel', args.channel,
