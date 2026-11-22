@@ -38,10 +38,19 @@ async fn consume(
     if !wait_running(&mut state, tx).await {
         return Ok((false, 0));
     }
+    // Reject a selected device/FIFO/symlink before open: a UART open alone can
+    // reset a board. Validate the opened descriptor again against replacements.
+    let selected = tokio::fs::symlink_metadata(&path).await?;
+    if !selected.is_file() || selected.len() > marauder::MAX_CAPTURE_BYTES as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Choose a regular nonsymlink saved Marauder capture",
+        ));
+    }
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NONBLOCK);
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     let file = options.open(path).await?;
     let metadata = file.metadata().await?;
     if !metadata.is_file() || metadata.len() > marauder::MAX_CAPTURE_BYTES as u64 {
@@ -301,7 +310,11 @@ pub(crate) mod tests {
         let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
         let _f = Fixture(path.clone());
-        for path in [path, PathBuf::from("/dev/null")] {
+        let saved = Fixture::new(&fixture_bytes());
+        let link = saved.0.with_extension("link");
+        std::os::unix::fs::symlink(&saved.0, &link).unwrap();
+        let _link = Fixture(link.clone());
+        for path in [path, link, PathBuf::from("/dev/null")] {
             let (tx, _rx) = mpsc::channel(8);
             assert!(tokio::time::timeout(
                 std::time::Duration::from_secs(2),
