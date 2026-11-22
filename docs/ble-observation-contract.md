@@ -137,3 +137,23 @@ loading and signature schema migration remain follow-up work. The existing
 
 Reference for AD field boundaries:
 [Bluetooth Supplement, Data Types](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/CSS_v11/out/en/supplement-to-the-bluetooth-core-specification/data-types-specification.html).
+
+## Retained manufacturer records
+
+Firmware and raw-packet matching evaluate every complete manufacturer AD section
+in the retained advertisement, including valid company ID zero. Repeated records
+supply one primitive evidence ID, and section ordering does not select a winner.
+The compiler accepts a company-zero predicate; no new default signature is enabled
+by this capability.
+
+Raw AD is authoritative when present. A legacy nonzero scalar manufacturer ID is
+used only when raw AD is absent; it cannot rescue malformed framing or a record
+outside the retained buffer. `BleEvent::manufacturer_data()` exposes borrowed
+records without enlarging the queued event. The existing wire `mfr` scalar remains
+a legacy selected value and cannot distinguish absent from company zero; consumers
+must not treat it as the complete record set. Explicit completeness/address-type
+metadata and richer firmware output remain tracked in #35/#36.
+
+The 62-byte raw buffer is unchanged. These views do not imply extended-advertisement
+support or recover omitted records. Desktop snapshots retain their possibly-cached
+basis and still cannot establish composite same-packet evidence.

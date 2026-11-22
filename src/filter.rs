@@ -72,6 +72,20 @@ pub struct BleScanInput<'a> {
     pub raw_ad: &'a [u8],
 }
 
+impl BleScanInput<'_> {
+    /// Company IDs from complete retained AD fields, including valid ID zero.
+    /// Raw AD is authoritative when present; the legacy scalar is a fallback
+    /// only for callers without raw fields and cannot represent company zero.
+    pub fn manufacturer_ids(&self) -> impl Iterator<Item = u16> + '_ {
+        crate::ble_data::AdStructures::new(self.raw_ad)
+            .filter_map(|field| field.manufacturer().map(|record| record.company_id))
+            .chain(
+                (self.raw_ad.is_empty() && self.manufacturer_id != 0)
+                    .then_some(self.manufacturer_id),
+            )
+    }
+}
+
 /// Result of filter evaluation
 pub struct FilterResult {
     pub evidence: Vec<RuleEvidence, 4>,
@@ -316,16 +330,16 @@ pub fn filter_ble(
         }
     }
 
-    // BLE manufacturer ID check
-    if input.manufacturer_id != 0 {
-        for (i, &known) in BLE_MANUFACTURER_IDS.iter().enumerate() {
-            if input.manufacturer_id == known {
-                result
-                    .sig_matches
-                    .set(defaults::SIG_IDX_BLE_MFR_START + i as u16);
-                result.add_match("ble_mfr", "Known manufacturer ID");
-                break;
-            }
+    // Evaluate every complete manufacturer section, independent of AD order.
+    for (i, &known) in BLE_MANUFACTURER_IDS.iter().enumerate() {
+        if input
+            .manufacturer_ids()
+            .any(|company_id| company_id == known)
+        {
+            result
+                .sig_matches
+                .set(defaults::SIG_IDX_BLE_MFR_START + i as u16);
+            result.add_match("ble_mfr", "Known manufacturer ID");
         }
     }
 
@@ -563,6 +577,114 @@ mod tests {
 
     fn test_mac_index() -> MacIndex {
         MacIndex::from_defaults()
+    }
+
+    #[test]
+    fn raw_manufacturers_match_independent_of_order_without_duplicate_evidence() {
+        for raw in [
+            &[3, 0xff, 0xc8, 9, 3, 0xff, 0, 0][..],
+            &[3, 0xff, 0, 0, 3, 0xff, 0xc8, 9][..],
+            &[3, 0xff, 0xc8, 9, 3, 0xff, 0xc8, 9][..],
+        ] {
+            let event = crate::scanner::BleAdvParser::parse(&[0; 6], -40, raw);
+            let input = BleScanInput {
+                mac: &event.mac,
+                address_type: BleAddressType::Unknown,
+                name: &event.name,
+                rssi: event.rssi,
+                service_uuids_16: &event.service_uuids_16,
+                manufacturer_id: event.manufacturer_id,
+                raw_ad: &event.raw_ad,
+            };
+            let raw_result = filter_ble(&input, &default_config(), &test_mac_index());
+            assert!(raw_result.sig_matches.get(defaults::SIG_IDX_BLE_MFR_START));
+            assert_eq!(
+                raw_result
+                    .matches
+                    .iter()
+                    .filter(|m| m.filter_type == "ble_mfr")
+                    .count(),
+                1
+            );
+            let records: std::vec::Vec<_> = event.manufacturer_data().collect();
+            let normalized = crate::ble_data::Advertisement {
+                service_uuids: &[],
+                manufacturer_data: &records,
+                service_data: &[],
+            };
+            let desktop =
+                filter_ble_snapshot(&input, &normalized, &default_config(), &test_mac_index());
+            for index in 0..crate::rules::MAX_SIGNATURES as u16 {
+                assert_eq!(
+                    raw_result.sig_matches.get(index),
+                    desktop.sig_matches.get(index)
+                );
+            }
+            assert_eq!(desktop.basis, "possibly_cached");
+            assert!(desktop.evidence.is_empty());
+        }
+    }
+
+    #[test]
+    fn raw_company_zero_is_present_but_missing_or_malformed_fields_are_not() {
+        let mut input = BleScanInput {
+            mac: &[0; 6],
+            address_type: BleAddressType::Unknown,
+            name: "",
+            rssi: -40,
+            service_uuids_16: &[],
+            manufacturer_id: 0,
+            raw_ad: &[3, 0xff, 0, 0],
+        };
+        assert_eq!(input.manufacturer_ids().collect::<std::vec::Vec<_>>(), [0]);
+        for raw in [
+            &[][..],
+            &[2, 0xff, 0][..],
+            &[4, 0xff, 0, 0][..],
+            &[3, 9, 0, 0][..],
+        ] {
+            input.raw_ad = raw;
+            assert!(input.manufacturer_ids().next().is_none());
+        }
+        // A scalar cannot rescue a malformed or unrelated raw section.
+        input.manufacturer_id = 0x09c8;
+        for raw in [
+            &[2, 0xff, 0xc8][..],
+            &[3, 9, 0xc8, 9][..],
+            &[3, 0xff, 0, 0][..],
+        ] {
+            input.raw_ad = raw;
+            assert!(!filter_ble(&input, &default_config(), &test_mac_index())
+                .sig_matches
+                .get(defaults::SIG_IDX_BLE_MFR_START));
+        }
+        // Legacy callers without raw AD still retain their nonzero scalar match.
+        input.raw_ad = &[];
+        assert!(filter_ble(&input, &default_config(), &test_mac_index())
+            .sig_matches
+            .get(defaults::SIG_IDX_BLE_MFR_START));
+    }
+
+    #[test]
+    fn unretained_manufacturer_cannot_supply_signature_evidence() {
+        let mut raw = std::vec![61, 0x09];
+        raw.resize(62, b'x');
+        raw.extend_from_slice(&[3, 0xff, 0xc8, 9]);
+        let event = crate::scanner::BleAdvParser::parse(&[0; 6], -40, &raw);
+        assert_eq!(event.raw_ad.len(), 62);
+        let input = BleScanInput {
+            mac: &event.mac,
+            address_type: BleAddressType::Unknown,
+            name: &event.name,
+            rssi: event.rssi,
+            service_uuids_16: &event.service_uuids_16,
+            manufacturer_id: event.manufacturer_id,
+            raw_ad: &event.raw_ad,
+        };
+        assert!(event.manufacturer_data().next().is_none());
+        assert!(!filter_ble(&input, &default_config(), &test_mac_index())
+            .sig_matches
+            .get(defaults::SIG_IDX_BLE_MFR_START));
     }
 
     #[test]
