@@ -9,6 +9,7 @@ pub mod session;
 pub mod build_info;
 pub mod discovery;
 pub mod profiles;
+pub mod serial_lease;
 pub mod service;
 
 pub mod device_stream;
