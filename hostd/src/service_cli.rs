@@ -13,6 +13,11 @@ use std::{
 
 #[derive(clap::Subcommand)]
 pub(crate) enum ClientCommand {
+    /// Save or reuse backend-owned session setup without opening receivers
+    Profiles {
+        #[command(subcommand)]
+        action: ProfileCommand,
+    },
     /// Export a consistent standalone SQLite snapshot on the backend host
     Export {
         #[arg(long)]
@@ -74,10 +79,34 @@ pub(crate) enum ClientCommand {
     },
 }
 
+#[derive(clap::Subcommand)]
+pub(crate) enum ProfileCommand {
+    List,
+    Save {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        session_config: PathBuf,
+        #[arg(long)]
+        replace: bool,
+    },
+    Load {
+        #[arg(long)]
+        id: String,
+    },
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+}
+
 #[derive(Default)]
 struct LocalBackend {
     database: Option<PathBuf>,
     capture: Option<crate::capture_service::Handle>,
+    profiles: Option<PathBuf>,
 }
 impl LocalBackend {
     fn history(
@@ -111,6 +140,98 @@ impl LocalBackend {
     }
 }
 impl Backend for LocalBackend {
+    fn profiles(&self, command: airhound_api::Command) -> BackendResult {
+        let directory = self.profiles.clone();
+        Box::pin(async move {
+            use airhound_api::Command;
+            use airhound_hostd::{discovery, profiles};
+            let directory = directory.ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedMethod,
+                    "saved profiles are not configured",
+                )
+            })?;
+            let error = |e: io::Error| {
+                let mut result = ApiError::new(ErrorCode::InvalidRequest, e.to_string());
+                result.retryable = e.kind() == io::ErrorKind::WouldBlock;
+                result
+            };
+            match command {
+                Command::ProfilesSave {
+                    id,
+                    name,
+                    config,
+                    replace,
+                } => {
+                    // Canonical preflight inspects file metadata without invoking
+                    // helper programs or opening serial/radio transports.
+                    let plan = airhound_hostd::session::SessionConfig::from_json(config.clone())
+                        .map_err(error)?;
+                    let validation = crate::session_runtime::preview(plan).await.map_err(error)?;
+                    let resources = profiles::check_resources(&config);
+                    if resources["valid"] != true {
+                        return Err(ApiError::new(
+                            ErrorCode::InvalidSession,
+                            format!("profile resources need attention: {resources}"),
+                        ));
+                    }
+                    let inventory = discovery::discover(&Default::default()).await;
+                    let profile = tokio::task::spawn_blocking(move || {
+                        profiles::Store::open(&directory)?
+                            .save(id, name, config, &inventory, replace)
+                    })
+                    .await
+                    .map_err(|_| ApiError::new(ErrorCode::Internal, "profile task failed"))?
+                    .map_err(error)?;
+                    Ok(
+                        serde_json::json!({"schema_version":1,"profile":profile,"validation":validation,"resources":resources,"reception":"not_tested"}),
+                    )
+                }
+                Command::ProfilesLoad { id } => {
+                    let profile = tokio::task::spawn_blocking(move || {
+                        profiles::Store::open(&directory)?.load(&id)
+                    })
+                    .await
+                    .map_err(|_| ApiError::new(ErrorCode::Internal, "profile task failed"))?
+                    .map_err(error)?;
+                    let plan =
+                        airhound_hostd::session::SessionConfig::from_json(profile.config.clone())
+                            .map_err(error)?;
+                    // Missing local resources are a useful load result, not a reason
+                    // to hide the stored plan that the user needs to repair.
+                    let validation = match crate::session_runtime::preview(plan).await {
+                        Ok(result) => result,
+                        Err(error) => {
+                            serde_json::json!({"valid":false,"readiness":"unverified","error":error.to_string()})
+                        }
+                    };
+                    let inventory = discovery::discover(&Default::default()).await;
+                    let bindings = profiles::check_bindings(&profile, &inventory);
+                    let resources = profiles::check_resources(&profile.config);
+                    Ok(
+                        serde_json::json!({"schema_version":1,"profile":profile,"validation":validation,"resources":resources,"bindings":bindings,"inventory_diagnostics":inventory.diagnostics,"reception":"not_tested","applied":false}),
+                    )
+                }
+                Command::ProfilesList {} | Command::ProfilesDelete { .. } => {
+                    tokio::task::spawn_blocking(move || {
+                        let store = profiles::Store::open(&directory)?;
+                        match command {
+                            Command::ProfilesList {} => store.list(),
+                            Command::ProfilesDelete { id } => store.delete(&id),
+                            _ => unreachable!(),
+                        }
+                    })
+                    .await
+                    .map_err(|_| ApiError::new(ErrorCode::Internal, "profile task failed"))?
+                    .map_err(error)
+                }
+                _ => Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "not a profile command",
+                )),
+            }
+        })
+    }
     fn export_recordings(&self, destination: String) -> BackendResult {
         self.history(move |reader| reader.export(Path::new(&destination)))
     }
@@ -235,6 +356,11 @@ pub(crate) async fn serve(path: &Path, database: Option<PathBuf>, capture: bool)
         Arc::new(LocalBackend {
             database,
             capture: handle,
+            profiles: Some(
+                path.parent()
+                    .ok_or_else(|| io::Error::other("service socket needs a parent"))?
+                    .join("profiles"),
+            ),
         }),
         async {
             use tokio::signal::unix::{signal, SignalKind};
@@ -290,6 +416,21 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         .await
         .map_err(io::Error::other)?;
     let result = match command {
+        ClientCommand::Profiles { action } => match action {
+            ProfileCommand::List => client.list_profiles().await,
+            ProfileCommand::Save {
+                id,
+                name,
+                session_config,
+                replace,
+            } => {
+                client
+                    .save_profile(id, name, read_config(&session_config)?, replace)
+                    .await
+            }
+            ProfileCommand::Load { id } => client.load_profile(id).await,
+            ProfileCommand::Delete { id } => client.delete_profile(id).await,
+        },
         ClientCommand::Export { output } => client.export_recordings(output).await,
         ClientCommand::Start {
             session_config,

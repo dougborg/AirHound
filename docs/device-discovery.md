@@ -1,7 +1,12 @@
 # Discover attached devices
 
 AirHound can inventory candidate receivers and location devices before starting a
-session. Run from a source build:
+session.
+
+Use [saved receiver setups](device-profiles.md) to retain complete helper and
+endpoint settings on the backend and recheck them before another run.
+
+Run from a source build:
 
 ```sh
 hostd/target/release/airhound-hostd devices list

@@ -113,6 +113,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     pub async fn identify_device(&mut self, config: Value) -> Result<Value, ClientError> {
         self.call(Command::DevicesIdentify { config }).await
     }
+    pub async fn list_profiles(&mut self) -> Result<Value, ClientError> {
+        self.call(Command::ProfilesList {}).await
+    }
+    pub async fn save_profile(
+        &mut self,
+        id: String,
+        name: String,
+        config: Value,
+        replace: bool,
+    ) -> Result<Value, ClientError> {
+        self.call(Command::ProfilesSave {
+            id,
+            name,
+            config,
+            replace,
+        })
+        .await
+    }
+    pub async fn load_profile(&mut self, id: String) -> Result<Value, ClientError> {
+        self.call(Command::ProfilesLoad { id }).await
+    }
+    pub async fn delete_profile(&mut self, id: String) -> Result<Value, ClientError> {
+        self.call(Command::ProfilesDelete { id }).await
+    }
     pub async fn status(&mut self) -> Result<Value, ClientError> {
         self.call(Command::Status {}).await
     }

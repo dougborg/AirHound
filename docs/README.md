@@ -42,6 +42,7 @@ are labeled separately.
 ## Hardware setup and validation
 
 - [Discover attached receivers and location devices](device-discovery.md)
+- [Save and revalidate receiver setups](device-profiles.md)
 
 - [Flipper Zero and AWOK Marauder setup, firmware and test status](flipper-marauder.md)
 

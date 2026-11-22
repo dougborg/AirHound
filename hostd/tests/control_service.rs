@@ -87,6 +87,9 @@ mod passive_cli {
         assert_eq!(first["instance_id"], second["instance_id"]);
         assert_eq!(first["mode"], "passive_control");
         assert_eq!(first["capture_control"], false);
+        assert_eq!(first["build"]["component"], "airhound-hostd");
+        assert_eq!(first["build"]["control_protocol"], 1);
+        assert!(first["build"]["display_version"].is_string());
         let history = client(&["recordings", "--limit", "1"]);
         assert!(
             history.status.success(),
@@ -143,6 +146,51 @@ mod passive_cli {
         let preview: Value = serde_json::from_slice(&valid.stdout).unwrap();
         assert_eq!(preview["valid"], true);
         assert_eq!(preview["readiness"], "unverified");
+        let saved = client(&[
+            "profiles",
+            "save",
+            "--id",
+            "fixture",
+            "--name",
+            "My setup",
+            "--session-config",
+            "plan.json",
+        ]);
+        assert!(
+            saved.status.success(),
+            "{}",
+            String::from_utf8_lossy(&saved.stderr)
+        );
+        let saved: Value = serde_json::from_slice(&saved.stdout).unwrap();
+        assert_eq!(saved["reception"], "not_tested");
+        assert!(!client(&[
+            "profiles",
+            "save",
+            "--id",
+            "fixture",
+            "--name",
+            "Overwrite",
+            "--session-config",
+            "plan.json"
+        ])
+        .status
+        .success());
+        let listed: Value = serde_json::from_slice(&client(&["profiles", "list"]).stdout).unwrap();
+        assert_eq!(listed["profiles"][0]["name"], "My setup");
+        let loaded: Value =
+            serde_json::from_slice(&client(&["profiles", "load", "--id", "fixture"]).stdout)
+                .unwrap();
+        assert_eq!(loaded["applied"], false);
+        assert_eq!(loaded["profile"]["config"], saved["profile"]["config"]);
+        assert_eq!(loaded["resources"]["valid"], true);
+        assert_eq!(loaded["bindings"]["automatic_rebinding"], false);
+        assert_eq!(loaded["validation"]["readiness"], "unverified");
+        assert!(client(&["profiles", "delete", "--id", "fixture"])
+            .status
+            .success());
+        assert!(!client(&["profiles", "load", "--id", "fixture"])
+            .status
+            .success());
         std::fs::write(
             service.root.join("plan.json"),
             b"{\"version\":99,\"receivers\":[]}",

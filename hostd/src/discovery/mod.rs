@@ -198,6 +198,7 @@ fn candidate(
             "gps" => Some("https://github.com/dougborg/AirHound/issues/79"),
             "flipper" => Some("https://github.com/dougborg/AirHound/issues/181"),
             "usb_hci" => Some("https://github.com/dougborg/AirHound/issues/176"),
+            "nrf_sniffer" => Some("https://github.com/dougborg/AirHound/issues/188"),
             "serial_unknown" => Some("https://github.com/dougborg/AirHound/issues/261"),
             _ => None,
         },
