@@ -31,11 +31,17 @@ public struct PendingStartStore {
       PendingStart.self, from: LocalFiles.read(file, limit: 128 * 1024))
   }
   public func prepare(socket: URL, config: Data) throws -> PendingStart {
+    try withLock { try prepareLocked(socket: socket, config: config) }
+  }
+  private func prepareLocked(socket: URL, config: Data) throws -> PendingStart {
     guard config.count <= 65536 else {
       throw ModelError.invalid("Session plans must be at most 64 KiB.")
     }
     try LocalFiles.privateDirectory(directory)
-    if let prior = try load() { return try matching(prior, socket: socket, config: config) }
+    if let prior = try load() {
+      try syncDirectory()
+      return try matching(prior, socket: socket, config: config)
+    }
     let pending = PendingStart(requestID: UUID().uuidString, socket: socket.path, config: config)
     let temporary = directory.appendingPathComponent(".pending-" + UUID().uuidString)
     let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
@@ -55,12 +61,33 @@ public struct PendingStartStore {
     return pending
   }
   public func clear(_ pending: PendingStart) throws {
+    try withLock { try clearLocked(pending) }
+  }
+  private func clearLocked(_ pending: PendingStart) throws {
     guard try load() == pending else {
       throw ModelError.invalid(
         "Pending start changed; reconnect before starting another recording.")
     }
     guard unlink(file.path) == 0 else { throw posixError() }
     try syncDirectory()
+  }
+  private func withLock<T>(_ operation: () throws -> T) throws -> T {
+    try LocalFiles.privateDirectory(directory)
+    let lock = file.appendingPathExtension("lock")
+    let fd = open(lock.path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0o600)
+    guard fd >= 0 else { throw posixError() }
+    defer { close(fd) }
+    var metadata = stat()
+    guard fstat(fd, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG,
+      metadata.st_uid == getuid(), metadata.st_nlink == 1, metadata.st_mode & 0o077 == 0
+    else {
+      throw ModelError.invalid("Pending-start lock must be a private regular file owned by you.")
+    }
+    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+      throw ModelError.invalid("Another app is updating the pending start. Try again shortly.")
+    }
+    defer { _ = flock(fd, LOCK_UN) }
+    return try operation()
   }
   private func matching(_ pending: PendingStart, socket: URL, config: Data) throws -> PendingStart {
     guard pending.socket == socket.path, pending.config == config else {

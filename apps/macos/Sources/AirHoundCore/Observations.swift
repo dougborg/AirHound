@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 public struct Observation: Identifiable {
-  public let id: Int
+  public internal(set) var id: Int
   public let name: String
   public let medium: String
   public let receiver: String

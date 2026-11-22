@@ -66,7 +66,7 @@ are not automatically resumed.
 ## Observations and history
 
 Open a recording from Capture to inspect it in **Observations**. Follow new
-records for a live run or use **Load Next Page** to browse forward. The view keeps
+records for a live run or use **Load Next Page** to browse forward and **From Beginning** to return to the start. The view keeps
 up to 1,000 records and 4 MiB of serialized payloads; older records leave the
 presentation window, with an explicit omitted count. This does not remove them
 from SQLite. Refresh the history list for updated run counts and use **Older

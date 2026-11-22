@@ -7,6 +7,7 @@ final class SessionModel: ObservableObject {
   @Published var socketPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/AirHound/control.sock").path
   @Published var connected = false
+  @Published var captureEnabled = false
   @Published var busy = false
   @Published var message = "Connect to the local service to set up a scan."
   @Published var inventory: Inventory?
@@ -68,7 +69,16 @@ final class SessionModel: ObservableObject {
     client = BackendClient(executable: executable, socket: URL(fileURLWithPath: socketPath))
     perform {
       guard let client = self.client else { return }
-      _ = try await client.request(["status"])
+      let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))
+      self.captureEnabled = status["capture_control"] == .bool(true)
+      self.leaveRecording()
+      self.runs = []
+      self.nextRun = nil
+      self.healthRun = nil
+      self.healthCursor = 0
+      self.lastReportedHealth = nil
+      self.sourceEvents = [:]
+      self.capture = nil
       try self.restorePendingStart()
       self.inventory = try await client.inventory()
       if self.configText.isEmpty, let inventory = self.inventory {
@@ -80,8 +90,8 @@ final class SessionModel: ObservableObject {
         }
         self.useSelectedReceivers()
       }
-      self.connected = true
       try await self.update()
+      self.connected = true
       self.message = "Connected. Closing AirHound leaves capture running."
       self.beginPolling()
     }
@@ -175,15 +185,15 @@ final class SessionModel: ObservableObject {
       guard let client = self.client else { return }
       let config = Data(self.configText.utf8)
       if let pending = self.pendingConfig,
-        pending != config || self.pendingSocket != self.socketPath
+        pending != config || self.pendingSocket != client.socket.path
       {
         throw ModelError.invalid(
           "A previous start has an uncertain outcome. Reconnect and check the active recording before changing the plan."
         )
       }
       if self.pendingConfig == nil { _ = try await client.validate(config: config) }
-      let store = PendingStartStore(socket: URL(fileURLWithPath: self.socketPath))
-      let pending = try store.prepare(socket: URL(fileURLWithPath: self.socketPath), config: config)
+      let store = PendingStartStore(socket: client.socket)
+      let pending = try store.prepare(socket: client.socket, config: config)
       self.pendingConfig = pending.config
       self.pendingSocket = pending.socket
       self.requestID = pending.requestID
@@ -227,6 +237,7 @@ final class SessionModel: ObservableObject {
     window = RecordWindow()
     followLive = isActive && activeID == run.id
     app.selectedTab = "observations"
+    app.recordingRevision = UUID()
     loadMoreRecords()
   }
 
@@ -234,16 +245,23 @@ final class SessionModel: ObservableObject {
     perform { try await self.fetchRecords() }
   }
 
+  func rewindRecords() {
+    guard !busy else { return }
+    window = RecordWindow()
+    followLive = false
+    observationApp?.recordingRevision = UUID()
+    loadMoreRecords()
+  }
+
   private func fetchRecords() async throws {
     guard let client, let id = browsingRun, let app = observationApp else { return }
-    let page = try await client.records(runID: id, after: window.cursor)
+    let page = try await client.records(runID: id, after: window.cursor, limit: 500)
     try window.append(page)
     hasMoreRecords = page.hasMore
     app.recording = try window.observations()
     app.recordingLabel =
       "\(window.records.count) recent records · \(window.omitted) earlier records outside this view"
     app.isExample = false
-    app.recordingRevision = UUID()
   }
 
   func leaveRecording() {
@@ -268,7 +286,7 @@ final class SessionModel: ObservableObject {
 
   private func update() async throws {
     guard let client else { return }
-    capture = try await client.status()
+    capture = captureEnabled ? try await client.status() : nil
     captureFailure =
       capture?["last"]?["state"]?.string == "failed"
       ? (capture?["last"]?["error"]?.string
@@ -339,5 +357,6 @@ final class SessionModel: ObservableObject {
   func disconnect() {
     pollTask?.cancel()
     pollTask = nil
+    connected = false
   }
 }
