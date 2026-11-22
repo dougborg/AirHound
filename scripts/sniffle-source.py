@@ -6,11 +6,59 @@ Writes classic DLT256 PCAP to stdout; diagnostics only to stderr. Never flashes,
 selects an arbitrary serial port, actively scans, or follows connections.
 """
 import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import stat
 import json
 import logging
 import signal
 import sys
 import time
+
+
+# Shared across backend sockets, app bundles and TMPDIR environments for this UID.
+# Keep lock files after release: unlinking a locked inode permits split ownership.
+LEASE_ROOT = Path('/tmp') / ('airhound-sniffle-' + str(os.getuid()))
+
+
+def port_identity(port):
+    canonical = os.path.realpath(port)
+    if canonical.startswith('/dev/cu.'):
+        canonical = '/dev/tty.' + canonical[len('/dev/cu.'):]
+    return canonical
+
+
+@contextmanager
+def port_lease(port):
+    """Coordinate AirHound helper processes before upstream can open/write UART.
+
+    This cooperative lease covers current AirHound helpers, including cu/tty and
+    symlink aliases. It cannot exclude unrelated tools or older helper versions.
+    No device descriptor is opened while checking/acquiring the lease.
+    """
+    try:
+        LEASE_ROOT.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    metadata = LEASE_ROOT.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise RuntimeError('Sniffle lease directory must be owned and private (0700)')
+    name = hashlib.sha256(port_identity(port).encode()).hexdigest() + '.lock'
+    fd = os.open(str(LEASE_ROOT / name), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise RuntimeError('Sniffle lease must be an owned private regular file')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError('Sniffle port is already owned by another AirHound helper') from error
+        yield
+    finally:
+        os.close(fd)
 
 
 def main():
@@ -22,6 +70,12 @@ def main():
     parser.add_argument('--identify-only', action='store_true',
                         help='Query firmware/API and exit without configuring or starting capture')
     args = parser.parse_args()
+    # SniffleHW's constructor writes a marker; ownership must precede construction.
+    with port_lease(args.port):
+        run(args)
+
+
+def run(args):
     if args.module_path:
         sys.path.insert(0, args.module_path)
     from sniffle.sniffle_hw import SniffleHW
@@ -41,7 +95,11 @@ def main():
     decoder_errors = DecodeErrors()
     logger.addHandler(decoder_errors)
     logger.propagate = False
-    hw = SniffleHW(args.port, timeout=0.25, baudrate=921600, logger=logger)
+    try:
+        hw = SniffleHW(args.port, timeout=0.25, baudrate=921600, logger=logger)
+    except BaseException:
+        logger.removeHandler(decoder_errors)
+        raise
     stopped = False
 
     def stop(_signal, _frame):
