@@ -154,6 +154,9 @@ struct AirHoundApp: App {
     }
     .defaultSize(width: 1280, height: 820)
     .commands {
+      CommandGroup(replacing: .appInfo) {
+        Button("About AirHound") { AppBuildInfo.current.showAbout() }
+      }
       CommandGroup(after: .newItem) {
         Button("Open Recording…") { model.openRecording() }.keyboardShortcut("o")
           .disabled(model.loadingRecording)

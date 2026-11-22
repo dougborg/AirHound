@@ -3,9 +3,9 @@ name: Native macOS app
 on:
   push:
     branches: [main]
-    paths: ['apps/macos/**', 'hostd/**', '.github/workflows/macos-app.yml']
+    paths: ['apps/macos/**', 'hostd/**', 'Cargo.toml', '.github/workflows/macos-app.yml']
   pull_request:
-    paths: ['apps/macos/**', 'hostd/**', '.github/workflows/macos-app.yml']
+    paths: ['apps/macos/**', 'hostd/**', 'Cargo.toml', '.github/workflows/macos-app.yml']
 
 permissions:
   contents: read
@@ -16,9 +16,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
         with:
           toolchain: stable
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Test GUI build metadata
+        run: python3 -m unittest discover -s apps/macos/Tests/BuildMetadataTests
       - name: Build shared backend
         run: cargo +stable build --manifest-path hostd/Cargo.toml --release --locked --bin airhound-hostd
       - name: Test presentation and real service lifecycle

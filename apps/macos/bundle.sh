@@ -11,6 +11,7 @@ cp "$bin_path/AirHound" "$app/Contents/MacOS/AirHound"
 # The app uses its own standard Resources directory; swift run uses Bundle.module.
 cp Sources/AirHoundApp/Resources/example.ndjson "$app/Contents/Resources/example.ndjson"
 cp Info.plist "$app/Contents/Info.plist"
+python3 build-metadata.py "$app/Contents/Info.plist"
 # Pass a built backend explicitly; never embed a stale binary by guessing a path.
 if [ "$#" -gt 0 ]; then
   test -x "$1" || { printf 'Backend is not executable: %s\n' "$1" >&2; exit 1; }
