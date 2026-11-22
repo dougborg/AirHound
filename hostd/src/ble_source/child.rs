@@ -50,6 +50,9 @@ impl Child {
                 // Thread construction fails before any process can be spawned.
                 let lease = lease;
                 if !matches!(requests.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                    // No child exists. Publish failure only after relinquishing
+                    // the supervisor's ownership so ready() is a cleanup barrier.
+                    drop(lease);
                     let _ = started.send(Err(io::Error::new(
                         io::ErrorKind::Interrupted,
                         "helper start cancelled",
@@ -60,6 +63,7 @@ impl Child {
                 let mut child = match command.spawn() {
                     Ok(child) => child,
                     Err(error) => {
+                        drop(lease);
                         let _ = started.send(Err(error));
                         let _ = finished.send(Ok(()));
                         return;
@@ -74,8 +78,11 @@ impl Child {
                 loop {
                     match child.try_wait() {
                         Ok(Some(_)) => {
+                            // Reaping precedes lease release, which precedes the
+                            // completion notification observed by finish().
+                            drop(lease);
                             let _ = finished.send(Ok(()));
-                            break;
+                            return;
                         }
                         Err(error) => {
                             // Unknown reap state must never release ownership to another
@@ -92,7 +99,6 @@ impl Child {
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
-                drop(lease);
             })?;
         Ok(Self {
             stop: Some(stop),
@@ -182,6 +188,40 @@ mod tests {
         assert!(Child::spawn(command, lease.clone(), true).await.is_err());
         drop(lease);
         assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_ok());
+    }
+    #[tokio::test]
+    async fn startup_failure_and_finish_release_supervisor_ownership_before_notification() {
+        let _test = TEST_LOCK.lock().await;
+        // Neither completion path may require polling for a later thread-scope
+        // destructor. Repeat to exercise notification scheduling on CI workers.
+        for _ in 0..32 {
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+            let mut child =
+                Child::start(Command::new("/nonexistent/airhound-helper"), lease, true).unwrap();
+            assert!(child.ready().await.is_err());
+            let guard = airhound_hostd::serial_lease::acquire("/dev/null")
+                .expect("failed startup must release ownership before ready returns");
+            child.finish().await.unwrap();
+            drop(guard);
+
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "echo $$; exec sleep 30"]);
+            let mut child = Child::spawn(command, lease, true).await.unwrap();
+            let mut line = String::new();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                BufReader::new(child.stdout.take().unwrap()).read_line(&mut line),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let pid: i32 = line.trim().parse().unwrap();
+            child.finish().await.unwrap();
+            let _guard = airhound_hostd::serial_lease::acquire("/dev/null")
+                .expect("Finish must release ownership before returning");
+            assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
+        }
     }
     #[tokio::test]
     async fn cancellation_during_pending_exec_reaps_before_releasing_lease() {
