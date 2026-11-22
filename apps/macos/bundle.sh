@@ -14,9 +14,18 @@ cp Info.plist "$app/Contents/Info.plist"
 # Pass a built backend explicitly; never embed a stale binary by guessing a path.
 if [ "$#" -gt 0 ]; then
   test -x "$1" || { printf 'Backend is not executable: %s\n' "$1" >&2; exit 1; }
+  service="$app/Contents/MacOS/AirHound Service.app"
+  mkdir -p "$service/Contents/MacOS"
+  cp "$1" "$service/Contents/MacOS/airhound-hostd"
+  cp ../../hostd/macos/Info.plist "$service/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier tools.airhound.service' "$service/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleName AirHound Service' "$service/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleDisplayName string AirHound Service' "$service/Contents/Info.plist"
+  codesign --force --sign - "$service"
+  # Preserve the established developer CLI path; service startup resolves it
+  # to the enclosing application and uses LaunchServices.
   mkdir -p "$app/Contents/Helpers"
-  cp "$1" "$app/Contents/Helpers/airhound-hostd"
-  codesign --force --sign - "$app/Contents/Helpers/airhound-hostd"
+  ln -s '../MacOS/AirHound Service.app/Contents/MacOS/airhound-hostd' "$app/Contents/Helpers/airhound-hostd"
 fi
 codesign --force --sign - "$app"
 printf 'Built %s/%s\n' "$PWD" "$app"
