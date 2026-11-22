@@ -9,9 +9,10 @@ feasibility milestone**. It accesses no GPIO, UART, radio, SD file or device
 firmware; it shows one synthetic AP observation and labels itself disconnected.
 
 The separate `airhound-uart-diagnostic` target below is experimental. Its default
-launch also leaves UART untouched. Only explicit `capture` mode controls the
-attached Marauder using fixed passive commands. An earlier diagnostic revision passed UART-free load/selftest/exit, but capture
-is not accepted; see the dated evidence below. Neither target replaces the
+launch also leaves UART untouched. Explicit `preflight` sends only stop commands;
+`capture` enables a bounded passive scan. Revision `b0c26fa` produced a genuine
+capture that passed strict import and private durable replay; see the dated
+evidence below. This remains a diagnostic workflow. Neither target replaces the
 existing third-party companion.
 
 ## Parser contract
@@ -113,9 +114,10 @@ References: [Rust SDK 0.16.0](https://github.com/flipperzero-rs/flipperzero-rs/t
 This separate API87.1 application investigates the failed binary capture path
 recorded in the [hardware ledger](../../docs/attached-hardware-validation.md#flipper-and-awok-follow-up).
 It does not claim to fix the installed companion's unknown NULL-pointer fault.
-Revision `de00984` passed UART-free load/selftest/exit; the subsequent capture-mode
-preflight aborted before issuing any scan command. The newer stop-only diagnostic
-mode remains a separate test gate. The original third-party FAP
+Revision `de00984` passed UART-free load/selftest/exit but aborted its capture-mode
+preflight. Retained bytes in the next revision exposed stale console input;
+`b0c26fa` synchronized the line and passed stop-only and bounded capture checks.
+The original third-party FAP
 and both device firmwares must remain preserved during diagnostic acceptance.
 
 Default launch, `selftest`, and unknown arguments never acquire UART. The explicit
@@ -148,7 +150,7 @@ not count. Console text can itself include untrusted SSIDs, so these are
 **unauthenticated observed text acknowledgments**, not proof of physical RF state.
 
 The SDK transmit routine waits for hardware TX-ready without a timeout. Fixed
-10/22-byte commands normally take less than two milliseconds at 115200 baud, but
+12/21-byte commands normally take less than two milliseconds at 115200 baud, but
 a hung peripheral, scheduler failure, power loss or Flipper reset can defeat any
 local software deadline. Reset or transport failure leaves AWOK stop **unknown**;
 a separately verified stop-only recovery is still required. No host/RPC session
@@ -223,5 +225,26 @@ could not distinguish silence from a line-matching failure. It saved a closed,
 hash-verified zero-byte raw file and failure metadata, then exited without an
 observed crash. A separate stop-only recovery returned two firmware-text stop
 acknowledgments in an 85-byte hash-verified result; the last AWOK command was
-`stopscan`. No RF retry followed. The new preflight-only mode retains this missing
-evidence without starting a scan or changing baud/framing/power settings.
+`stopscan`. The next stop-only revision retained 18 bytes showing five `0xf3`
+bytes immediately before echoed `stopscan`, with a prompt but no acknowledgment.
+The source of those prefix bytes remains unknown. The subsequent narrow change
+prepends CRLF, as in the working JS path, before the fixed stop command; it does
+not alter baud, power or acknowledgment matching.
+
+The uniquely installed `b0c26fa` artifact (SHA-256
+`5bc5d4778cfaa195d27edee4b485b2eb8c8e9fc2aab0fdb466e6c1715afe4045`)
+passed UART-free selftest/exit and a stop-only test with an exact acknowledgment
+in 48 hash-verified bytes. UART ownership lasted 117 ms; no scan started.
+One separately reviewed passive capture then produced 28,990 hash-verified raw
+bytes and **85 complete packets**. Start and stop text were observed, the local
+stop command occurred at 2,002 ms, and total UART ownership was 2,989 ms. Reported
+UART drops, errors, unread bytes and framing errors were zero; files closed,
+the loader returned idle, and the original companion hash stayed unchanged.
+
+The strict importer accepted all 85 packets without repair. A separate private
+service stored and returned 85 Wi-Fi packet observations through the shared
+client; SQLite integrity passed and the service exited cleanly. Replay/producer
+boot-clock provenance and unknown RSSI, receive channel, GPS and synchronized
+wall time were preserved. This establishes the bounded acquisition/import path,
+not RF losslessness, endurance or a concurrent live receiver. Earlier failures
+and their raw evidence remain retained.

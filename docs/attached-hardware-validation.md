@@ -239,7 +239,7 @@ that the installed companion is safe.
 
 The next isolated implementation is the [AirHound UART diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic):
 fixed memory, one UART command owner, device-local stop timing, immutable UI text,
-and storage only after RX shutdown. It is **not capture accepted**, is not a fix for the unknown native fault, and
+and storage only after RX shutdown. It is not a fix for the unknown native fault and
 does not replace or flash either firmware.
 Its default launch is UART-free. The unique `de00984` build passed actual synthetic
 load/selftest/exit with 53,048 bytes free heap while loaded and 127,752 after exit;
@@ -257,8 +257,26 @@ the required acknowledgment. It reported zero drops/errors/unread bytes and
 OTG disabled; the owned dialog closed and loader returned idle. This establishes
 received console data, not the cause of the prefix bytes. The next narrow change
 adds the same leading CRLF as the working JS stop path to terminate stale input,
-while retaining exact acknowledgment matching. Its device stop-only validation
-is pending; no baud, power, firmware, or capture-duration change was made.
+while retaining exact acknowledgment matching. No baud, power, firmware, or
+capture-duration change was made.
+
+Revision `b0c26fa` (FAP SHA-256
+`5bc5d4778cfaa195d27edee4b485b2eb8c8e9fc2aab0fdb466e6c1715afe4045`)
+passed UART-free load/exit and the stop-only gate: 48 hash-verified bytes contained
+the exact acknowledgment, UART ownership lasted 117 ms, and no scan started.
+One subsequent bounded passive acquisition produced 28,990 hash-verified bytes
+and 85 complete packets. Its local stop command occurred at 2,002 ms; UART
+ownership lasted 2,989 ms. Preflight/start/stop text acknowledgments were observed;
+all reported UART drop/error/unread and framing-error counters were zero. Files
+closed, the loader returned idle, USB was released and the original companion
+hash remained unchanged. No reset or crash was observed in this attempt.
+
+Strict import accepted 85 packets without repair. Private service/SQLite/shared
+client replay returned 85 Wi-Fi packet observations with correct source identity,
+replay and producer boot-clock provenance, and unknown RSSI/channel/GPS/wall time.
+SQLite `quick_check` passed; the private service exited 0 and removed its socket.
+This accepts the bounded diagnostic acquisition/import path only. RF loss,
+endurance and normal concurrent live-receiver operation remain unproven.
 
 ## Remaining acceptance
 
@@ -271,9 +289,9 @@ is pending; no baud, power, firmware, or capture-duration change was made.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Validate the isolated diagnostic's console-line resynchronization in stop-only mode, then its
-  bounded passive acquisition and a genuine complete capture/import. The earlier
-  revision passed UART-free load/exit and measured headroom only.
+- Integrate the proven bounded Flipper acquisition into a normal shared-backend
+  receiver with explicit setup, heartbeat/stop handling and reported transport
+  loss. Diagnostic file acquisition/import alone does not complete that path.
   Fresh identity/control and displayed beacon text do not replace a complete
   binary capture. Preserve the acknowledged-stop state; do not retry the
   crashing third-party acquisition path without a reviewed mitigation.
