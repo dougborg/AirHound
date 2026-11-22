@@ -235,6 +235,12 @@ fn classify(raw: &RawDevice, platform: &str, options: &Options) -> Vec<Candidate
     let serial = raw.endpoints.iter().find(|e| e.kind == "serial");
     let selected_serial = serial.filter(|_| serial_count == 1);
     match ids {
+        (Some(0x0e8d), Some(0x7961)) | (Some(0x0846), Some(0x9072)) => {
+            let label = if raw.vid == Some(0x0e8d) { "MediaTek MT7921U / ALFA AWUS036AXML candidate" } else { "Netgear A9000 / MT7925U candidate" };
+            let mut c = candidate("mt76_wifi", label, "experimental", "unverified", "Exact USB ID listed by Network-Weather/mt76-usb-macos; no local hardware validation or live AirHound backend yet (#235)");
+            c.requirements.push(Requirement { name:"airhound_backend".into(), state:"unsupported", detail:"Live mt76 integration is pending; MT7610U helper configuration is not compatible. Do not load firmware during discovery".into() });
+            result.push(c);
+        }
         (Some(0x0e8d), Some(0x7610)) => {
             let mut c = candidate("external_wifi", "MediaTek MT7610U (including ALFA AWUS036ACHM)", "experimental", "needs_configuration", "USB VID/PID matches MT7610U; branding, firmware and exclusive access not verified");
             configure(&mut c, vec![prerequisite("external_scanner", options.external_scanner.as_deref(), false), prerequisite("external_firmware", options.external_firmware.as_deref(), false)]);

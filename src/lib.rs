@@ -33,3 +33,5 @@ pub mod scanner;
 pub mod watchlist;
 
 pub mod evidence;
+
+pub mod wifi_frequency;

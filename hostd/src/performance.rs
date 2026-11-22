@@ -23,6 +23,7 @@ async fn performance_event_pipeline() {
         ssid: "Home".try_into().unwrap(),
         rssi: -50,
         channel: 6,
+        frequency_mhz: None,
         frame_type: FrameType::Beacon,
         raw_ies: Default::default(),
         security: Default::default(),

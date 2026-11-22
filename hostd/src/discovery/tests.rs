@@ -213,3 +213,24 @@ fn composite_serial_roles_and_multiple_alfa_devices_are_not_auto_selected() {
             .any(|r| r.name == "physical_device_selection" && r.state == "needs_selection"));
     }
 }
+
+#[test]
+fn ordered_mt76_devices_are_unverified_and_cannot_activate_old_helper() {
+    for (vid, pid) in [(0x0e8d, 0x7961), (0x0846, 0x9072)] {
+        for platform in ["macos", "linux"] {
+            let candidates = classify(&raw(vid, pid), platform, &Options::default());
+            assert_eq!(candidates.len(), 1);
+            let c = &candidates[0];
+            assert_eq!(c.kind, "mt76_wifi");
+            assert_eq!(c.state, "unverified");
+            assert_eq!(c.support, "experimental");
+            assert!(c.configuration_hint.is_none());
+            assert_eq!(c.capabilities["scope"], "unknown");
+            assert_eq!(c.requirements[0].state, "unsupported");
+        }
+    }
+    // No vendor-wide match, untested A8500, or MT7927 support inference.
+    for (vid, pid) in [(0x0e8d, 0x6639), (0x0846, 0x9050), (0x0846, 0xffff)] {
+        assert!(classify(&raw(vid, pid), "macos", &Options::default()).is_empty());
+    }
+}

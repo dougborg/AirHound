@@ -6,17 +6,21 @@ pub fn events(packet: &[u8]) -> impl Iterator<Item = crate::ScanEvent> {
     use crate::ScanEvent;
     use airhound::scanner;
     let events = decode(packet)
-        .map(|(frame, rssi, channel)| {
-            [
+        .and_then(|(frame, rssi, frequency)| {
+            let (_, channel) = airhound::wifi_frequency::channel(frequency)?;
+            Some([
                 scanner::try_parse_odid_wifi(frame, rssi, channel).map(ScanEvent::Odid),
-                scanner::parse_wifi_frame(frame, rssi, channel).map(ScanEvent::WiFi),
-            ]
+                scanner::parse_wifi_frame(frame, rssi, channel).map(|mut event| {
+                    event.frequency_mhz = Some(frequency);
+                    ScanEvent::WiFi(event)
+                }),
+            ])
         })
         .unwrap_or([None, None]);
     events.into_iter().flatten()
 }
 
-pub fn decode(packet: &[u8]) -> Option<(&[u8], i8, u8)> {
+pub fn decode(packet: &[u8]) -> Option<(&[u8], i8, u16)> {
     if packet.first().copied()? != 0 {
         return None;
     }
@@ -43,7 +47,7 @@ pub fn decode(packet: &[u8]) -> Option<(&[u8], i8, u8)> {
         let field = header.get(offset..offset + size)?;
         match bit {
             1 => flags = field[0],
-            3 => channel = frequency_to_channel(u16::from_le_bytes([field[0], field[1]])),
+            3 => channel = Some(u16::from_le_bytes([field[0], field[1]])),
             5 => signal = Some(field[0] as i8),
             _ => {}
         }
@@ -58,15 +62,6 @@ pub fn decode(packet: &[u8]) -> Option<(&[u8], i8, u8)> {
         frame = frame.get(..frame.len().checked_sub(4)?)?;
     }
     Some((frame, signal?, channel?))
-}
-
-fn frequency_to_channel(freq: u16) -> Option<u8> {
-    match freq {
-        2484 => Some(14),
-        2412..=2472 if (freq - 2407).is_multiple_of(5) => Some(((freq - 2407) / 5) as u8),
-        5180..=5885 if (freq - 5000).is_multiple_of(5) => Some(((freq - 5000) / 5) as u8),
-        _ => None, // 6 GHz needs an explicit band in the shared event model.
-    }
 }
 
 #[cfg(test)]
@@ -85,10 +80,7 @@ mod tests {
     fn alignment_extensions_signal_and_fcs() {
         let mut p = packet(0x10);
         p.extend_from_slice(&[9; 4]);
-        assert_eq!(decode(&p), Some((&[0x80, 0, 1, 2][..], -47, 1)));
-        assert_eq!(frequency_to_channel(5180), Some(36));
-        assert_eq!(frequency_to_channel(2484), Some(14));
-        assert_eq!(frequency_to_channel(5955), None);
+        assert_eq!(decode(&p), Some((&[0x80, 0, 1, 2][..], -47, 2412)));
     }
     #[test]
     fn captured_remote_id_reaches_shared_event_pipeline() {
@@ -119,6 +111,31 @@ mod tests {
         );
         assert!(matches!(output.next(), Some(crate::ScanEvent::WiFi(_))));
         assert!(output.next().is_none());
+    }
+
+    #[test]
+    fn tri_band_capture_keeps_frequency_and_rejects_unknown_rasters() {
+        // Radiotap frequency is authoritative even when its legacy flags say 5 GHz
+        // (the upstream mt76 writer uses those flags for 6 GHz too).
+        for (frequency, channel) in [(2412u16, 1), (5180, 36), (5935, 2), (5955, 1), (7115, 233)] {
+            let mut p = packet(0);
+            p[26..28].copy_from_slice(&frequency.to_le_bytes());
+            p[28..30].copy_from_slice(&0x140u16.to_le_bytes());
+            p.truncate(33);
+            // Minimal data frame; transmitter address starts at byte 10.
+            let mut frame = [0u8; 24];
+            frame[0] = 0x08;
+            frame[10..16].copy_from_slice(&[2, 3, 4, 5, 6, 7]);
+            p.extend_from_slice(&frame);
+            let Some(crate::ScanEvent::WiFi(event)) = events(&p).next() else {
+                panic!("missing {frequency} MHz frame")
+            };
+            assert_eq!(event.channel, channel);
+            assert_eq!(event.frequency_mhz, Some(frequency));
+            assert_eq!(event.mac, [2, 3, 4, 5, 6, 7]);
+            p[26..28].copy_from_slice(&5956u16.to_le_bytes());
+            assert_eq!(events(&p).count(), 0);
+        }
     }
 
     #[test]

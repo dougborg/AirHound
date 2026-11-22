@@ -30,6 +30,7 @@ are labeled separately.
 - [CatSniffer/Sniffle live capture and PCAP replay](sniffle-source.md)
 - [Concurrent desktop receivers, configuration and source identity](multi-receiver-sessions.md)
 - [Marauder / AWOK saved Wi-Fi capture import](marauder-import.md)
+- [WiFi receive frequency and band](wifi-observation-contract.md)
 - [Typed BLE observation contract](ble-observation-contract.md)
 - [Desktop Remote ID decoding and reception limits](desktop-remote-id.md)
 - [External WiFi file format](external-wifi-v1.md) and [live process protocol](external-scanner-stream-v1.md)

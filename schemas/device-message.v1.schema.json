@@ -137,9 +137,9 @@
         },
         "ch": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 177,
-          "description": "WiFi channel: firmware supports 2.4 GHz; desktop capture also supports 5 GHz (36–177)."
+          "minimum": 0,
+          "maximum": 233,
+          "description": "Reported WiFi channel (0 means unknown); numbers overlap across bands. Use frequency_mhz/band when provided; firmware remains 2.4 GHz."
         },
         "frame": {
           "$ref": "#/$defs/wifi_frame_type",
@@ -162,6 +162,24 @@
         "ts": {
           "$ref": "#/$defs/uptime_ms",
           "description": "Capture timestamp as device uptime in milliseconds."
+        },
+        "frequency_mhz": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 7115,
+          "description": "Optional desktop receive frequency supplied by the backend, never inferred from channel alone. Absent/null means unknown."
+        },
+        "band": {
+          "enum": [
+            "2.4GHz",
+            "5GHz",
+            "6GHz",
+            null
+          ],
+          "description": "Optional desktop receive band derived from explicit frequency; absent/null means unknown."
         }
       }
     },

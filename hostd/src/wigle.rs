@@ -60,7 +60,11 @@ impl<W: Write> WigleWriter<W> {
         location: Option<&Location>,
     ) -> io::Result<()> {
         let ch = channel.to_string();
-        let freq = frequency.to_string();
+        let freq = if frequency == 0 {
+            String::new()
+        } else {
+            frequency.to_string()
+        };
         let rssi_s = rssi.to_string();
         let (lat, lon, alt, acc) = format_location(location);
         self.writer
@@ -132,44 +136,41 @@ fn format_location(location: Option<&Location>) -> (String, String, String, Stri
     }
 }
 
-/// Convert WiFi channel number to frequency in MHz.
-pub fn channel_to_frequency(ch: u8) -> u32 {
-    match ch as u32 {
-        1..=13 => 2407 + ch as u32 * 5,
-        14 => 2484,
-        36..=177 => 5000 + ch as u32 * 5,
-        _ => 0,
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
     #[test]
-    fn channel_to_freq_2ghz() {
-        assert_eq!(channel_to_frequency(1), 2412);
-        assert_eq!(channel_to_frequency(6), 2437);
-        assert_eq!(channel_to_frequency(11), 2462);
-        assert_eq!(channel_to_frequency(13), 2472);
-    }
-
-    #[test]
-    fn channel_to_freq_5ghz() {
-        assert_eq!(channel_to_frequency(36), 5180);
-        assert_eq!(channel_to_frequency(149), 5745);
-    }
-
-    #[test]
-    fn channel_to_freq_14() {
-        assert_eq!(channel_to_frequency(14), 2484);
-    }
-
-    #[test]
-    fn channel_to_freq_unknown() {
-        assert_eq!(channel_to_frequency(0), 0);
-        assert_eq!(channel_to_frequency(200), 0);
+    fn frequency_is_explicit_and_unknown_is_empty() {
+        let mut bytes = Vec::new();
+        {
+            let mut w = WigleWriter::new(&mut bytes).unwrap();
+            for frequency in [2412, 5955, 0] {
+                w.write_wifi(
+                    "02:03:04:05:06:07",
+                    "test",
+                    "",
+                    "now",
+                    1,
+                    frequency,
+                    -40,
+                    None,
+                )
+                .unwrap();
+            }
+            w.flush().unwrap();
+        }
+        let text = String::from_utf8(bytes).unwrap();
+        let rows: Vec<_> = text
+            .lines()
+            .skip(2)
+            .map(|line| line.split(',').collect::<Vec<_>>())
+            .collect();
+        assert_eq!(rows[0][5], "2412");
+        assert_eq!(rows[1][5], "5955");
+        assert_eq!(rows[2][5], "");
+        assert!(rows.iter().all(|row| row[4] == "1"));
     }
 
     #[test]
