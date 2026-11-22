@@ -8,6 +8,12 @@ on:
     paths: ['companions/flipper/**', 'src/**', 'schemas/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/flipper.yml', 'release-please-config.json']
   workflow_dispatch:
 
+# Supersede only older validation runs for the same pull request. Main, manual,
+# scheduled and reusable release runs keep independent groups.
+concurrency:
+  group: flipper-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

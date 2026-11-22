@@ -9,6 +9,12 @@ on:
       - 'scripts/tests/test_package_receiver.py'
       - '.github/workflows/receiver-candidate.yml'
 
+# Supersede only older validation runs for the same pull request. Main, manual,
+# scheduled and reusable release runs keep independent groups.
+concurrency:
+  group: receiver-candidate-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
