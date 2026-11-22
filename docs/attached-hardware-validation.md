@@ -76,6 +76,8 @@ that opening the port is nondisruptive.
 | Assembled M5 + CatSniffer + ALFA + managed GPS, 65.72 seconds | 6,191 observations: M5 467 WiFi + 26 BLE, Cat 2,693, ALFA 3,005; 6,062 fresh receiver-location associations | Pause/resume, M5 connection/boot continuity, one owned Cat helper failure and bounded recovery, and clean finish passed. All configured ALFA channels 1/6/11 received observations |
 | Same saved setup after backend restart, 30.09 seconds | 3,475 observations: M5 263 WiFi + 15 BLE, Cat 1,646, ALFA 1,551; 3,326 fresh receiver-location associations | Saved plan reloaded unchanged, actual producer identities verified again, all three ALFA channels received observations, clean finish |
 | Actual GUI-launched service, bounded native WiFi + BLE attempt | Zero observations; **failed** terminal state | GUI Start Local Service launch and authenticated connection were verified. CoreWLAN reported redacted addresses; CoreBluetooth initialization timed out. The test recording was stopped, the service stayed running, and existing recordings/profiles were preserved |
+| Same installed service after permission approval, native WiFi + BLE | 944 WiFi + 1,962 BLE observations; finished | Original harness rejected valid native metadata shapes; source-specific offline revalidation passed without rescanning |
+| Same installed service, native WiFi + BLE + M5 + CatSniffer + ALFA + managed GPS, 45.27 seconds | 9,857 observations; 9,655 fresh receiver-location associations; finished | All five sources received; ALFA channels 1/6/11; zero invalid source/location associations. Backend-controlled acceptance; existing recordings/profiles preserved, external ports released, service remained running |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
 
@@ -167,20 +169,26 @@ authorization prompts were still outstanding. Read-only diagnostics confirmed
 both prompts existed for the installed launch. A prior successful service run
 reported the same `FailedUnavailable` registration state before user approval,
 then changed to `AllowedAlways` without an application lifecycle change. The
-current evidence does not establish an AppKit lifecycle defect; permission
-approval and a same-binary retry remain necessary.
+current evidence did not establish an AppKit lifecycle defect. The user approved
+Bluetooth at 12:08:15 and Location at 12:08:16. The same installed binary and
+service then received both native protocols, followed by the successful combined
+run above; no runtime lifecycle change or service restart was needed.
+
+After that run, **Attached receiver rig** was saved as a new setup with readable
+source IDs, explicit attached endpoints and the immutable helper bundle. Saving
+did not replace an existing setup. Loading reproduced the exact configuration
+and validated local resources without applying it or starting capture. Endpoint
+identity review remains necessary after moving or replacing hardware.
 
 ## Remaining acceptance
 
-- Resolve native radio access under the actual GUI-launched service identity.
-  Start Local Service and the authenticated default connection now work, but the
-  subsequent native WiFi/BLE test failed as recorded above. Capture was requested
-  through the CLI against that GUI-launched service; the GUI's Start Recording
-  control is a separate acceptance check. Do not infer native reception from a
-  successful service launch or extend the native combined test before this passes.
-- Extend the passed external combined/restart/helper-recovery checks to native
-  radios under the authorized app identity. Physical unplug/replug, sleep/wake
-  and prolonged load remain untested in this assembled build. Synthetic
+- Exercise **Attached receiver rig** through the native Load, Start Recording
+  and Finish Recording controls. Actual GUI service launch and native observation
+  presentation passed; the combined capture above used CLI controls against that
+  GUI-launched service. A GUI-control observer timed out without starting a run
+  when focus moved away; it is not counted as GUI capture acceptance.
+- Extend combined acceptance to physical unplug/replug, sleep/wake and prolonged
+  load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
 - Retry Flipper after the requested USB reconnect, then exercise the existing
