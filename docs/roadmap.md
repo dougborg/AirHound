@@ -2,33 +2,44 @@
 
 Published tracking index: [#160](https://github.com/dougborg/AirHound/issues/160).
 
-Updated 2026-11-20. Issue bodies own acceptance criteria; this index owns ordering.
-The original inventory below is retained, with current progress called out here.
-No release has been published by this work.
+Updated 2026-11-22. Issue bodies own acceptance criteria; this index owns ordering.
+Older evidence and inventory below are retained as dated context, not current
+release or implementation claims.
 
 ## Recommended order
 
-1. Land the reviewed BLE/Remote ID (#173) and desktop gpsd (#177) integrations.
-   The scanner/UI/streaming/research batch #165–#170 and offline HCI tooling #174
-   are merged. Preserve desktop production coverage floors of 81% on both OSes.
-2. **Prioritize the signature system:** rule-scoped evidence and independent
-   alert/watchlist policy (#154), contextual manufacturer/service payload matching
-   (#35), full UUID and embedded parser/output parity (#36), and canonical
-   schema/default agreement (#11). Follow with versioned loading (#14) and sourced
-   candidate admission (#16). Research identifiers are not enabled detectors.
-3. Keep deeper GPS work deferred: capture-time position association, persistent
-   fix provenance, partial TPV handling, unplug/replug and moving-route validation
-   (#79/#28/#15). Stationary receiver-to-WiGLE capture and daemon-disconnect
-   clearing passed; they do not establish route accuracy.
-4. Continue transport/hardware work after signatures: detector-device serial/GATT
-   ingestion (#175), experimental live USB HCI receiver (#176), extended/Coded
-   reception (#171/#172/#132), and ALFA endurance/RF/distribution (#155/#156/#157).
-5. Retain firmware resource/drop work (#153), physical M5 UI/buzzer acceptance
-   (#8/#7), permission lifecycle (#159), native GUI evaluation (#158), dependency
-   migration (#1) and release gates (#141/#123). Preserved unfinished local memory
-   and confidence patches require review/rework before landing.
+1. Finish the local shared-client integration: Rust service/CLI (#238/#243),
+   TUI (#239) and MCP (#240). Native SwiftUI (#158) remains presentation; live
+   service-owned controls are the next slice. Preserve desktop coverage floors.
+2. **P1: durable runs and SQLite recording.** Implement contracts (#54),
+   service-owned Start/Pause/Resume/Finish and recovery (#56), SQLite (#57), and
+   evidence history (#55) together. See the [storage plan](storage-plan.md).
+   Deliver bounded writes/queries, migrations, visible failures and minimal
+   history before extensive GUI history or mobile synchronization. Retention #59
+   starts with explicit limits and error accounting; advanced aggregation follows.
+3. **Validate sources incrementally:** replay fixtures, one known receiver, two
+   receivers, mixed WiFi/BLE/GPS, then additional discovered candidates. At each
+   stage verify source identity, timing/location provenance, counts, reported drops,
+   channel assignment acknowledgements, reconnect and clean shutdown. Relevant
+   work: #229, #175, #171, #155 and #156. Enumeration is not capture acceptance.
+4. Build on that foundation with minimal native/terminal/API history and controls,
+   then phone roles (#246): location source, capture source, controller or gateway
+   for attached receivers. iPhone BLE/GATT is the first proposed gateway path;
+   Android USB host and channel tuning depend on actual endpoint capabilities.
+   Authenticated networking, offline phone sync and vehicle displays (#247) follow.
+5. **Prepare a release preview after the storage/multi-source milestone:** verify
+   artifacts and clean-install behavior, write versioned release notes, and update
+   the tested hardware matrix. Carry untested/experimental capabilities and
+   unresolved hardware acceptance forward explicitly; do not infer RF support
+   from parser tests or packaging success.
 
-## Current integration evidence
+Keep signature quality/provenance (#154/#14/#16), constrained firmware memory
+(#153), permission lifecycle (#159), and hardware fault/endurance/distribution
+(#155/#156/#157) visible throughout. This ordering does not waive those gates.
+SQLite, remote phone roles and service-owned live controls are still planned;
+NDJSON/CSV remain current recording/export paths.
+
+## Historical integration evidence — earlier baseline
 
 - #173 preserves bounded desktop BLE manufacturer/service payloads and full UUIDs,
   reports adapter capabilities without inferring RF support, and decodes normalized
@@ -50,7 +61,7 @@ No release has been published by this work.
 The following platform table records the earlier baseline, not newer final-head
 coverage or release acceptance. Consult the linked issues and PR checks for updates.
 
-## What exists today
+## Earlier platform baseline
 
 | Area | State and evidence |
 | --- | --- |
@@ -144,16 +155,19 @@ The original implementation/research inventory follows. New desktop issues are l
 | [#85](https://github.com/dougborg/AirHound/issues/85) | Wire output pipeline with category-based routing | Partial routing exists; category controls/dedup pipeline incomplete |
 | [#99](https://github.com/dougborg/AirHound/issues/99) | feat: OUI manufacturer name lookup for device messages | Open backlog; see issue acceptance criteria |
 
-### Later — storage, sessions and retention
+### P1 — durable desktop sessions and recording
+
+The first five implementation issues below are promoted; embedded storage and
+advanced retention remain separately scoped.
 
 | Issue | Work | Status / scope |
 | --- | --- | --- |
-| [#54](https://github.com/dougborg/AirHound/issues/54) | arch: platform-agnostic storage traits and core data types | Open backlog; see issue acceptance criteria |
-| [#55](https://github.com/dougborg/AirHound/issues/55) | feat: match event logging and detection history | Open backlog; see issue acceptance criteria |
-| [#56](https://github.com/dougborg/AirHound/issues/56) | feat: scan session lifecycle and metadata tracking | Open backlog; see issue acceptance criteria |
-| [#57](https://github.com/dougborg/AirHound/issues/57) | feat: SQLite storage backend for Linux daemon and Kismet companion | Open backlog; see issue acceptance criteria |
+| [#54](https://github.com/dougborg/AirHound/issues/54) | Storage contracts and semantic fixtures | P1; preserve current evidence, identity, timestamps and binary fields |
+| [#55](https://github.com/dougborg/AirHound/issues/55) | Detection evidence and queryable history | P1 with SQLite; preserve historical rule/policy results |
+| [#56](https://github.com/dougborg/AirHound/issues/56) | Durable backend-owned run lifecycle | P1; pause retains identity, Finish commits, restart marks interrupted |
+| [#57](https://github.com/dougborg/AirHound/issues/57) | SQLite recording for the shared Rust backend | P1 on macOS/Linux; schema, writer, migrations and bounded history |
 | [#58](https://github.com/dougborg/AirHound/issues/58) | docs: storage schema guidance for companion app developers | Open backlog; see issue acceptance criteria |
-| [#59](https://github.com/dougborg/AirHound/issues/59) | feat: configurable data retention and automatic purge | Open backlog; see issue acceptance criteria |
+| [#59](https://github.com/dougborg/AirHound/issues/59) | Explicit retention and storage limits | Basic failure/limit semantics P1; advanced purge/aggregation later |
 | [#60](https://github.com/dougborg/AirHound/issues/60) | feat: ESP-IDF sensor storage — observation buffer, match log, and watchlist | Open backlog; see issue acceptance criteria |
 | [#80](https://github.com/dougborg/AirHound/issues/80) | Add NVS persistence layer | Open backlog; see issue acceptance criteria |
 | [#100](https://github.com/dougborg/AirHound/issues/100) | feat: double-buffer write pattern for local storage | Open backlog; see issue acceptance criteria |
