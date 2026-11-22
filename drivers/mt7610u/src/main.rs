@@ -25,11 +25,16 @@ use std::{
 #[derive(Parser)]
 #[command(about = "Experimental MT7610U userspace receive-only driver")]
 struct Args {
+    /// Physical USB attachment from list-devices; no fallback to another adapter.
+    #[arg(long, global = true)]
+    usb_selector: Option<mt7610u_lab::selection::Selector>,
     #[command(subcommand)]
     command: Command,
 }
 #[derive(Subcommand)]
 enum Command {
+    /// List matching USB descriptors/topology without opening device handles.
+    ListDevices,
     /// Bounded live child protocol with pause/resume/stop commands on stdin.
     Stream {
         #[arg(long)]
@@ -74,7 +79,21 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    match Args::parse().command {
+    let args = Args::parse();
+    if matches!(
+        args.command,
+        Command::ListDevices | Command::InspectFirmware { .. } | Command::Replay { .. }
+    ) {
+        ensure!(
+            args.usb_selector.is_none(),
+            "--usb-selector requires a hardware command"
+        );
+    }
+    match args.command {
+        Command::ListDevices => write_json(
+            &mut std::io::stdout().lock(),
+            &serde_json::to_value(mt7610u_lab::selection::list()?)?,
+        )?,
         Command::Stream {
             firmware,
             channels,
@@ -93,7 +112,14 @@ fn main() -> Result<()> {
                     )
                 })
                 .transpose()?;
-            stream::run(firmware, channels, dwell_ms, max_seconds, rotation)?;
+            stream::run(
+                firmware,
+                channels,
+                dwell_ms,
+                max_seconds,
+                rotation,
+                args.usb_selector,
+            )?;
         }
         Command::InspectFirmware { firmware } => {
             let bytes = std::fs::read(firmware)?;
@@ -111,21 +137,21 @@ fn main() -> Result<()> {
             )?;
         }
         Command::Probe => {
-            let mut device = UsbDevice::open()?;
+            let mut device = UsbDevice::open_selected(args.usb_selector)?;
             let asic = device.read32(0x0000)?;
             let mac = device.read32(0x1000)?;
             let mcu = device.read32(0x0730)?;
             let wlan = device.read32(0x0080)?;
             write_json(
                 &mut std::io::stdout().lock(),
-                &serde_json::json!({"usb_id":"0e8d:7610","asic":format!("{asic:#010x}"),"mac":format!("{mac:#010x}"),"mcu":format!("{mcu:#010x}"),"wlan":format!("{wlan:#010x}"),"bulk_in":device.input_endpoints,"bulk_out":device.output_endpoints}),
+                &serde_json::json!({"usb_id":"0e8d:7610","usb_device":device.identity,"asic":format!("{asic:#010x}"),"mac":format!("{mac:#010x}"),"mcu":format!("{mcu:#010x}"),"wlan":format!("{wlan:#010x}"),"bulk_in":device.input_endpoints,"bulk_out":device.output_endpoints}),
             )?;
         }
         Command::Bootstrap { firmware } => {
             let bytes = std::fs::read(firmware).context("reading firmware")?;
             let fw = Firmware::parse(&bytes)?;
             fw.require_reference()?;
-            let mut device = UsbDevice::open()?;
+            let mut device = UsbDevice::open_selected(args.usb_selector)?;
             let asic = device.read32(0x0000)?;
             ensure!(
                 matches!(asic >> 16, 0x7610 | 0x7650),
@@ -142,7 +168,7 @@ fn main() -> Result<()> {
             )?;
             write_json(
                 &mut std::io::stdout().lock(),
-                &serde_json::json!({"firmware_ready":true,"mcu":device.read32(0x0730)?,"mac_system_control":device.read32(0x1004)?,"supplied_firmware_sha256":fw.sha256,"firmware_uploaded":uploaded,"receive_ready":false}),
+                &serde_json::json!({"usb_device":device.identity,"firmware_ready":true,"mcu":device.read32(0x0730)?,"mac_system_control":device.read32(0x1004)?,"supplied_firmware_sha256":fw.sha256,"firmware_uploaded":uploaded,"receive_ready":false}),
             )?;
         }
         Command::Capture {
@@ -152,7 +178,15 @@ fn main() -> Result<()> {
             seconds,
             channels,
             dwell_ms,
-        } => capture(firmware, output, raw_usb, seconds, channels, dwell_ms)?,
+        } => capture(
+            firmware,
+            output,
+            raw_usb,
+            seconds,
+            channels,
+            dwell_ms,
+            args.usb_selector,
+        )?,
     }
     Ok(())
 }
@@ -262,6 +296,33 @@ fn cancellation_flag() -> Result<Arc<AtomicBool>> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usb_selector_cli_is_canonical_and_available_for_hardware_commands() {
+        for args in [
+            vec!["driver", "probe", "--usb-selector", "usb:0:1.2"],
+            vec![
+                "driver",
+                "--usb-selector",
+                "usb:1:2",
+                "stream",
+                "--firmware",
+                "fw.bin",
+            ],
+        ] {
+            let parsed = Args::try_parse_from(args).unwrap();
+            assert!(parsed.usb_selector.is_some());
+        }
+        for value in ["usb:01:2", "usb:1:02", "usb:1:0", "1:2", "usb:1:2;echo"] {
+            assert!(Args::try_parse_from(["driver", "probe", "--usb-selector", value]).is_err());
+        }
+        assert!(matches!(
+            Args::try_parse_from(["driver", "list-devices"])
+                .unwrap()
+                .command,
+            Command::ListDevices
+        ));
+    }
 
     #[test]
     fn observation_records_are_complete_bounded_lines() {

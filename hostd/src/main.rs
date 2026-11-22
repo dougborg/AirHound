@@ -73,7 +73,7 @@ struct Args {
     #[command(subcommand)]
     command: Option<DiscoveryCommand>,
     /// Concurrent receivers described by a versioned JSON session file
-    #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "no_ble", "no_wifi"])]
+    #[arg(long, conflicts_with_all = ["list_ble_adapters", "ble_adapter", "ble_pcap", "sniffle_port", "sniffle_helper", "sniffle_module_path", "sniffle_coded", "sniffle_python", "sniffle_channel", "external_channels", "external_dwell_ms", "external_scanner", "external_firmware", "external_usb_selector", "no_ble", "no_wifi"])]
     #[cfg_attr(target_os = "linux", arg(conflicts_with = "wifi_interface"))]
     session_config: Option<PathBuf>,
     /// List BLE receivers and capability evidence as JSON, without starting a scan
@@ -126,6 +126,13 @@ struct Args {
     /// Pinned firmware file supplied to the external receiver.
     #[arg(long, requires = "external_scanner")]
     external_firmware: Option<PathBuf>,
+    /// USB attachment selector from the receiver helper list-devices command.
+    #[arg(
+        long,
+        requires = "external_scanner",
+        conflicts_with = "list_ble_adapters"
+    )]
+    external_usb_selector: Option<String>,
     /// External receiver channels; replaces the platform WiFi scanner.
     #[arg(long, value_delimiter = ',', default_value = "1")]
     external_channels: Vec<u8>,
@@ -312,6 +319,16 @@ async fn main() -> io::Result<()> {
         )
         .await;
     }
+    if args
+        .external_usb_selector
+        .as_deref()
+        .is_some_and(|s| !external_wifi::valid_usb_selector(s))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid canonical USB selector",
+        ));
+    }
     if args.external_scanner.is_some() {
         let channels = &args.external_channels;
         if channels.is_empty()
@@ -335,6 +352,7 @@ async fn main() -> io::Result<()> {
         .external_scanner
         .as_ref()
         .map(|path| external_scanner::Options {
+            usb_selector: args.external_usb_selector.clone(),
             executable: path.clone(),
             firmware: args
                 .external_firmware
@@ -695,6 +713,7 @@ async fn filter_task<W: Write, O: Write>(
             dropped,
             producer_dropped,
             reconnect_attempts,
+            ref usb_selector,
         } = event
         {
             control.set_health(
@@ -706,7 +725,7 @@ async fn filter_task<W: Write, O: Write>(
                 },
                 "external_receiver_state",
             );
-            let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts});
+            let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts,"usb_selector":usb_selector});
             observation::write_json(&mut output, &value)?;
             continue;
         }

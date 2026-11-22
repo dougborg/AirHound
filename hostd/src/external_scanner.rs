@@ -15,6 +15,7 @@ use tokio::{
 };
 
 pub struct Options {
+    pub usb_selector: Option<String>,
     pub executable: PathBuf,
     pub firmware: PathBuf,
     pub channels: Vec<u8>,
@@ -25,6 +26,40 @@ pub struct Options {
 
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+fn selected_identity(
+    message: &serde_json::Value,
+    requested: Option<&str>,
+    selected: &mut Option<String>,
+) -> io::Result<()> {
+    let reported = message
+        .get("usb_device")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.get("selector")
+                .and_then(|v| v.as_str())
+                .filter(|s| crate::external_wifi::valid_usb_selector(s))
+                .ok_or_else(|| error("invalid companion USB identity"))
+        })
+        .transpose()?;
+    let expected = selected.as_deref().or(requested);
+    // Legacy helpers may omit identity only until one has been learned. New
+    // helpers retain it through pause/recovery/stop, so every later barrier
+    // must identify the same attachment before we send further commands.
+    if expected.is_some()
+        && (selected.is_some() || message["state"] == "running")
+        && reported != expected
+    {
+        return Err(error("companion did not confirm pinned USB selector"));
+    }
+    if let Some(id) = reported {
+        if requested.is_some_and(|r| r != id) || selected.as_deref().is_some_and(|r| r != id) {
+            return Err(error("companion changed USB identity"));
+        }
+        *selected = Some(id.to_owned());
+    }
+    Ok(())
 }
 
 /// Cancellation-safe bounded framing: the pending line survives select! races.
@@ -186,6 +221,13 @@ async fn scan_loop_with_timeouts(
     if !crate::control::wait_running(&mut state, &tx).await {
         return Ok(());
     }
+    if options
+        .usb_selector
+        .as_deref()
+        .is_some_and(|s| !crate::external_wifi::valid_usb_selector(s))
+    {
+        return Err(error("invalid canonical USB selector"));
+    }
     let mut command = Command::new(&options.executable);
     // Test fixtures are mutable temporary scripts. Read them through a stable
     // interpreter rather than exec'ing their inode: Linux rejects execution
@@ -196,8 +238,11 @@ async fn scan_loop_with_timeouts(
     if let Some(script) = &options.fixture_script {
         command.arg(script);
     }
+    command.arg("stream");
+    if let Some(selector) = &options.usb_selector {
+        command.args(["--usb-selector", selector]);
+    }
     let mut child = command
-        .arg("stream")
         .arg("--firmware")
         .arg(&options.firmware)
         .arg("--channels")
@@ -221,6 +266,7 @@ async fn scan_loop_with_timeouts(
     let stderr = tokio::spawn(stderr_drain(child.stderr.take().expect("piped stderr")));
     let mut stopped: Option<serde_json::Value> = None;
     let mut drops = 0u64;
+    let mut selected_usb = None;
     let mut producer_dropped = 0u64;
     let mut reconnect_attempts = 0u64;
     let mut next_request = 1u64;
@@ -278,6 +324,7 @@ async fn scan_loop_with_timeouts(
                             }
                         }
                         Some("status") => {
+                            selected_identity(&message, options.usb_selector.as_deref(), &mut selected_usb)?;
                             let status = message["state"].as_str().ok_or_else(|| error("missing companion state"))?;
                             let acknowledgement = message.get("request_id").and_then(serde_json::Value::as_u64);
                             match status {
@@ -319,7 +366,7 @@ async fn scan_loop_with_timeouts(
                                 _ => return Err(error("unknown companion state")),
                             }
                             read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts)?;
-                            publish_status(&tx, ScanEvent::ExternalStatus { state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts }).await;
+                            publish_status(&tx, ScanEvent::ExternalStatus { state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts, usb_selector: selected_usb.clone() }).await;
                         }
                         Some("stopped") => { stopped = Some(message); return Err(error("companion stopped unexpectedly")); },
                         _ => return Err(error("unexpected companion message")),
@@ -337,7 +384,10 @@ async fn scan_loop_with_timeouts(
         next_request,
     )
     .await
-    .and_then(|message| read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts));
+    .and_then(|message| {
+        selected_identity(&message, options.usb_selector.as_deref(), &mut selected_usb)?;
+        read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts)
+    });
     // An inherited pipe in a broken companion descendant must not hang teardown.
     let mut stderr = stderr;
     let stderr_result = timeout(Duration::from_secs(1), &mut stderr).await;
@@ -349,6 +399,7 @@ async fn scan_loop_with_timeouts(
     publish_status(
         &tx,
         ScanEvent::ExternalStatus {
+            usb_selector: selected_usb,
             state: if cleanup.is_ok() && result.is_ok() {
                 "stopped"
             } else {
@@ -478,6 +529,7 @@ mod tests {
         }
         fn options(&self) -> Options {
             Options {
+                usb_selector: None,
                 executable: PathBuf::from("/bin/sh"),
                 fixture_script: Some(self.executable.clone()),
                 firmware: self.directory.join("unused"),
@@ -505,6 +557,179 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
     }
+    #[test]
+    fn reported_usb_identity_is_validated_and_cannot_change_on_reconnect() {
+        let mut selected = None;
+        let running =
+            |id: &str| serde_json::json!({"state":"running","usb_device":{"selector":id}});
+        assert!(selected_identity(
+            &serde_json::json!({"state":"running"}),
+            Some("usb:1:2"),
+            &mut selected
+        )
+        .is_err());
+        assert!(selected_identity(&running("usb:1:3"), Some("usb:1:2"), &mut selected).is_err());
+        selected_identity(&running("usb:1:2"), Some("usb:1:2"), &mut selected).unwrap();
+        assert_eq!(selected.as_deref(), Some("usb:1:2"));
+        assert!(
+            selected_identity(&serde_json::json!({"state":"running"}), None, &mut selected)
+                .is_err()
+        );
+        assert!(selected_identity(
+            &serde_json::json!({"type":"stopped","usb_device":{"selector":"usb:1:3"}}),
+            None,
+            &mut selected
+        )
+        .is_err());
+        assert!(
+            selected_identity(&serde_json::json!({"type":"stopped"}), None, &mut selected).is_err()
+        );
+        selected_identity(
+            &serde_json::json!({"type":"stopped","usb_device":{"selector":"usb:1:2"}}),
+            None,
+            &mut selected,
+        )
+        .unwrap();
+
+        selected_identity(&running("usb:1:2"), Some("usb:1:2"), &mut selected).unwrap();
+        assert!(selected_identity(&running("usb:1:3"), None, &mut selected).is_err());
+        assert!(selected_identity(&running("usb:01:2"), None, &mut selected).is_err());
+        assert!(selected_identity(
+            &serde_json::json!({"state":"recovering"}),
+            Some("usb:1:2"),
+            &mut selected
+        )
+        .is_err());
+        selected_identity(
+            &serde_json::json!({"state":"recovering","usb_device":{"selector":"usb:1:2"}}),
+            Some("usb:1:2"),
+            &mut selected,
+        )
+        .unwrap();
+        selected_identity(
+            &serde_json::json!({"type":"stopped","usb_device":null}),
+            Some("usb:1:2"),
+            &mut None,
+        )
+        .unwrap();
+        selected_identity(&serde_json::json!({"state":"running"}), None, &mut None).unwrap();
+    }
+
+    #[tokio::test]
+    async fn selected_usb_is_forwarded_and_reported_without_shell_interpolation() {
+        let body = LIFECYCLE
+            .replace(
+                "\"type\":\"status\"",
+                "\"type\":\"status\",\"usb_device\":{\"selector\":\"usb:1:2.3\"}",
+            )
+            .replace(
+                "\"type\":\"stopped\"",
+                "\"type\":\"stopped\",\"usb_device\":{\"selector\":\"usb:1:2.3\"}",
+            );
+        let fake = Fake::new(&format!("printf '%s\\n' \"$@\" > \"$0.args\"\n{body}"));
+        let mut options = fake.options();
+        options.usb_selector = Some("usb:1:2.3".into());
+        let control = ScanControl::new(true);
+        let (tx, mut rx) = mpsc::channel(8);
+        let worker = tokio::spawn(scan_loop(options, tx, control.clone()));
+        let status = timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(status, ScanEvent::ExternalStatus { usb_selector: Some(id), state, .. } if id == "usb:1:2.3" && state == "running")
+        );
+        control.shutdown();
+        timeout(Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let arguments = std::fs::read_to_string(fake.executable.with_extension("args")).unwrap();
+        let args: Vec<_> = arguments.lines().collect();
+        assert!(args
+            .windows(2)
+            .any(|a| a == ["--usb-selector", "usb:1:2.3"]));
+        fake.assert_exited();
+    }
+
+    #[tokio::test]
+    async fn mismatched_pause_identity_never_triggers_resume() {
+        let body = LIFECYCLE
+            .replace(
+                "\"state\":\"running\"",
+                "\"state\":\"running\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
+            )
+            .replace(
+                "\"state\":\"paused\"",
+                "\"state\":\"paused\",\"usb_device\":{\"selector\":\"usb:1:3\"}",
+            )
+            .replace(
+                "\"type\":\"stopped\"",
+                "\"type\":\"stopped\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
+            )
+            .replace(
+                "case \"$command\" in",
+                "printf '%s\\n' \"$command\" >> \"$0.commands\"\ncase \"$command\" in",
+            );
+        let fake = Fake::new(&body);
+        let control = ScanControl::new(true);
+        let (tx, mut rx) = mpsc::channel(8);
+        let worker = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        control.store(false, std::sync::atomic::Ordering::Relaxed);
+        control.store(true, std::sync::atomic::Ordering::Relaxed);
+        let error = timeout(Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("USB selector")
+                || error.to_string().contains("USB identity"),
+            "{error}"
+        );
+        let commands = std::fs::read_to_string(fake.executable.with_extension("commands")).unwrap();
+        assert!(commands.contains("pause"));
+        assert!(!commands.contains("resume"));
+        fake.assert_exited();
+    }
+
+    #[tokio::test]
+    async fn mismatched_stopped_identity_is_not_a_verified_selected_stop() {
+        let body = LIFECYCLE
+            .replace(
+                "\"state\":\"running\"",
+                "\"state\":\"running\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
+            )
+            .replace(
+                "\"type\":\"stopped\"",
+                "\"type\":\"stopped\",\"usb_device\":{\"selector\":\"usb:1:3\"}",
+            );
+        let fake = Fake::new(&body);
+        let control = ScanControl::new(true);
+        let (tx, mut rx) = mpsc::channel(8);
+        let worker = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        control.shutdown();
+        assert!(timeout(Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err());
+        let status = rx.recv().await.unwrap();
+        assert!(
+            matches!(status, ScanEvent::ExternalStatus {state, usb_selector:Some(id), ..} if state == "failed" && id == "usb:1:2")
+        );
+        fake.assert_exited();
+    }
+
     const LIFECYCLE: &str = r#"
 printf '%s\n' '{"type":"hello","protocol_version":1}' '{"type":"status","state":"running"}'
 while IFS= read -r command; do

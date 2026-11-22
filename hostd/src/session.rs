@@ -36,6 +36,8 @@ pub enum Source {
         coded: bool,
     },
     ExternalWifi {
+        #[serde(default)]
+        usb_selector: Option<String>,
         executable: PathBuf,
         firmware: PathBuf,
         channels: Vec<u8>,
@@ -75,6 +77,8 @@ impl SessionConfig {
         }
         let mut ids = HashSet::new();
         let mut resources = HashSet::new();
+        let mut external_count = 0;
+        let mut default_external = false;
         let mut channel_load = [0usize; 3];
         for receiver in &self.receivers {
             if let Source::Sniffle {
@@ -153,11 +157,20 @@ impl SessionConfig {
                     serial_resource(&canonical)
                 }
                 Source::ExternalWifi {
+                    usb_selector,
                     executable,
                     firmware,
                     channels,
                     dwell_ms,
                 } => {
+                    external_count += 1;
+                    default_external |= usb_selector.is_none();
+                    if usb_selector
+                        .as_deref()
+                        .is_some_and(|s| !crate::external_wifi::valid_usb_selector(s))
+                    {
+                        return Err(invalid("invalid canonical USB selector"));
+                    }
                     if executable.as_os_str().is_empty()
                         || firmware.as_os_str().is_empty()
                         || !(100..=10_000).contains(dwell_ms)
@@ -172,9 +185,10 @@ impl SessionConfig {
                             "invalid external WiFi executable, firmware, channel plan or dwell",
                         ));
                     }
-                    // Current MT7610U protocol has no physical-device selector.
-                    // Multiple instances could claim the same radio, so reject them.
-                    "external_mt7610u".into()
+                    format!(
+                        "external_mt7610u:{}",
+                        usb_selector.as_deref().unwrap_or("default")
+                    )
                 }
                 Source::BlePcap { path } => {
                     if path.as_os_str().is_empty() {
@@ -186,6 +200,11 @@ impl SessionConfig {
             if !resources.insert(resource) {
                 return Err(invalid("a receiver resource is selected more than once"));
             }
+        }
+        if external_count > 1 && default_external {
+            return Err(invalid(
+                "multiple external WiFi receivers require explicit distinct USB selectors",
+            ));
         }
         if native_ble_count > 1 && default_ble {
             return Err(invalid(
@@ -223,8 +242,13 @@ impl Source {
                 serde_json::json!({"mode":"fixed_primary","channel":channel,"phy":if *coded {"coded"} else {"1m"},"secondary_following":true})
             }
             Self::ExternalWifi {
-                channels, dwell_ms, ..
-            } => serde_json::json!({"mode":"channel_plan","channels":channels,"dwell_ms":dwell_ms}),
+                channels,
+                dwell_ms,
+                usb_selector,
+                ..
+            } => {
+                serde_json::json!({"mode":"channel_plan","channels":channels,"dwell_ms":dwell_ms,"usb_selector":usb_selector})
+            }
             Self::BlePcap { .. } => serde_json::json!({"mode":"replay"}),
         }
     }
@@ -261,6 +285,7 @@ mod tests {
     }
     fn external() -> Source {
         Source::ExternalWifi {
+            usb_selector: None,
             executable: "driver".into(),
             firmware: "firmware.bin".into(),
             channels: vec![1, 6, 11],
@@ -275,9 +300,51 @@ mod tests {
     }
 
     #[test]
+    fn multiple_external_receivers_require_distinct_canonical_selectors() {
+        let selected = |selector: &str, channel| {
+            let mut source = external();
+            if let Source::ExternalWifi {
+                usb_selector,
+                channels,
+                ..
+            } = &mut source
+            {
+                *usb_selector = Some(selector.into());
+                *channels = vec![channel];
+            }
+            source
+        };
+        let resolved = plan(vec![selected("usb:0:1.2", 1), selected("usb:0:1.3", 6)])
+            .resolve()
+            .unwrap();
+        assert_eq!(
+            resolved.receivers[0].source.assignment()["channels"],
+            serde_json::json!([1])
+        );
+        assert_eq!(
+            resolved.receivers[1].source.assignment()["usb_selector"],
+            "usb:0:1.3"
+        );
+        invalid_plan(plan(vec![external(), selected("usb:1:2", 6)]));
+        invalid_plan(plan(vec![selected("usb:1:2", 1), selected("usb:1:2", 6)]));
+        for selector in [
+            "",
+            "usb:01:2",
+            "usb:1:02",
+            "usb:1:0",
+            "usb:1:1.2.3.4.5.6.7.8",
+            "bus:1:2",
+            "usb:256:1",
+        ] {
+            invalid_plan(plan(vec![selected(selector, 1)]));
+        }
+    }
+
+    #[test]
     fn documented_session_examples_resolve() {
         for example in [
             include_str!("../../docs/examples/session-linux.json"),
+            include_str!("../../docs/examples/session-alfa-multi.json"),
             include_str!("../../docs/examples/session-macos-sniffle.json"),
         ] {
             let config: SessionConfig = serde_json::from_str(example).unwrap();
@@ -452,6 +519,7 @@ mod tests {
                 firmware,
                 channels,
                 dwell_ms,
+                ..
             } = &mut source
             {
                 match field {
@@ -508,7 +576,7 @@ mod tests {
         );
         assert_eq!(
             sources[4].assignment(),
-            json!({"mode":"channel_plan","channels":[1,6,11],"dwell_ms":100})
+            json!({"mode":"channel_plan","channels":[1,6,11],"dwell_ms":100,"usb_selector":null})
         );
         assert_eq!(sources[5].assignment(), json!({"mode":"replay"}));
         let mut coded = sniffle("coded-port", Some(39));

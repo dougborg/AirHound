@@ -24,6 +24,7 @@ pub(super) fn capture(
     seconds: u16,
     channels: Vec<u8>,
     dwell_ms: u16,
+    selector: Option<mt7610u_lab::selection::Selector>,
 ) -> Result<()> {
     validate_capture_plan(&channels, raw_usb.is_some())?;
     let bytes = std::fs::read(firmware_path)?;
@@ -32,8 +33,8 @@ pub(super) fn capture(
     let mut output = new_private_file(output)?;
     let mut raw_output = raw_usb.map(new_private_file).transpose()?;
     let stop = cancellation_flag()?;
-    let mut device = UsbDevice::open()?;
-    let summary = capture_device(
+    let mut device = UsbDevice::open_selected(selector)?;
+    let mut summary = capture_device(
         &mut device,
         &fw,
         &mut output,
@@ -45,6 +46,7 @@ pub(super) fn capture(
         },
         &stop,
     )?;
+    summary["usb_device"] = serde_json::to_value(&device.identity)?;
     write_json(&mut std::io::stdout().lock(), &summary)
 }
 

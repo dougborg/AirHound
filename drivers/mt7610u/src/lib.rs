@@ -10,3 +10,5 @@ pub mod transport;
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod test_support;
+
+pub mod selection;

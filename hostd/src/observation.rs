@@ -33,6 +33,7 @@ pub enum ScanEvent {
         generation: u64,
     },
     ExternalStatus {
+        usb_selector: Option<String>,
         state: String,
         dropped: u64,
         producer_dropped: u64,

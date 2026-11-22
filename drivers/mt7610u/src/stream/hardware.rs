@@ -24,6 +24,7 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
     buffer: Vec<u8>,
     stop: Arc<AtomicBool>,
     cleanup_unverified: bool,
+    identity: Option<mt7610u_lab::selection::Identity>,
     transfers: u64,
     frames: u64,
     beacons: u64,
@@ -31,10 +32,11 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
 }
 impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware<'_, T, F> {
     fn metrics(&self) -> Value {
-        json!({"transfers":self.transfers,"frames":self.frames,"beacons":self.beacons,"malformed_transfers":self.malformed})
+        json!({"usb_device":self.identity,"transfers":self.transfers,"frames":self.frames,"beacons":self.beacons,"malformed_transfers":self.malformed})
     }
     fn start(&mut self) -> Result<()> {
         self.device = Some((self.open)()?);
+        self.identity = self.device.as_ref().and_then(|d| d.identity.clone());
         self.cleanup_unverified = true;
         let device = self.device.as_mut().unwrap();
         let (setup, _) =
@@ -136,6 +138,7 @@ impl<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> Hardware<'a, T, F> {
             buffer: vec![0; 65536],
             stop,
             cleanup_unverified: false,
+            identity: None,
             transfers: 0,
             frames: 0,
             beacons: 0,
@@ -162,7 +165,17 @@ mod tests {
             vec![6, 153],
             Duration::from_millis(100),
             stop.clone(),
-            || Ok(endpoint.device()),
+            || {
+                let mut device = endpoint.device();
+                device.identity = Some(mt7610u_lab::selection::Identity {
+                    selector: "usb:1:2".into(),
+                    bus: 1,
+                    ports: vec![2],
+                    address: 3,
+                    identity_scope: "usb_attachment_topology",
+                });
+                Ok(device)
+            },
         );
         assert!(h.poll().is_err());
         h.shutdown().unwrap();
@@ -193,6 +206,7 @@ mod tests {
         assert_eq!(h.channel_index, 1);
         h.shutdown().unwrap();
         assert!(!h.cleanup_unverified);
+        assert_eq!(h.metrics()["usb_device"]["selector"], "usb:1:2");
         assert_eq!(endpoint.0.lock().unwrap().registers[&0x1004] & 0xc, 0);
         stop.store(true, Ordering::Relaxed);
         assert!(h.start().is_err());

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "receivers": [
+    {
+      "id": "alfa-channel-1",
+      "source": {
+        "kind": "external_wifi",
+        "usb_selector": "usb:1:1.2",
+        "executable": "/path/to/mt7610u-lab",
+        "firmware": "/path/to/mt7610e.bin",
+        "channels": [1],
+        "dwell_ms": 500
+      }
+    },
+    {
+      "id": "alfa-channels-6-11",
+      "source": {
+        "kind": "external_wifi",
+        "usb_selector": "usb:1:1.3",
+        "executable": "/path/to/mt7610u-lab",
+        "firmware": "/path/to/mt7610e.bin",
+        "channels": [6, 11],
+        "dwell_ms": 500
+      }
+    }
+  ]
+}
