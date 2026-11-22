@@ -8,14 +8,14 @@ const sources = pack.sources as Record<
 ---
 
 <Site
-  title="Signature evidence"
+  title="Signatures"
   description="Inspect AirHound compiled-in signature rules, provenance, review status and matching limitations."
 >
   <header class="page-header wrap">
-    <h1>Inspect the evidence.</h1>
+    <h1>Signatures</h1>
     <p class="lead">
-      Every rule has a scope. A useful signature tells you what matched, where
-      the claim came from and what remains uncertain.
+      The built-in rules below describe matching fields, source references,
+      review status, and known limitations.
     </p>
   </header>
   <div class="wrap content">
@@ -36,8 +36,8 @@ const sources = pack.sources as Record<
         </p>
       </div>
       <div class="notice">
-        <strong>Compiled-in rules, not downloadable runtime packs.</strong>
-        Runtime loading remains{" "}
+        <strong>Rule availability</strong>
+        These rules are compiled into AirHound. Runtime loading remains{" "}
         <a href="https://github.com/dougborg/AirHound/issues/14">future work</a>
         . Disabled research candidates are separate from this catalog.{" "}
         <a href="/reference/docs/signature-research/">
@@ -114,7 +114,7 @@ const sources = pack.sources as Record<
         </div>
       </article>
     ))}
-    <h2>Improve a rule with a reproducible case.</h2>
+    <h2>Contributing signature evidence</h2>
     <p>
       Provide labeled device/model/state evidence, ordinary-device negatives,
       source attribution and reuse terms. Keep identifying captures private.{" "}

@@ -39,14 +39,20 @@ Maintainer responsibilities: domain renewal and access, trusted deployment appro
 
 ## Quality and remaining launch gates
 
-The homepage uses self-hosted Manrope and Newsreader (SIL OFL; licenses are distributed with their npm packages). Essential content and links work without JavaScript; catalog filters are progressive enhancements. The docs search is local Pagefind. Internal page/anchor validation and a 100 KiB gzip homepage-JS budget are enforced by `check-site.mjs`.
+The homepage uses self-hosted Manrope (SIL OFL; licenses are distributed with their npm packages). Essential content and links work without JavaScript; catalog filters are progressive enhancements. The docs search is local Pagefind. Internal page/anchor validation and a 100 KiB gzip homepage-JS budget are enforced by `check-site.mjs`.
 
 Automated axe checks target WCAG A/AA rules but do not establish conformance. Before production launch, finish manual keyboard/screen-reader checks, review mobile/desktop screenshots, repeat the recorded Lighthouse mobile measurement when content changes, and resolve any hardware/release wording discrepancies. Full archived versioned-doc snapshots and hosted PR preview URLs are later enhancements, not implemented claims. No website changes close hardware acceptance gates.
 
 
-## Initial review evidence (2026-11-21)
+## Initial review evidence (2026-11-21, before the blue reference redesign)
 
 - 46 generated pages; all internal links/anchors checked, 9 focused data/URL tests, Astro type checks, 7 Chromium browser tests (including mobile/desktop axe, local search, filters and no-JavaScript essentials) passed locally.
 - Homepage Lighthouse: performance 100, accessibility 100, best practices 100; ~94,461 bytes initial transfer, simulated LCP 0.75 s, CLS 0. Local HTTP preview, Chromium 159, Lighthouse mobile 412×823, simulated 150 ms RTT / 1.6 Mbps / 4× CPU slowdown. This is a local lab result, not real-user production performance or full accessibility conformance.
 - Homepage HTML ~2.2 KiB gzip and referenced JS ~1.1 KiB gzip. No third-party runtime network requests are required.
 - Desktop 1440×1000 and mobile 390×844 full-page screenshots are generated in the ignored `.impeccable/review/` directory and uploaded by CI. No production deployment occurred.
+
+## Reference redesign verification
+
+The blue schematic/field-atlas design is documented in [DESIGN.md](DESIGN.md). The homepage is a compact reference with capabilities, setup links and observation/export guidance. Its route illustration is synthetic receiver context, not live data. Main pages and imported docs share the blue palette and Manrope typography.
+
+Local verification: 49 generated pages with internal links/anchors checked, 10 data/URL/heading tests, Astro checks with no diagnostics, and 9 Chromium browser tests passed. Browser coverage includes desktop/mobile homepage accessibility, catalog filters, docs search, no-JavaScript essentials, downloads all custom content routes, and light/dark documentation themes. Homepage HTML is about 2.7 KiB gzip; referenced JavaScript is about 1.1 KiB gzip. The initial Lighthouse results above describe the earlier design and are not a measurement of this redesign.

@@ -8,10 +8,10 @@ for (const size of [
     await page.setViewportSize(size);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      "wireless world",
+      "AirHound",
     );
     await expect(
-      page.getByRole("link", { name: "Choose your setup" }),
+      page.getByRole("link", { name: "Getting started", exact: true }),
     ).toHaveAttribute("href", "/start/");
     expect(
       await page.evaluate(
@@ -61,7 +61,14 @@ test("docs local search finds imported component guidance", async ({
 test("key content pages pass automated accessibility checks", async ({
   page,
 }) => {
-  for (const path of ["/downloads/", "/hardware/", "/signatures/", "/start/"]) {
+  for (const path of [
+    "/downloads/",
+    "/hardware/",
+    "/signatures/",
+    "/start/",
+    "/contribute/",
+    "/privacy/",
+  ]) {
     await page.goto(path);
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
@@ -88,11 +95,9 @@ test("published preview downloads retain exact platform and source choices", asy
   await expect(
     page.getByRole("heading", { name: "airhound-v0.2.0", exact: true }),
   ).toBeVisible();
-  const preview = page
-    .locator("section.release")
-    .filter({
-      has: page.getByRole("heading", { name: "airhound-v0.2.0", exact: true }),
-    });
+  const preview = page.locator("section.release").filter({
+    has: page.getByRole("heading", { name: "airhound-v0.2.0", exact: true }),
+  });
   await expect(preview.locator("[data-download]")).toHaveCount(12);
   await page.locator("#download-platform").selectOption("macOS");
   await expect(
@@ -129,4 +134,40 @@ test("published preview downloads retain exact platform and source choices", asy
     path: ".impeccable/review/downloads-mobile.png",
     fullPage: true,
   });
+});
+
+test("documentation themes remain readable", async ({ page }) => {
+  await page.goto("/reference/docs/");
+  for (const theme of ["light", "dark"]) {
+    await page
+      .locator("starlight-theme-select select:visible")
+      .selectOption(theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+      .analyze();
+    expect(results.violations, theme).toEqual([]);
+  }
+});
+
+test("imported documentation shows one title and preserves source anchors", async ({
+  page,
+}) => {
+  for (const [route, anchor] of [
+    ["/reference/docs/", "airhound-documentation"],
+    ["/reference/hostd/", "airhound-desktop-scanner"],
+    ["/reference/docs/firmware/", "esp32-firmware"],
+  ]) {
+    await page.goto(route);
+    const title = await page.locator("h1").innerText();
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      page.locator(`.sl-markdown-content > span[id="${anchor}"]`),
+    ).toHaveCount(1);
+    for (const link of await page.locator(".pagination-links a").all()) {
+      await expect(link).toHaveCSS("box-shadow", "none");
+    }
+  }
 });

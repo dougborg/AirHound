@@ -27,11 +27,7 @@ const { stable, preview } = selectChannels(catalog.releases);
   description="Choose an AirHound release by component, operating system, board and runtime. Preview labels and source provenance stay explicit."
 >
   <header class="page-header wrap">
-    <h1>
-      The right build.
-      <br />
-      For your setup.
-    </h1>
+    <h1>Downloads</h1>
     <p class="lead">
       Choose a published release, then match the component and platform.
       Firmware boards and runtimes are not interchangeable.
@@ -39,8 +35,7 @@ const { stable, preview } = selectChannels(catalog.releases);
   </header>
   <div class="wrap content">
     <div class="notice">
-      <strong>Stable and preview are different channels.</strong>Latest
-      published stable:{" "}
+      <strong>Release channels</strong>Latest published stable:{" "}
       {stable ? <a href={stable.url}>{stable.tag}</a> : "none in this catalog"}.
       Latest published preview:{" "}
       {preview ? (
@@ -160,7 +155,7 @@ const { stable, preview } = selectChannels(catalog.releases);
         </li>
       </ul>
     </div>
-    <h2>Verify the file you downloaded.</h2>
+    <h2>Checksum verification</h2>
     <div class="prose">
       <p>
         Where provided, download <code>SHA256SUMS</code> alongside the selected

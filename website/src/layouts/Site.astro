@@ -6,11 +6,11 @@ interface Props {
 }
 const { title, description } = Astro.props;
 const navigation = [
-  ["Get started", "/start/"],
-  ["Downloads", "/downloads/"],
+  ["Documentation", "/reference/docs/"],
+  ["Getting started", "/start/"],
   ["Hardware", "/hardware/"],
-  ["Docs", "/reference/docs/"],
   ["Signatures", "/signatures/"],
+  ["Downloads", "/downloads/"],
 ];
 const current = Astro.url.pathname;
 ---
@@ -20,9 +20,9 @@ const current = Astro.url.pathname;
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title === 'AirHound' ? 'AirHound — Read the wireless world' : `${title} · AirHound`}</title>
+    <title>{title === 'AirHound' ? 'AirHound — Project reference' : `${title} · AirHound`}</title>
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#f7f4ed" />
+    <meta name="theme-color" content="#f2f5f7" />
     <meta
       name="robots"
       content={
@@ -71,7 +71,7 @@ const current = Astro.url.pathname;
         ))}
       </nav>
       <a class="source-link" href="https://github.com/dougborg/AirHound">
-        GitHub <span aria-hidden="true">↗</span>
+        GitHub
       </a>
     </header>
     <main id="main">
@@ -82,11 +82,7 @@ const current = Astro.url.pathname;
         <a class="wordmark" href="/">
           AirHound
         </a>
-        <p>
-          Open tools. Observable signals.
-          <br />
-          Evidence you can inspect.
-        </p>
+        <p>Open-source Wi-Fi and Bluetooth observation software.</p>
       </div>
       <nav aria-label="Project links">
         <a href="/contribute/">Contribute</a>
@@ -95,9 +91,7 @@ const current = Astro.url.pathname;
         <a href="/privacy/">Privacy & licenses</a>
       </nav>
       <p class="footer-note">
-        Built in the open.
-        <br />
-        Experimental hardware is labeled throughout.
+        <a href="/reference/docs/release-status/">Release and testing status</a>
       </p>
     </footer>
   </body>

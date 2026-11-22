@@ -1,28 +1,48 @@
 @import "@fontsource-variable/manrope";
-@import "@fontsource-variable/newsreader";
+
 :root {
   --sl-font: "Manrope Variable", sans-serif;
-  --sl-color-accent-low: #412216;
-  --sl-color-accent: #d16639;
-  --sl-color-accent-high: #ffb592;
+  --sl-color-accent-low: #172d51;
+  --sl-color-accent: #6f9fff;
+  --sl-color-accent-high: #c4d8ff;
+  --sl-color-bg: #101a28;
+  --sl-color-bg-nav: #142033;
+  --sl-color-bg-sidebar: #142033;
+  --sl-color-hairline: #344c6d;
 }
 :root[data-theme="light"] {
-  --sl-color-bg: #f7f4ed;
-  --sl-color-bg-nav: #eeebe3;
-  --sl-color-accent-low: #f8d9c8;
-  --sl-color-accent: #ae3f16;
-  --sl-color-accent-high: #713019;
+  --sl-color-bg: #f2f5f7;
+  --sl-color-bg-nav: #e7edf5;
+  --sl-color-bg-sidebar: #e7edf5;
+  --sl-color-text: #182e49;
+  --sl-color-text-accent: #1552ce;
+  --sl-color-accent-low: #dce7f6;
+  --sl-color-accent: #1552ce;
+  --sl-color-accent-high: #123b83;
+  --sl-color-hairline: #b9c9dd;
 }
 h1,
-h2 {
-  font-family: "Newsreader Variable", Georgia, serif;
-  font-weight: 500;
+h2,
+h3 {
+  font-family: var(--sl-font);
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+h1 {
+  font-weight: 800;
 }
 :focus-visible {
-  outline: 3px solid #bd5128;
+  outline: 3px solid var(--sl-color-text-accent);
   outline-offset: 4px;
 }
 ::selection {
-  background: #eed19e;
-  color: #262c27;
+  background: #b5d0ff;
+  color: #10294a;
+}
+a {
+  text-underline-offset: 0.2em;
+}
+
+.pagination-links a {
+  box-shadow: none;
 }
