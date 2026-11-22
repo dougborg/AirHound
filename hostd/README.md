@@ -342,3 +342,36 @@ The source-built `serve --socket PATH` and `client --socket PATH` commands expos
 passive device inventory, status and session validation through a shared Rust
 client. They do not start scans. See the [control API guide](../docs/shared-backend-api.md)
 for private socket setup, framing, bounds and planned multi-client capture control.
+
+## Durable recording
+
+Add `--database PATH` to a `--session-config` or `--wifi-pcap` run to retain its
+complete structured output in SQLite alongside the usual JSON and CSV output:
+
+```sh
+airhound-hostd --session-config session.json --database captures.sqlite --output observations.csv
+airhound-hostd serve --socket "$PWD/private/control.sock" --database "$PWD/captures.sqlite"
+airhound-hostd client --socket "$PWD/private/control.sock" recordings --limit 20
+airhound-hostd client --socket "$PWD/private/control.sock" records --run-id RUN_ID --limit 100
+```
+
+The service exposes read-only history from its configured database. Use the
+returned `next_before` with `recordings --before` and `next_after` with
+`records --after` to continue while `has_more` is true. It does not recover or
+change a running recording. Capture start/pause/resume through the service is
+not implemented yet.
+
+One writer owns a database at a time. Records include original source tags,
+capture timestamps, replay markers and detection evidence; missing identities
+remain missing. Session-level status records use a separate logical source.
+The bounded queue fails explicitly on overflow; an enqueue is not a durable
+commit. A successful capture exit waits for accepted records to commit before
+marking the run finished. Failed capture preserves committed records with a
+failed state; reopening a writer marks unclosed runs interrupted.
+
+Schema migrations run in transactions and verify immutable migration checksums.
+Unknown databases and newer schema versions are rejected. There is no downgrade
+or live backup command yet. Do not copy only the database file while recording:
+SQLite WAL sidecars may contain committed data. This implementation has offline
+single- and dual-source replay coverage; live receiver and sustained-throughput
+acceptance remain outstanding.

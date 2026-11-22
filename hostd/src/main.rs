@@ -215,6 +215,9 @@ enum DiscoveryCommand {
     Serve {
         #[arg(long)]
         socket: PathBuf,
+        /// Expose read-only history from this recording database
+        #[arg(long)]
+        database: Option<PathBuf>,
     },
     /// Attach to an existing service using the shared Rust client
     Client {
@@ -292,8 +295,12 @@ impl Args {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
-    if let Some(DiscoveryCommand::Serve { ref socket }) = args.command {
-        return service_cli::serve(socket).await;
+    if let Some(DiscoveryCommand::Serve {
+        ref socket,
+        ref database,
+    }) = args.command
+    {
+        return service_cli::serve(socket, database.clone()).await;
     }
     if let Some(DiscoveryCommand::Client { socket, command }) = args.command {
         return service_cli::client(&socket, command).await;

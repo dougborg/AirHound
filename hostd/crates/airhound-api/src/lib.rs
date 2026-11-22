@@ -6,7 +6,14 @@ use serde_json::Value;
 pub const VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_CONFIG_BYTES: usize = 65_536;
-pub const METHODS: &[&str] = &["hello", "status", "devices.list", "session.validate"];
+pub const METHODS: &[&str] = &[
+    "hello",
+    "status",
+    "devices.list",
+    "session.validate",
+    "recordings.list",
+    "recordings.records",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
@@ -22,6 +29,14 @@ pub enum Command {
     },
     #[serde(rename = "session.validate")]
     SessionValidate { config: Value },
+    #[serde(rename = "recordings.list")]
+    RecordingsList { before: Option<String>, limit: u16 },
+    #[serde(rename = "recordings.records")]
+    RecordingRecords {
+        run_id: String,
+        after: i64,
+        limit: u16,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

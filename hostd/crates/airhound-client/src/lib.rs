@@ -113,6 +113,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     pub async fn status(&mut self) -> Result<Value, ClientError> {
         self.call(Command::Status {}).await
     }
+    pub async fn recordings(
+        &mut self,
+        before: Option<String>,
+        limit: u16,
+    ) -> Result<Value, ClientError> {
+        self.call(Command::RecordingsList { before, limit }).await
+    }
+    pub async fn recording_records(
+        &mut self,
+        run_id: String,
+        after: i64,
+        limit: u16,
+    ) -> Result<Value, ClientError> {
+        self.call(Command::RecordingRecords {
+            run_id,
+            after,
+            limit,
+        })
+        .await
+    }
     pub async fn devices(&mut self, all: bool) -> Result<Value, ClientError> {
         self.call(Command::DevicesList { all }).await
     }

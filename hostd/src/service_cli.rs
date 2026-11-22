@@ -15,6 +15,22 @@ use std::{
 pub(crate) enum ClientCommand {
     /// Show the connected service's capabilities (not RF readiness)
     Status,
+    /// List durable recordings, newest first
+    Recordings {
+        #[arg(long)]
+        before: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: u16,
+    },
+    /// Read a bounded page of retained observations and evidence
+    Records {
+        #[arg(long)]
+        run_id: String,
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        #[arg(long, default_value_t = 100)]
+        limit: u16,
+    },
     /// Passively inventory device candidates on the backend host
     Devices {
         #[arg(long)]
@@ -27,8 +43,54 @@ pub(crate) enum ClientCommand {
     },
 }
 
-struct LocalBackend;
+#[derive(Default)]
+struct LocalBackend {
+    database: Option<PathBuf>,
+}
+impl LocalBackend {
+    fn history(
+        &self,
+        query: impl FnOnce(airhound_hostd::storage::Reader) -> io::Result<Value> + Send + 'static,
+    ) -> BackendResult {
+        let path = self.database.clone();
+        Box::pin(async move {
+            let path = path.ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedMethod,
+                    "recording history is not configured",
+                )
+            })?;
+            tokio::task::spawn_blocking(move || {
+                query(airhound_hostd::storage::Reader::open(&path)?)
+            })
+            .await
+            .map_err(|_| ApiError::new(ErrorCode::Internal, "recording query task failed"))?
+            .map_err(|error| {
+                ApiError::new(
+                    if error.kind() == io::ErrorKind::InvalidInput {
+                        ErrorCode::InvalidRequest
+                    } else {
+                        ErrorCode::Internal
+                    },
+                    error.to_string(),
+                )
+            })
+        })
+    }
+}
 impl Backend for LocalBackend {
+    fn recordings(&self, before: Option<String>, limit: u16) -> BackendResult {
+        self.history(move |reader| {
+            serde_json::to_value(reader.run_page(before.as_deref(), limit.into())?)
+                .map_err(io::Error::other)
+        })
+    }
+    fn recording_records(&self, run_id: String, after: i64, limit: u16) -> BackendResult {
+        self.history(move |reader| {
+            serde_json::to_value(reader.records(&run_id, after, limit.into())?)
+                .map_err(io::Error::other)
+        })
+    }
     fn devices(&self, all: bool) -> BackendResult {
         Box::pin(async move {
             let inventory =
@@ -52,8 +114,8 @@ impl Backend for LocalBackend {
     }
 }
 
-pub(crate) async fn serve(path: &Path) -> io::Result<()> {
-    airhound_hostd::service::serve(path, Arc::new(LocalBackend), async {
+pub(crate) async fn serve(path: &Path, database: Option<PathBuf>) -> io::Result<()> {
+    airhound_hostd::service::serve(path, Arc::new(LocalBackend { database }), async {
         use tokio::signal::unix::{signal, SignalKind};
         match signal(SignalKind::terminate()) {
             Ok(mut terminate) => {
@@ -98,6 +160,12 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         .map_err(io::Error::other)?;
     let result = match command {
         ClientCommand::Status => client.status().await,
+        ClientCommand::Recordings { before, limit } => client.recordings(before, limit).await,
+        ClientCommand::Records {
+            run_id,
+            after,
+            limit,
+        } => client.recording_records(run_id, after, limit).await,
         ClientCommand::Devices { all } => client.devices(all).await,
         ClientCommand::Validate { session_config } => {
             client.validate(read_config(&session_config)?).await
@@ -124,9 +192,12 @@ mod tests {
             crate::session_runtime::preview(serde_json::from_value(config.clone()).unwrap())
                 .await
                 .unwrap();
-        assert_eq!(LocalBackend.validate(config).await.unwrap(), expected);
         assert_eq!(
-            LocalBackend
+            LocalBackend::default().validate(config).await.unwrap(),
+            expected
+        );
+        assert_eq!(
+            LocalBackend::default()
                 .validate(serde_json::json!({"version":9,"receivers":[]}))
                 .await
                 .unwrap_err()

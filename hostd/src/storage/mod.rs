@@ -100,6 +100,12 @@ pub struct Run {
     pub record_count: i64,
     pub config: Value,
 }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RunPage {
+    pub runs: Vec<Run>,
+    pub next_before: Option<String>,
+    pub has_more: bool,
+}
 
 /// One writer owner per database. The advisory lock outlives the SQLite connection.
 /// Readers use `Reader`; opening a second writer must never interrupt a live run.
@@ -297,15 +303,44 @@ impl Reader {
         Ok(Self { connection })
     }
     pub fn runs(&self, limit: usize) -> io::Result<Vec<Run>> {
+        Ok(self.run_page(None, limit)?.runs)
+    }
+    /// Newest first, with an exclusive stable cursor. A cursor whose run was
+    /// removed is rejected rather than silently restarting at the newest run.
+    pub fn run_page(&self, before: Option<&str>, limit: usize) -> io::Result<RunPage> {
         if !(1..=100).contains(&limit) {
             return Err(invalid("run query limit must be 1–100"));
         }
-        let mut statement=self.connection.prepare("SELECT id,state,mode,started_at_us,ended_at_us,record_count,config_json FROM runs ORDER BY started_at_us DESC,id DESC LIMIT ?1").map_err(sql)?;
-        let mut rows = statement.query([limit as i64]).map_err(sql)?;
-        let mut result = Vec::new();
+        let cursor = match before {
+            Some(id) => {
+                if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(invalid("invalid run cursor"));
+                }
+                Some(
+                    self.connection
+                        .query_row("SELECT started_at_us FROM runs WHERE id=?1", [id], |r| {
+                            r.get::<_, i64>(0)
+                        })
+                        .optional()
+                        .map_err(sql)?
+                        .ok_or_else(|| invalid("run cursor no longer exists"))?,
+                )
+            }
+            None => None,
+        };
+        let mut statement=self.connection.prepare("SELECT id,state,mode,started_at_us,ended_at_us,record_count,config_json FROM runs WHERE ?1 IS NULL OR (started_at_us,id)<(?1,?2) ORDER BY started_at_us DESC,id DESC LIMIT ?3").map_err(sql)?;
+        let mut rows = statement
+            .query(params![cursor, before, (limit + 1) as i64])
+            .map_err(sql)?;
+        let mut page = RunPage {
+            runs: Vec::new(),
+            next_before: before.map(str::to_owned),
+            has_more: false,
+        };
+        let mut bytes = 0;
         while let Some(row) = rows.next().map_err(sql)? {
             let config: String = row.get(6).map_err(sql)?;
-            result.push(Run {
+            let run = Run {
                 id: row.get(0).map_err(sql)?,
                 state: row.get(1).map_err(sql)?,
                 mode: row.get(2).map_err(sql)?,
@@ -313,9 +348,20 @@ impl Reader {
                 ended_at_us: row.get(4).map_err(sql)?,
                 record_count: row.get(5).map_err(sql)?,
                 config: serde_json::from_str(&config).map_err(io::Error::other)?,
-            });
+            };
+            let size = serde_json::to_vec(&run).map_err(io::Error::other)?.len();
+            if size > MAX_PAGE_BYTES {
+                return Err(invalid("stored run exceeds page size limit"));
+            }
+            if page.runs.len() == limit || bytes + size > MAX_PAGE_BYTES {
+                page.has_more = true;
+                break;
+            }
+            bytes += size;
+            page.next_before = Some(run.id.clone());
+            page.runs.push(run);
         }
-        Ok(result)
+        Ok(page)
     }
     pub fn records(&self, run: &str, after: i64, limit: usize) -> io::Result<RecordPage> {
         if after < 0 || !(1..=MAX_PAGE_RECORDS).contains(&limit) {
@@ -333,6 +379,9 @@ impl Reader {
         let mut bytes = 0;
         while let Some(row) = rows.next().map_err(sql)? {
             let payload: String = row.get(4).map_err(sql)?;
+            if payload.len() > MAX_RECORD_BYTES {
+                return Err(invalid("stored record exceeds size limit"));
+            }
             if page.records.len() == limit || bytes + payload.len() > MAX_PAGE_BYTES {
                 page.has_more = true;
                 break;

@@ -27,11 +27,33 @@ mod passive_cli {
     fn cli_attaches_validates_and_detaches_without_starting_capture() {
         let root = std::env::temp_dir().join(format!("ah-cli-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
+        let database = root.join("recording.sqlite");
+        let mut store = airhound_hostd::storage::Store::open(&database).unwrap();
+        let run = store
+            .start(
+                airhound_hostd::storage::RecordingMode::Replay,
+                &json!({"fixture":true}),
+            )
+            .unwrap();
+        store.add_source(&run, "receiver", &json!({})).unwrap();
+        let payload = json!({"type":"ble_observation","address":null,"replay":true,"detection":{"alert":"suppressed"}});
+        store
+            .append(
+                &run,
+                &[airhound_hostd::storage::RecordInput {
+                    source_id: "receiver".into(),
+                    received_at_us: 123,
+                    payload: payload.clone(),
+                }],
+            )
+            .unwrap();
         let socket = root.join("private/control.sock");
         let executable = env!("CARGO_BIN_EXE_airhound-hostd");
         let child = Command::new(executable)
             .args(["serve", "--socket"])
             .arg(&socket)
+            .arg("--database")
+            .arg(&database)
             .current_dir(&root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -65,6 +87,28 @@ mod passive_cli {
         assert_eq!(first["instance_id"], second["instance_id"]);
         assert_eq!(first["mode"], "passive_control");
         assert_eq!(first["capture_control"], false);
+        let history = client(&["recordings", "--limit", "1"]);
+        assert!(
+            history.status.success(),
+            "{}",
+            String::from_utf8_lossy(&history.stderr)
+        );
+        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
+        assert_eq!(history["runs"][0]["id"], run);
+        assert_eq!(history["runs"][0]["state"], "recording");
+        let records = client(&["records", "--run-id", &run]);
+        assert!(records.status.success());
+        let records: Value = serde_json::from_slice(&records.stdout).unwrap();
+        assert_eq!(records["records"][0]["payload"], payload);
+        assert!(!client(&["recordings", "--limit", "101"]).status.success());
+        assert!(!client(&["records", "--run-id", &run, "--limit", "501"])
+            .status
+            .success());
+        store
+            .transition(&run, "finished", "fixture complete")
+            .unwrap();
+        let history: Value = serde_json::from_slice(&client(&["recordings"]).stdout).unwrap();
+        assert_eq!(history["runs"][0]["state"], "finished");
         std::fs::write(
             service.root.join("plan.json"),
             serde_json::to_vec(
