@@ -286,3 +286,19 @@ coordination between current AirHound helpers, not an assertion of exclusive
 hardware ownership against unrelated programs, other users, or older helper
 versions. Stop old helper processes before switching to the updated managed
 bundle. Discovery does not acquire leases or open serial endpoints.
+
+### Active AirHound serial identity
+
+A generic UART bridge remains unidentified during passive discovery. When an
+explicit `airhound_serial` capture already owns that endpoint and receives a valid
+AirHound status record, the service reuses its reported application version and
+board in the inventory. The row becomes an AirHound WiFi/BLE sensor with the
+current owner's explicit port/baud hint. A macOS callout/dial-in alias is still the
+same serial endpoint. No discovery operation opens or resets the UART.
+
+This metadata describes the current capture owner, not an identity cache. After
+transport loss or finish, a fresh inventory returns to the generic bridge row.
+Pausing host ingestion retains the owner and its reported identity. Firmware does
+not report a protocol API version; discovery leaves it unknown, and current
+receiver health remains the source of reception readiness. Enriched inventories
+use `passive_with_active_metadata`; otherwise the mode remains `passive`.
