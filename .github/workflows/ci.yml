@@ -162,6 +162,7 @@ jobs:
           cargo audit
           cargo audit --file firmware-std/Cargo.lock
           cargo audit --file fuzz/Cargo.lock
+          cargo audit --file companions/flipper/Cargo.lock
         env:
           RUSTUP_TOOLCHAIN: nightly
       - name: Audit hostd dependencies
