@@ -267,7 +267,11 @@ observation type. This file-checking utility remains a separate offline path. Or
 Use `--external-scanner /absolute/path/to/mt7610u-lab` with
 `--external-firmware /absolute/path/to/mt7610e.bin` to replace native WiFi with
 the standalone receiver. `--external-channels 1,6,11,48` and
-`--external-dwell-ms 500` select its channel plan. The daemon supervises the
+`--external-dwell-ms 500` select its channel plan. Use
+`--external-usb-selector usb:1:1.2` to select the attachment reported by
+`mt7610u-lab list-devices`. Without a selector the helper requires exactly one
+matching adapter. [Multi-receiver sessions](../docs/multi-receiver-sessions.md)
+allow independent channel plans on distinct explicitly selected ALFAs. The daemon supervises the
 child directly, validates its bounded stream, and propagates stop/start and
 shutdown through correlated acknowledgments and verified cleanup.
 

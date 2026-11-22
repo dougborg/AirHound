@@ -272,3 +272,34 @@ terms; source licensing does not grant firmware redistribution rights.
 
 See [driver structure, coverage and validation](TESTING.md) for module responsibilities,
 CI coverage gates, test commands and remaining hardware checks.
+
+## Selecting multiple adapters
+
+`mt7610u-lab list-devices` reads matching USB descriptors and returns JSON
+attachment selectors without opening device handles. Descriptor-read failures
+appear in bounded diagnostics; an incomplete enumeration cannot establish a
+unique implicit selection, but an explicit or already-pinned target can still be
+used if its own descriptor is readable. Use the returned selector
+explicitly, for example:
+
+```sh
+mt7610u-lab probe --usb-selector usb:1:1.2
+mt7610u-lab stream --usb-selector usb:1:1.2 --firmware /path/mt7610e.bin --channels 1 --dwell-ms 500
+mt7610u-lab stream --usb-selector usb:1:1.3 --firmware /path/mt7610e.bin --channels 6,11 --dwell-ms 500
+```
+
+The examples require distinct attached radios and separately supervised processes.
+AirHound's [multi-receiver session](../../docs/examples/session-alfa-multi.json)
+configuration provides that supervision. List selectors on the same OS where the
+helper will run; passive inventory IDs use a different namespace.
+
+Without `--usb-selector`, exactly one matching adapter is required. Streaming
+pins that initial attachment for reconnects. Explicitly selected missing ports
+never fall back to another adapter. Selectors use canonical USB bus and port chain,
+not enumeration order or USB address. Moving a cable or rebooting may change the
+selector; replacing a matching unit in the same port is not distinguishable from
+the original hardware. No serial-number authentication is claimed.
+
+Selection/reconnect behavior and independent channel plans are covered by fake
+USB/companion tests. Simultaneous capture with two physical ALFAs remains a
+separate hardware acceptance check; a single attached adapter cannot validate it.

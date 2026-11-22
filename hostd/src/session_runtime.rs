@@ -155,6 +155,7 @@ async fn start_source(
             ble_source::scan(ble_source::Source::Pcap(path), tx, control).await
         }
         Source::ExternalWifi {
+            usb_selector,
             executable,
             firmware,
             channels,
@@ -162,6 +163,7 @@ async fn start_source(
         } => {
             external_scanner::scan_loop(
                 external_scanner::Options {
+                    usb_selector,
                     executable,
                     firmware,
                     channels,

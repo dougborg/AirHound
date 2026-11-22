@@ -3,7 +3,7 @@
 // Copyright (C) 2018 Lorenzo Bianconi. Those files are BSD-3-Clause-Clear;
 // see THIRD_PARTY_NOTICES for retained terms and the pinned source revision.
 use anyhow::{bail, ensure, Context, Result};
-use rusb::{Context as UsbContext, DeviceHandle, Direction, TransferType, UsbContext as _};
+use rusb::{Context as UsbContext, DeviceHandle, Direction, TransferType};
 use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_millis(300);
@@ -122,28 +122,20 @@ pub struct UsbDevice<T: UsbIo = DeviceHandle<UsbContext>> {
     pub input_endpoints: Vec<u8>,
     pub output_endpoints: Vec<u8>,
     sequence: u8,
+    pub identity: Option<crate::selection::Identity>,
 }
 
 impl UsbDevice {
     pub fn open() -> Result<Self> {
-        let context = UsbContext::new()?;
-        let devices = context.devices()?;
-        let matching: Vec<_> = devices
-            .iter()
-            .filter(|d| {
-                d.device_descriptor()
-                    .is_ok_and(|v| v.vendor_id() == 0x0e8d && v.product_id() == 0x7610)
-            })
-            .collect();
-        if matching.is_empty() {
-            return Err(rusb::Error::NoDevice.into());
-        }
-        ensure!(
-            matching.len() == 1,
-            "Expected exactly one USB 0e8d:7610, found {}",
-            matching.len()
-        );
-        let device = &matching[0];
+        crate::selection::Selection::default().open()
+    }
+    pub fn open_selected(selector: Option<crate::selection::Selector>) -> Result<Self> {
+        crate::selection::Selection::new(selector).open()
+    }
+    pub(crate) fn open_device(
+        device: rusb::Device<UsbContext>,
+        identity: crate::selection::Identity,
+    ) -> Result<Self> {
         let handle = device
             .open()
             .context("opening MT7610U (no driver detachment attempted)")?;
@@ -171,7 +163,9 @@ impl UsbDevice {
         ensure!(input_endpoints.len() == 2 && output_endpoints.len() == 6,
             "Unexpected MT7610U bulk endpoint layout: in={input_endpoints:x?}, out={output_endpoints:x?}");
         handle.claim_interface(0).context("claiming interface 0")?;
-        Self::from_io(handle, input_endpoints, output_endpoints)
+        let mut transport = Self::from_io(handle, input_endpoints, output_endpoints)?;
+        transport.identity = Some(identity);
+        Ok(transport)
     }
 }
 
@@ -193,6 +187,7 @@ impl<T: UsbIo> UsbDevice<T> {
             input_endpoints,
             output_endpoints,
             sequence: 0,
+            identity: None,
         })
     }
 

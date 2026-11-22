@@ -1,7 +1,7 @@
 //! Bounded child protocol. USB stays on the main thread; blocked pipe readers
 //! cannot prevent that thread from shutting down the receive gates.
 use anyhow::{ensure, Result};
-use mt7610u_lab::{firmware::Firmware, transport::UsbDevice};
+use mt7610u_lab::firmware::Firmware;
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -223,6 +223,7 @@ pub(super) fn run(
     dwell_ms: u16,
     max_seconds: u32,
     rotation: Option<super::rotation::Rotation>,
+    selector: Option<mt7610u_lab::selection::Selector>,
 ) -> Result<()> {
     super::validate_capture_plan(&channels, false)?;
     let bytes = std::fs::read(firmware_path)?;
@@ -232,12 +233,13 @@ pub(super) fn run(
     let (commands, input_outcome) = command_reader(stop.clone());
     let out = Output::with_rotation(std::io::stdout(), rotation);
     out.send(&json!({"type":"hello","protocol_version":1}), false)?;
+    let mut selection = mt7610u_lab::selection::Selection::new(selector);
     let hardware = Hardware::new(
         firmware,
         channels,
         Duration::from_millis(u64::from(dwell_ms)),
         stop.clone(),
-        UsbDevice::open,
+        move || selection.open(),
     );
     drive(
         hardware,

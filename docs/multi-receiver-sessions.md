@@ -62,7 +62,7 @@ remain protected unless `--output` and `--overwrite` are both supplied.
 | `native_wifi` | No additional fields | macOS CoreWLAN scans; OS controls channels and scan timing |
 | `linux_wifi` | `interface` | Existing Linux monitor-mode interface; configure mode and channel externally |
 | `sniffle` | `port`, `python`, `helper`; optional `module_path`, `channel`, `coded` | Separate Sniffle process and serial receiver; see [firmware/host prerequisites](sniffle-source.md) |
-| `external_wifi` | `executable`, `firmware`, `channels`, `dwell_ms` | Standalone MT7610U receiver process; see [protocol and limitations](external-scanner-stream-v1.md) |
+| `external_wifi` | `executable`, `firmware`, `channels`, `dwell_ms`; optional `usb_selector` | Standalone MT7610U receiver process; see [protocol and limitations](external-scanner-stream-v1.md) |
 | `ble_pcap` | `path` | Finite classic DLT256 BLE PCAP replay; see [supported framing](sniffle-source.md#replay) |
 
 For Sniffle, `python` and `helper` are required in a session file, even though the
@@ -85,9 +85,22 @@ These checks do not inventory shared antennas, composite-device RF constraints,
 or every possible USB/serial alias. Check hardware topology before treating two
 entries as independent radios.
 
-Only one `external_wifi` entry is accepted: the current MT7610U process protocol
-has no physical-device selector. Two copies could otherwise claim the same radio.
-Its channel list must contain distinct supported receive channels, with
+Multiple `external_wifi` entries require distinct explicit `usb_selector` values
+from `mt7610u-lab list-devices`, such as `usb:1:1.2`. A single entry may omit the
+selector; then exactly one matching adapter must be attached. Mixing an implicit
+selection with any other external receiver is rejected, as are duplicate selectors
+and alternate spellings with leading zeros. Each source has an independent channel
+list and dwell. See the [two-ALFA example](examples/session-alfa-multi.json); replace
+its example paths and selectors with your own. This is explicit channel allocation,
+not automatic scheduling or measured gap-free coverage.
+
+Selectors identify a USB attachment topology, not an authenticated unit. They may
+change after moving ports or rebooting; replacing a device in the same port can
+satisfy the selector. USB address changes do not change selection. Reconnects stay
+pinned to the selected port and never fall back to another adapter. Passive
+inventory IDs are not interchangeable with helper selectors.
+
+Each channel list must contain distinct supported receive channels, with
 `dwell_ms` between 100 and 10000. Existing regulatory and hardware validation
 limits remain in the [MT7610U channel guide](mt7610u-channels.md).
 

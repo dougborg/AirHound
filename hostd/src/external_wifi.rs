@@ -8,6 +8,26 @@ use std::{
     io::{self, Read},
 };
 
+/// Canonical process-protocol selector, independently validated without GPL linkage.
+pub fn valid_usb_selector(text: &str) -> bool {
+    let parts: Vec<_> = text.split(':').collect();
+    if parts.len() != 3 || parts[0] != "usb" {
+        return false;
+    }
+    let valid_number = |s: &str| {
+        s.parse::<u8>()
+            .ok()
+            .is_some_and(|n| n > 0 && n.to_string() == s)
+    };
+    let ports: Vec<_> = parts[2].split('.').collect();
+    parts[1]
+        .parse::<u8>()
+        .ok()
+        .is_some_and(|n| n.to_string() == parts[1])
+        && (1..=7).contains(&ports.len())
+        && ports.iter().all(|s| valid_number(s))
+}
+
 pub const MAX_LINE_BYTES: usize = 16 * 1024;
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 

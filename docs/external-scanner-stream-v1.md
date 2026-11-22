@@ -88,3 +88,29 @@ contains its header only; external observations and scanner health are on
 stdout. AirHound `stop`/`start` commands on stdin control receiver pause/resume.
 SIGINT/SIGTERM shut down and reap the receiver. Raw stdout contains nearby
 network identifiers and should be stored privately.
+
+## Physical USB selection
+
+The helper accepts `--usb-selector usb:<bus>:<port>[.<port>...]` for live commands.
+`list-devices` enumerates matching descriptors and port topology without opening
+handles. Bus numbers are 0–255, ports 1–255 with at most seven levels; canonical
+notation forbids leading zeros. USB addresses are diagnostic only and may change
+on reconnect. Missing or ambiguous targets fail; another adapter is never chosen
+as a fallback. An implicit single-device selection is pinned for subsequent opens
+within that helper process.
+
+Status/stopped messages add `usb_device` (nullable before first open), with
+`selector`, `bus`, `ports`, `address`, and
+`identity_scope: "usb_attachment_topology"`. Probe/bootstrap/capture summaries
+also report this identity. Hostd exposes the confirmed `usb_selector` in
+`external_scanner_status` and rejects a mismatch or an identity change during a
+session. Once an identity has been learned, every later status and stop acknowledgement
+must confirm it, including pause/recovery barriers. An explicitly requested
+selector must be confirmed before running. Before any device has opened, null
+identity is allowed for non-running states. Older identity-less helpers remain
+compatible with unselected single-device sessions only.
+
+A port selector is not hardware authentication. Another matching adapter placed
+in the same port can satisfy it; USB bus numbering may change after reboot.
+Separate processes rely on OS interface-claim exclusion. Hostd rejects duplicate
+selectors within its session, but does not claim global ownership coordination.
