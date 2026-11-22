@@ -143,11 +143,12 @@ final summary at orderly shutdown. Counts do not prove absence of radio, UART or
 USB losses upstream. Helper decoder errors are reported to stderr; repeated errors
 terminate the helper so the host can restart it.
 
-The host retries a disconnected/exited helper after two seconds. Three consecutive
-sessions without receiving a packet fail the selected source and the process;
-there is no silent fallback to native BLE. Initial process-spawn failure is fatal.
-A ten-second header deadline catches a helper that never becomes ready; a quiet
-RF environment after readiness does not cause a reconnect.
+The host uses the bounded outage budget and continuous endpoint ownership described
+in [USB recovery and helper compatibility](#usb-recovery-and-helper-compatibility).
+There is no silent fallback to native BLE. A ten-second header deadline catches a
+helper that never becomes ready. An initial ready scan, or recovery verified by a
+packet, does not reconnect merely because RF becomes quiet. During an existing
+outage, a header alone does not clear the 90-second recovery deadline.
 
 Stop/start commands pause ingestion and restart the helper on resume. Queued live
 records from an old control generation are discarded rather than replayed after
