@@ -74,6 +74,10 @@ Recording import is atomic and bounded to 8 MiB, 256 KiB per line and 10,000
 observations. Malformed/truncated JSON is rejected rather than silently skipped;
 the previous recording remains open on failure. Imports are not tailing/replay,
 and no export or persistent capture archive is written by this slice.
+Selected recordings are opened nonblocking and verified as regular files using
+the opened descriptor, so FIFOs and devices cannot block import. File reading
+and decoding run off the UI thread; opening another recording is disabled until
+that import completes.
 
 ## Structure and next slice
 

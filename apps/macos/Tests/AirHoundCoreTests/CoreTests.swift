@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 @testable import AirHoundCore
@@ -92,6 +93,36 @@ final class CoreTests: XCTestCase {
   }
   func testPipeConfigurationFailsClosed() {
     XCTAssertThrowsError(try DiscoveryProcess.configureNonblocking(-1))
+  }
+  func testUnknownNativeChannelIsNotBLEChannelZero() throws {
+    let wifi = try Recording.decode(Data(#"{"type":"wifi_observation","ch":0}"#.utf8))
+    let ble = try Recording.decode(Data(#"{"type":"ble_packet_observation","channel":0}"#.utf8))
+    XCTAssertEqual(wifi.observations[0].channel, "Not reported")
+    XCTAssertEqual(ble.observations[0].channel, "0")
+    XCTAssertEqual(wifi.observations[0].signalDescription, "Unknown")
+  }
+  func testRecordingFileRejectsFIFOAndDirectoryWithoutBlocking() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fifo = root.appendingPathComponent("pipe")
+    XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+    let start = Date()
+    XCTAssertThrowsError(try Recording.load(fifo))
+    XCTAssertThrowsError(try Recording.load(root))
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    let file = root.appendingPathComponent("regular.ndjson")
+    try Data(#"{"type":"wifi_observation","ch":6}"#.utf8).write(to: file)
+    XCTAssertEqual(try Recording.load(file).observations[0].channel, "6")
+  }
+  func testBackendWatchlistAndSilentMatchesWithoutSignatureProof() throws {
+    for alert in ["watchlist", "suppressed"] {
+      let value =
+        "{\"type\":\"wifi_observation\",\"detection\":{\"sig\":[],\"rules\":[],\"alert\":\"\(alert)\"}}"
+      let row = try XCTUnwrap(Recording.decode(Data(value.utf8)).observations.first)
+      XCTAssertEqual(row.match, "Match")
+      XCTAssertEqual(row.alert, alert, "Present the backend decision without reapplying policy")
+    }
   }
 
   private func script(_ body: String) throws -> URL {
