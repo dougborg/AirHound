@@ -1,0 +1,23 @@
+name: Terminal client
+on:
+  pull_request:
+    paths: ['clients/tui/**', 'hostd/crates/**', '.github/workflows/tui.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: cargo +stable fmt --manifest-path clients/tui/Cargo.toml --check
+      - run: cargo +stable test --manifest-path clients/tui/Cargo.toml --locked
+      - run: cargo +stable clippy --manifest-path clients/tui/Cargo.toml --locked --all-targets -- -D warnings
