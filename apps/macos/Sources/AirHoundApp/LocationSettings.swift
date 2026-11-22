@@ -15,7 +15,11 @@ struct LocationSettings: View {
                 ? .object(["kind": .string("gpsd"), "endpoint": .string("127.0.0.1:2947")]) : nil)
           })
       )
-      .disabled(!session.canEditPlan || !session.locationProviders.contains("gpsd"))
+      .disabled(
+        !session.canEditPlan
+          || (session.planLocation == nil || session.planLocation == .null)
+            && !session.locationProviders.contains("gpsd")
+      )
       if let location = session.planLocation, location != .null {
         if location["kind"]?.string == "gpsd" {
           TextField(
