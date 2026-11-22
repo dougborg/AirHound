@@ -3,36 +3,55 @@ import SwiftUI
 
 struct ReceiverSettings: View {
   @ObservedObject var session: SessionModel
-  let key: String
-  let kind: String
-  let source: JSONValue
+  let receiver: PlanReceiver
   var body: some View {
-    DisclosureGroup("Receiver settings") {
-      if kind == "external_wifi" {
-        field("USB selector", "usb_selector")
-        field("Scanner helper", "executable", file: true)
-        field("Firmware", "firmware", file: true)
-        field("Channels (comma separated)", "channels", format: "array")
-        field("Dwell (ms)", "dwell_ms", format: "integer")
-        Text(
-          "Use the helper's list-devices command for its exact USB selector. Firmware is supplied separately."
-        )
-        .font(.caption).foregroundStyle(.secondary)
-      } else {
-        field("Serial port", "port")
-        field("Python executable", "python", file: true)
-        field("Sniffle helper", "helper", file: true)
-        field("Sniffle module directory", "module_path", file: true, directory: true)
-        field("Advertising channel", "channel", format: "integer")
-        Toggle(
-          "Coded PHY",
-          isOn: Binding(
-            get: { session.sourceField(key, field: "coded", fallback: source) == .bool(true) },
-            set: { session.setSourceField(key, field: "coded", value: .bool($0), fallback: source) }
-          ))
-        Text("Confirm this device is running compatible Sniffle firmware before starting.")
-          .font(.caption).foregroundStyle(.secondary)
+    switch receiver.kind {
+    case "external_wifi":
+      field("USB selector", "usb_selector")
+      field("Scanner helper", "executable", file: true)
+      field("Firmware", "firmware", file: true)
+      field("Channels", "channels", format: "array")
+      field("Dwell (ms)", "dwell_ms", format: "integer")
+    case "sniffle":
+      field("Serial port", "port")
+      field("Python executable", "python", file: true)
+      field("Sniffle helper", "helper", file: true)
+      field("Sniffle module directory", "module_path", file: true, directory: true)
+      field("Advertising channel", "channel", format: "integer")
+      Toggle(
+        "Coded PHY",
+        isOn: Binding(
+          get: { receiver.source["coded"] == .bool(true) },
+          set: { session.planSourceField(id: receiver.id, field: "coded", value: .bool($0)) }))
+    case "airhound_serial":
+      field("Serial port", "port")
+      Picker(
+        "Baud rate",
+        selection: Binding(
+          get: {
+            if case .integer(let value) = receiver.source["baud"] { return value }
+            return 0
+          },
+          set: { session.planSourceField(id: receiver.id, field: "baud", value: .integer($0)) })
+      ) {
+        Text("Choose baud rate").tag(Int64(0))
+        Text("115200").tag(Int64(115200))
+        Text("460800 · M5 no_std firmware").tag(Int64(460800))
+        Text("921600").tag(Int64(921600))
       }
+      Text(
+        "Opening the port may reset the board. Pause affects host ingestion; the device keeps scanning."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+    case "linux_wifi": field("Monitor interface", "interface")
+    case "ble_pcap", "wifi_pcap": field("Recording file", "path", file: true)
+    case "native_ble":
+      Text("macOS chooses the Bluetooth controller.").font(.caption).foregroundStyle(.secondary)
+    case "native_wifi":
+      Text("Wi-Fi addresses require Location permission for the running service.").font(.caption)
+        .foregroundStyle(.secondary)
+    default:
+      Text("Use Advanced JSON to edit this receiver.").font(.caption).foregroundStyle(.secondary)
     }
   }
 
@@ -45,12 +64,12 @@ struct ReceiverSettings: View {
         title,
         text: Binding(
           get: {
-            let value = session.sourceField(key, field: name, fallback: source)
+            let value = receiver.source[name]
             if case .string(let text) = value { return text }
             if case .integer(let number) = value { return String(number) }
             if case .array(let entries) = value {
               return entries.compactMap {
-                if case .integer(let number) = $0 { return String(number) }
+                if case .integer(let n) = $0 { return String(n) }
                 return nil
               }.joined(separator: ", ")
             }
@@ -71,7 +90,7 @@ struct ReceiverSettings: View {
             } else {
               value = .string(text)
             }
-            session.setSourceField(key, field: name, value: value, fallback: source)
+            session.planSourceField(id: receiver.id, field: name, value: value)
           }))
       if file {
         Button("Choose…") {
@@ -80,7 +99,7 @@ struct ReceiverSettings: View {
           panel.canChooseFiles = !directory
           panel.canChooseDirectories = directory
           if panel.runModal() == .OK, let url = panel.url {
-            session.setSourceField(key, field: name, value: .string(url.path), fallback: source)
+            session.planSourceField(id: receiver.id, field: name, value: .string(url.path))
           }
         }.accessibilityLabel("Choose \(title)")
       }

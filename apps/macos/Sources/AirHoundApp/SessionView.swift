@@ -9,65 +9,56 @@ struct SessionView: View {
   var body: some View {
     HSplitView {
       Form {
+        SavedSetupView(session: session)
         Section("Receivers") {
-          if let inventory = session.inventory {
-            ForEach(inventory.receiverChoices) { choice in
-              let candidate = choice.candidate
-              let key = choice.id
-              DisclosureGroup {
-                Text(candidate.evidence.joined(separator: "\n"))
-                  .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                if !candidate.requirements.isEmpty {
+          ForEach(session.plannedReceivers) { receiver in
+            DisclosureGroup {
+              if let identity = session.currentReceiverIdentity(id: receiver.id) {
+                Text(identity["adapter_info"]?.string ?? "Identity unreported").font(.caption)
+                  .foregroundStyle(.secondary)
+                if let producer = identity["producer_identity"] {
                   Text(
-                    candidate.requirements.map { "\($0.name): \($0.detail)" }.joined(
-                      separator: "\n")
+                    "\(producer["application"]?.string ?? "Firmware") \(producer["version"]?.string ?? "version unreported") · \(producer["board"]?.string ?? "board unreported")"
                   )
                   .font(.caption).textSelection(.enabled)
                 }
-                if session.selected.contains(key), let source = candidate.configurationHint,
-                  ["sniffle", "external_wifi"].contains(candidate.kind)
-                {
-                  ReceiverSettings(
-                    session: session, key: key, kind: candidate.kind, source: source
-                  )
-                  .disabled(session.isActive || session.busy)
-                }
-              } label: {
-                Toggle(
-                  isOn: Binding(
-                    get: { session.selected.contains(key) },
-                    set: {
-                      if $0 { session.selected.insert(key) } else { session.selected.remove(key) }
-                      session.useSelectedReceivers()
-                    })
-                ) {
-                  VStack(alignment: .leading) {
-                    Text(candidate.label)
-                    Text(
-                      "\(choice.deviceName) · \(candidate.statusDescription)"
-                    )
-                    .font(.caption).foregroundStyle(.secondary)
-                  }
-                }.disabled(candidate.configurationHint == nil || session.isActive || session.busy)
+              }
+              ReceiverSettings(session: session, receiver: receiver)
+                .disabled(!session.canEditPlan)
+              HStack {
+                Text(receiver.id).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Spacer()
+                Button("Remove", role: .destructive) { session.removeReceiver(id: receiver.id) }
+                  .disabled(!session.canEditPlan)
+              }
+            } label: {
+              VStack(alignment: .leading, spacing: 3) {
+                Text(receiver.title)
+                Text(receiver.endpoint).font(.caption).foregroundStyle(.secondary).lineLimit(1)
               }
             }
-            ForEach(Array(inventory.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
-              Text(diagnostic.message).font(.caption).foregroundStyle(.secondary)
-            }
-          } else {
-            Text("Connect to discover attached receivers.").foregroundStyle(.secondary)
           }
+          if session.plannedReceivers.isEmpty {
+            Text(
+              session.configText.isEmpty
+                ? "Add receivers to build a scan plan."
+                : "No receivers to display. Add a device or check Advanced JSON."
+            )
+            .foregroundStyle(.secondary)
+          }
+          AvailableReceivers(session: session)
         }
+        LocationSettings(session: session)
         Section("Scan plan") {
           Text(
-            "Select receivers and configure any external helpers. Validation checks the plan without opening radios."
+            "Expand a receiver to configure it. Validate the plan before starting."
           )
           .font(.callout).foregroundStyle(.secondary)
-          DisclosureGroup("Advanced receiver and channel settings", isExpanded: $advanced) {
+          DisclosureGroup("Advanced JSON", isExpanded: $advanced) {
             TextEditor(text: $session.configText).font(.system(.body, design: .monospaced))
               .frame(minHeight: 180).accessibilityLabel("Session configuration JSON")
-              .disabled(session.isActive)
-            Button("Import Plan…") { importPlan() }
+              .disabled(!session.canEditPlan)
+            Button("Import Plan…") { importPlan() }.disabled(!session.canEditPlan)
           }
           HStack {
             Button("Validate Plan") { session.validate() }
@@ -104,7 +95,7 @@ struct SessionView: View {
           Button("Finish Recording", systemImage: "stop.fill") { confirmFinish = true }
         }.disabled(!session.connected || !session.isActive || session.busy)
         Text(
-          "Closing this window leaves capture running. Finish Recording stops and saves the run."
+          "Closing this window leaves capture running. Finish Recording saves and closes the host run."
         )
         .font(.callout).foregroundStyle(.secondary)
         if let failure = session.captureFailure {
@@ -167,7 +158,9 @@ struct SessionView: View {
     .confirmationDialog("Finish this recording?", isPresented: $confirmFinish) {
       Button("Finish Recording") { session.control(.finish) }
     } message: {
-      Text("The service will stop the receivers and save the remaining observations.")
+      Text(
+        "The service will close its receivers and save the remaining observations. Standalone devices may continue scanning."
+      )
     }
     .alert(
       "AirHound Service",
@@ -189,6 +182,8 @@ struct SessionView: View {
         throw ModelError.invalid("Session plans must be at most 64 KiB.")
       }
       session.configText = String(decoding: data, as: UTF8.self)
+      session.appliedSetupName = nil
+      session.selectedSetupID = ""
       session.validation = nil
       advanced = true
     } catch { session.error = error.localizedDescription }

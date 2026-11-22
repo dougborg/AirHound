@@ -55,6 +55,33 @@ public struct BackendClient {
       JSONValue.self, from: await request(command + ["--session-config", file.path]))
   }
 
+  public func setups() async throws -> [SavedSetup] {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let result = try decoder.decode(SavedSetupList.self, from: await request(["profiles", "list"]))
+    guard result.schemaVersion == 1 else {
+      throw ModelError.invalid("Unsupported saved setup format.")
+    }
+    return result.profiles
+  }
+
+  public func loadSetup(id: String) async throws -> SetupReview {
+    try SetupReview(
+      JSONDecoder().decode(JSONValue.self, from: await request(["profiles", "load", "--id", id])))
+  }
+
+  public func saveSetup(id: String, name: String, config: Data, replace: Bool) async throws
+    -> JSONValue
+  {
+    var command = ["profiles", "save", "--id", id, "--name", name]
+    if replace { command.append("--replace") }
+    return try await withConfig(config, command: command)
+  }
+
+  public func deleteSetup(id: String) async throws {
+    _ = try await request(["profiles", "delete", "--id", id])
+  }
+
   public func inventory() async throws -> Inventory {
     try Inventory.decode(await request(["devices"]))
   }

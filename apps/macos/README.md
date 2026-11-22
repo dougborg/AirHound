@@ -57,15 +57,37 @@ explicitly. Package version and source tag do not imply a published release.
    Starting a service does not start scanning. An existing service keeps its
    current executable and permissions until it is explicitly stopped; installing
    a newer GUI does not replace the capture owner.
-3. Select receivers. System Wi-Fi and Bluetooth form the initial suggested plan;
-   selection does not start scanning or prove permission/readiness.
-4. Expand a receiver row to inspect identification evidence, requirements and
-   **Receiver settings**. ALFA needs its
+3. System Wi-Fi and Bluetooth form the initial suggested plan. Expand
+   **Available devices** and a device row to see evidence, support links and
+   **Add Receiver**. Adding a candidate does not open its radio or prove readiness.
+4. Expand a configured receiver to edit its settings. ALFA needs its
    scanner executable, firmware and exact USB selector. CatSniffer needs compatible
    Sniffle firmware, its serial port, Python runtime and helper/module paths.
-5. **Validate Plan**, then **Start Recording**. Advanced settings also accept a
+5. For GPS tagging, enable **Use a GPSD location provider** and enter the server
+   endpoint and optional device path. **Use for Location** on a discovered GPS
+   fills the plan; it does not start gpsd or open the USB device. The backend must
+   advertise GPSD support and an existing gpsd server must supply fixes.
+6. **Validate Plan**, then **Start Recording**. **Advanced JSON** also accepts a
    complete JSON plan or a plan file, including replay sources.
-6. Use **Pause**, **Resume**, and **Finish Recording** to control the service.
+7. Use **Pause**, **Resume**, and **Finish Recording** to control the service.
+
+**Saved setups** stores profiles on the connected backend. **Save Setup…** saves
+the current plan; replacement requires an explicit choice. **Load** first shows
+the backend's current binding and helper-resource checks. **Use Setup** applies
+the plan to the editor, without starting capture or silently rebinding hardware.
+Missing paths and ambiguous identities still need attention. **Manage** refreshes
+or deletes saved profiles; deletion keeps the current plan and recordings.
+
+Receiver edits preserve custom IDs, alert policy, location and other plan fields.
+Configuration stays locked while a recording or uncertain start is active.
+An unidentified UART can be explicitly configured with **Use AirHound Firmware…**;
+select the actual baud rate (460800 for the tested M5 no_std firmware). Opening
+that port at capture start may reset the board. Its pause controls host ingestion,
+while autonomous scanning continues on the device.
+
+Actual reported firmware/software identity appears inside device rows. The
+service popover shows the connected backend's build, separately from the GUI
+version. Older backends that omit that metadata show **Version unreported**.
 
 Receiver/channel fields serialize configuration; the Rust backend validates it.
 A successful validation is not a radio probe. The recording state describes the

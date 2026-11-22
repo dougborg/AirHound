@@ -38,3 +38,17 @@ Its text and green/red indicator report connected, disconnected or error state;
 color is not the only signal. Clicking the status opens a native popover with
 backend selection, socket configuration, connect/start and disconnect controls.
 The receiver setup area does not repeat those controls.
+
+## Saved setups and device configuration
+
+The configured receiver list reflects the current plan directly. Each receiver
+expands in place for settings and current producer identity; adding or removing
+one preserves all other plan fields. A separate Available devices disclosure
+keeps unconfigured and unsupported candidates discoverable without presenting
+them as active receivers. Support links and evidence remain inside each row.
+
+Saved setups use a native picker, save sheet and load-review sheet. The review
+presents backend binding/resource checks before applying the plan. GPSD location
+settings are a separate form section because a location provider is not a radio
+receiver. These are presentation adapters to the shared Rust client; readiness,
+validation, persistence and device ownership remain backend responsibilities.
