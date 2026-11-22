@@ -63,7 +63,7 @@ m5stickc = ["board-m5stickc", "esp32", "esp-hal/psram", "dep:mipidsi", "dep:embe
 ieee80211 = { version = "~0.5.9", default-features = false }
 
 # no_std collections
-heapless = { version = "~0.9.0", features = ["serde"] }
+heapless = { version = "~0.9.4", features = ["serde"] }
 
 # Open Drone ID (ASTM F3411) framing: BLE service data, Wi-Fi beacon/NAN, message packs (no_std, no deps)
 remoteid = { version = "~0.2.3", default-features = false }
