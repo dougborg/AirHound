@@ -1,4 +1,5 @@
 //! Typed control calls shared by CLI, TUI and MCP. No receiver or policy implementation.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use airhound_api::{ApiError, Command, Hello, Request, Response, MAX_FRAME_BYTES, VERSION};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -166,6 +167,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use airhound_api::ErrorCode;
@@ -250,5 +252,31 @@ mod tests {
             assert!(matches!(client.status().await, Err(ClientError::Closed)));
             server_task.abort();
         }
+    }
+    #[tokio::test]
+    async fn cancelled_call_closes_stream_instead_of_accepting_late_response() {
+        let (client, mut server) = duplex(1024);
+        let (seen, started) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            read_frame(&mut server).await.unwrap();
+            write_frame(&mut server, &Response::success(1, hello()))
+                .await
+                .unwrap();
+            read_frame(&mut server).await.unwrap();
+            seen.send(()).unwrap();
+            // The dropped request future must close this connection.
+            let mut byte = [0];
+            assert_eq!(server.read(&mut byte).await.unwrap(), 0);
+        });
+        let mut client = Client::handshake(client, Duration::from_secs(1))
+            .await
+            .unwrap();
+        {
+            let call = client.status();
+            tokio::pin!(call);
+            tokio::select! { _ = &mut call => panic!("unexpected response"), _ = started => {} }
+        }
+        assert!(matches!(client.status().await, Err(ClientError::Closed)));
+        peer.await.unwrap();
     }
 }

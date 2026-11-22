@@ -1,4 +1,5 @@
 //! Shared presentation-independent control contract. No radios or policy logic.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -108,6 +109,7 @@ pub struct Hello {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
