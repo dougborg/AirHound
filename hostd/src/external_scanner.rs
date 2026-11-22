@@ -24,6 +24,36 @@ pub struct Options {
     pub fixture_script: Option<PathBuf>,
 }
 
+fn publish_identity(
+    control: &ScanControl,
+    identity: &airhound_hostd::external_identity::Identity,
+    selected: Option<&str>,
+    state: &str,
+) {
+    control.set_receiver(crate::receiver::Receiver {
+        backend: "mt7610u_companion",
+        adapter_id: selected.unwrap_or("unreported").into(),
+        adapter_info: identity.description(),
+        firmware: None,
+        controller_address: None,
+        selection: "explicit_helper_reported_attachment",
+        availability: match state {
+            "running" => "running",
+            "paused" => "paused",
+            "recovering" => "recovering",
+            "stopped" => "stopped",
+            _ => "failed",
+        },
+        scan_configuration: "channel_plan",
+        extended_advertising: crate::receiver::Feature::default(),
+        coded_rx: crate::receiver::Feature::default(),
+        controller_phy: None,
+        capability_query: "not_applicable_wifi",
+        producer_identity: None,
+        external_identity: Some(identity.clone()),
+    });
+}
+
 fn error(message: &str) -> io::Error {
     io::Error::other(message)
 }
@@ -267,6 +297,7 @@ async fn scan_loop_with_timeouts(
     let mut stopped: Option<serde_json::Value> = None;
     let mut drops = 0u64;
     let mut selected_usb = None;
+    let mut identity = airhound_hostd::external_identity::Identity::default();
     let mut producer_dropped = 0u64;
     let mut reconnect_attempts = 0u64;
     let mut next_request = 1u64;
@@ -278,6 +309,7 @@ async fn scan_loop_with_timeouts(
             .map_err(|_| error("companion hello timed out"))??.ok_or_else(|| error("companion exited before hello"))?;
         let hello = json(&hello)?;
         if hello["type"] != "hello" || hello["protocol_version"] != 1 { return Err(error("unsupported companion handshake")); }
+        identity = airhound_hostd::external_identity::Identity::from_hello(&hello)?;
         let mut validator = SessionValidator::default();
         let mut running = false;
         let mut forwarding = false;
@@ -365,8 +397,10 @@ async fn scan_loop_with_timeouts(
                                 }
                                 _ => return Err(error("unknown companion state")),
                             }
+                            identity.status(&message)?;
+                            publish_identity(&control, &identity, selected_usb.as_deref(), status);
                             read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts)?;
-                            publish_status(&tx, ScanEvent::ExternalStatus { state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts, usb_selector: selected_usb.clone() }).await;
+                            publish_status(&tx, ScanEvent::ExternalStatus { state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts, usb_selector: selected_usb.clone(), identity:identity.clone() }).await;
                         }
                         Some("stopped") => { stopped = Some(message); return Err(error("companion stopped unexpectedly")); },
                         _ => return Err(error("unexpected companion message")),
@@ -395,11 +429,23 @@ async fn scan_loop_with_timeouts(
         stderr.abort();
         let _ = stderr.await;
     }
+    identity.firmware = None;
+    publish_identity(
+        &control,
+        &identity,
+        selected_usb.as_deref(),
+        if cleanup.is_ok() && result.is_ok() {
+            "stopped"
+        } else {
+            "failed"
+        },
+    );
     log::info!("External WiFi companion finished; host queue dropped {drops} observations");
     publish_status(
         &tx,
         ScanEvent::ExternalStatus {
             usb_selector: selected_usb,
+            identity,
             state: if cleanup.is_ok() && result.is_ok() {
                 "stopped"
             } else {
@@ -793,6 +839,29 @@ exit 3
         .await
         .unwrap();
     }
+    #[tokio::test]
+    async fn helper_build_survives_as_current_owner_metadata_but_firmware_does_not() {
+        let body = LIFECYCLE.replace("\"protocol_version\":1", "\"protocol_version\":1,\"helper_build\":{\"component\":\"mt7610u-lab\",\"package_version\":\"0.1.0\",\"display_version\":\"git fixture\",\"git_revision\":null,\"source_tag\":null,\"tracked_source_modified\":null}");
+        let fake = Fake::new(&body);
+        let (tx, mut rx) = mpsc::channel(4);
+        let control = ScanControl::new(true);
+        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+        status(&mut rx, "running", &mut task).await;
+        let health = control.health_message();
+        assert_eq!(
+            health["receiver"]["external_identity"]["helper_build"]["display_version"],
+            "git fixture"
+        );
+        assert!(health["receiver"]["external_identity"]["firmware"].is_null());
+        control.shutdown();
+        task.await.unwrap().unwrap();
+        assert_eq!(
+            control.health_message()["receiver"]["availability"],
+            "stopped"
+        );
+        fake.assert_exited();
+    }
+
     #[tokio::test]
     async fn explicit_child_pauses_resumes_stops_and_is_reaped() {
         let fake = Fake::new(LIFECYCLE);

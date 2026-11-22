@@ -57,6 +57,8 @@ pub struct Candidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identification: Option<identify::Identification>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_identity: Option<crate::external_identity::Identity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration_hint: Option<Value>,
 }
 #[derive(Clone, Debug, Serialize)]
@@ -140,6 +142,37 @@ impl Inventory {
                     ) {
                         *candidate = identified;
                         self.mode = "passive_with_active_metadata";
+                    }
+                    continue;
+                }
+                if candidate.kind == "external_wifi" {
+                    // OS inventory IDs and libusb selectors are different namespaces.
+                    // Reuse only an already established exact selector; never infer it
+                    // from VID/PID, number of attached adapters, or a display label.
+                    if let Some(selector) = candidate
+                        .configuration_hint
+                        .as_ref()
+                        .and_then(|hint| hint["usb_selector"].as_str())
+                    {
+                        if let Some(owner) = receivers.iter().find(|owner| {
+                            owner["receiver"]["backend"] == "mt7610u_companion"
+                                && owner["receiver"]["adapter_id"] == selector
+                                && matches!(
+                                    owner["receiver"]["availability"].as_str(),
+                                    Some("running" | "paused")
+                                )
+                        }) {
+                            if let Ok(identity) =
+                                serde_json::from_value::<crate::external_identity::Identity>(
+                                    owner["receiver"]["external_identity"].clone(),
+                                )
+                            {
+                                candidate.evidence.push(identity.description());
+                                candidate.external_identity = Some(identity);
+                                candidate.state = "in_use";
+                                self.mode = "passive_with_active_metadata";
+                            }
+                        }
                     }
                     continue;
                 }
@@ -326,6 +359,7 @@ fn candidate(
             _ => json!({"scope":"unknown"}),
         },
         identification: None,
+        external_identity: None,
         configuration_hint: None,
     }
 }

@@ -481,6 +481,7 @@ async fn delayed_external_status_cannot_resurrect_finished_receiver() {
     let mut receiver = task("wifi", |tx, control| async move {
         control.finish_receiver(Scanner::Wifi, true);
         tx.send(ScanEvent::ExternalStatus {
+            identity: Default::default(),
             usb_selector: Some("usb:1:2".into()),
             state: "running".into(),
             dropped: 3,

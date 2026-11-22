@@ -25,6 +25,7 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
     stop: Arc<AtomicBool>,
     cleanup_unverified: bool,
     identity: Option<mt7610u_lab::selection::Identity>,
+    firmware_uploaded: Option<bool>,
     transfers: u64,
     frames: u64,
     beacons: u64,
@@ -32,15 +33,21 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
 }
 impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware<'_, T, F> {
     fn metrics(&self) -> Value {
-        json!({"usb_device":self.identity,"transfers":self.transfers,"frames":self.frames,"beacons":self.beacons,"malformed_transfers":self.malformed})
+        json!({"usb_device":self.identity,"transfers":self.transfers,"frames":self.frames,"beacons":self.beacons,"malformed_transfers":self.malformed,
+            "firmware": {"supplied_image":self.firmware.image_metadata(),
+              "load_state":match self.firmware_uploaded {Some(true)=>"uploaded_this_initialization",Some(false)=>"running_image_unverified",None=>"not_initialized"},
+              "uploaded_image":self.firmware_uploaded.filter(|uploaded| *uploaded).map(|_| self.firmware.image_metadata()),
+              "evidence":"companion_bootstrap"}})
     }
     fn start(&mut self) -> Result<()> {
+        self.firmware_uploaded = None;
         self.device = Some((self.open)()?);
         self.identity = self.device.as_ref().and_then(|d| d.identity.clone());
         self.cleanup_unverified = true;
         let device = self.device.as_mut().unwrap();
-        let (setup, _) =
+        let (setup, uploaded) =
             mt7610u_lab::receiver::prepare(device, &self.firmware, self.channels[0], &self.stop)?;
+        self.firmware_uploaded = Some(uploaded);
         self.calibration = Some(setup.calibration);
         self.channel_index = 0;
         self.epoch = 0;
@@ -48,6 +55,7 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
         Ok(())
     }
     fn shutdown(&mut self) -> Result<()> {
+        self.firmware_uploaded = None;
         let Some(mut device) = self.device.take() else {
             ensure!(
                 !self.cleanup_unverified,
@@ -139,6 +147,7 @@ impl<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> Hardware<'a, T, F> {
             stop,
             cleanup_unverified: false,
             identity: None,
+            firmware_uploaded: None,
             transfers: 0,
             frames: 0,
             beacons: 0,
@@ -178,8 +187,18 @@ mod tests {
             },
         );
         assert!(h.poll().is_err());
+        assert_eq!(h.metrics()["firmware"]["load_state"], "not_initialized");
         h.shutdown().unwrap();
+        endpoint.0.lock().unwrap().registers.insert(0x730, 0);
         h.start().unwrap();
+        assert_eq!(
+            h.metrics()["firmware"]["load_state"],
+            "uploaded_this_initialization"
+        );
+        assert_eq!(
+            h.metrics()["firmware"]["uploaded_image"]["sha256"],
+            mt7610u_lab::firmware::REFERENCE_SHA256
+        );
         assert!(h.poll().unwrap().is_empty());
         endpoint
             .0
@@ -206,6 +225,14 @@ mod tests {
         assert_eq!(h.channel_index, 1);
         h.shutdown().unwrap();
         assert!(!h.cleanup_unverified);
+        assert!(h.metrics()["firmware"]["uploaded_image"].is_null());
+        h.start().unwrap();
+        assert_eq!(
+            h.metrics()["firmware"]["load_state"],
+            "running_image_unverified"
+        );
+        assert!(h.metrics()["firmware"]["uploaded_image"].is_null());
+        h.shutdown().unwrap();
         assert_eq!(h.metrics()["usb_device"]["selector"], "usb:1:2");
         assert_eq!(endpoint.0.lock().unwrap().registers[&0x1004] & 0xc, 0);
         stop.store(true, Ordering::Relaxed);

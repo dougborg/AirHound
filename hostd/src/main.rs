@@ -897,6 +897,7 @@ async fn filter_task<W: Write, O: Write>(
         let mut output = session_runtime::SourceWriter::new(&mut output, source.as_ref());
         output.replay = replay.as_ref();
         if let ScanEvent::ExternalStatus {
+            ref identity,
             ref state,
             dropped,
             producer_dropped,
@@ -913,7 +914,7 @@ async fn filter_task<W: Write, O: Write>(
                 },
                 "external_receiver_state",
             );
-            let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts,"usb_selector":usb_selector});
+            let value = serde_json::json!({"type":"external_scanner_status","source":"mt7610u-lab","state":state,"host_dropped_observations":dropped,"producer_dropped_observations":producer_dropped,"reconnect_attempts":reconnect_attempts,"usb_selector":usb_selector,"identity":identity});
             observation::write_json(&mut output, &value)?;
             continue;
         }

@@ -371,3 +371,46 @@ fn airhound_identity_requires_current_serial_owner_and_actual_status() {
     assert_eq!(ended.devices[0].candidates[0].kind, "serial_unknown");
     assert!(ended.devices[0].candidates[0].configuration_hint.is_none());
 }
+
+#[test]
+fn external_identity_requires_exact_selector_and_current_owner() {
+    let identity=crate::external_identity::Identity::from_hello(&json!({"helper_build":{"component":"mt7610u-lab","package_version":"0.1.0","display_version":"git fixture","git_revision":null,"source_tag":null,"tracked_source_modified":null}})).unwrap();
+    let health = json!({"active":true,"receiver_health":{"receivers":[{"id":"alfa","receiver":{"backend":"mt7610u_companion","adapter_id":"usb:1:2","availability":"running","external_identity":identity}}]}});
+    let fresh = || {
+        assemble(
+            vec![raw(0x0e8d, 0x7610)],
+            vec![],
+            "macos",
+            &Options::default(),
+        )
+    };
+    let mut unmapped = fresh();
+    unmapped.reuse_active_metadata(&health);
+    assert!(unmapped.devices[0].candidates[0]
+        .external_identity
+        .is_none());
+    let mapped = || {
+        let mut v = fresh();
+        v.devices[0].candidates[0]
+            .configuration_hint
+            .as_mut()
+            .unwrap()["usb_selector"] = json!("usb:1:2");
+        v
+    };
+    let mut exact = mapped();
+    exact.reuse_active_metadata(&health);
+    assert!(exact.devices[0].candidates[0].external_identity.is_some());
+    assert_eq!(exact.devices[0].candidates[0].support, "experimental");
+    for state in ["stopped", "failed", "recovering"] {
+        let mut stopped = health.clone();
+        stopped["receiver_health"]["receivers"][0]["receiver"]["availability"] = json!(state);
+        let mut inventory = mapped();
+        inventory.reuse_active_metadata(&stopped);
+        assert!(inventory.devices[0].candidates[0]
+            .external_identity
+            .is_none());
+    }
+    let mut history = mapped();
+    history.reuse_active_metadata(&json!({"active":false,"last":health}));
+    assert!(history.devices[0].candidates[0].external_identity.is_none());
+}
