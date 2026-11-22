@@ -43,6 +43,14 @@ the identifier and install path stay the same. A stable developer signing
 identity is needed for reliable permission continuity across builds; this
 preview does not weaken signature requirements or reset privacy settings.
 
+If a native scan requests access after an update, unlock the Mac and approve
+**AirHound** for Bluetooth and **AirHound Service** for Location. The Bluetooth
+prompt is attributed to the outer app; WiFi location access belongs to the
+embedded service. Leave the installed copy unchanged while granting access, then
+retry the recording. A locked screen or an unanswered prompt can leave WiFi
+addresses redacted and Bluetooth unavailable. Do not reset privacy settings or
+rebuild the app merely because a prompt is still pending.
+
 The native **About AirHound** panel reports the project package version and GUI
 source commit, exact tag when present, and tracked-source modification state.
 These are stamped during bundling rather than inferred from the connected
