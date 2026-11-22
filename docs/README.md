@@ -28,6 +28,7 @@ are labeled separately.
 - [Observation/command protocol and GATT UUIDs](protocol.md)
 - [Firmware streaming, framing and loss counters](firmware-streaming.md)
 - [CatSniffer/Sniffle live capture and PCAP replay](sniffle-source.md)
+- [Concurrent desktop receivers, configuration and source identity](multi-receiver-sessions.md)
 - [Marauder / AWOK saved Wi-Fi capture import](marauder-import.md)
 - [Typed BLE observation contract](ble-observation-contract.md)
 - [Desktop Remote ID decoding and reception limits](desktop-remote-id.md)

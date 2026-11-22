@@ -11,11 +11,21 @@ pub struct State {
 }
 
 #[derive(Clone)]
+struct ReceiverHealth {
+    id: String,
+    health: Arc<Mutex<Snapshot>>,
+    receiver: Arc<Mutex<Option<crate::receiver::Receiver>>>,
+    assignment: serde_json::Value,
+}
+
+#[derive(Clone)]
 pub struct ScanControl(
     watch::Sender<State>,
     Arc<Mutex<Snapshot>>,
     Arc<Mutex<Option<crate::receiver::Receiver>>>,
     Arc<Mutex<Option<crate::gpsd::Source>>>,
+    Arc<Mutex<Vec<ReceiverHealth>>>,
+    Arc<Mutex<bool>>,
 );
 
 impl ScanControl {
@@ -30,6 +40,30 @@ impl ScanControl {
             Arc::new(Mutex::new(Snapshot::default())),
             Arc::new(Mutex::new(None)),
             Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(false)),
+        )
+    }
+    /// Shares session pause/shutdown and location, but keeps receiver health isolated.
+    pub fn fork_receiver(&self, id: String, assignment: serde_json::Value) -> Self {
+        let health = Arc::new(Mutex::new(Snapshot::default()));
+        let receiver = Arc::new(Mutex::new(None));
+        self.4
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(ReceiverHealth {
+                id,
+                health: health.clone(),
+                receiver: receiver.clone(),
+                assignment,
+            });
+        Self(
+            self.0.clone(),
+            health,
+            receiver,
+            self.3.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(false)),
         )
     }
     pub fn set_location_source(&self, source: crate::gpsd::Source) {
@@ -47,12 +81,40 @@ impl ScanControl {
         *self.1.lock().unwrap_or_else(|e| e.into_inner())
     }
     pub fn set_health(&self, scanner: Scanner, state: Phase, reason: &'static str) {
+        let finished = self.5.lock().unwrap_or_else(|e| e.into_inner());
+        if *finished {
+            return;
+        }
         let mut snapshot = self.1.lock().unwrap_or_else(|e| e.into_inner());
         let health = Health { state, reason };
         match scanner {
             Scanner::Ble => snapshot.ble = health,
             Scanner::Wifi => snapshot.wifi = health,
         }
+    }
+    /// Terminal lifecycle state wins over delayed backend status events.
+    pub fn finish_receiver(&self, scanner: Scanner, failed: bool) {
+        let mut finished = self.5.lock().unwrap_or_else(|e| e.into_inner());
+        let mut snapshot = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        let health = match scanner {
+            Scanner::Ble => &mut snapshot.ble,
+            Scanner::Wifi => &mut snapshot.wifi,
+        };
+        if failed {
+            *health = Health {
+                state: Phase::Unavailable,
+                reason: "receiver_task_failed",
+            };
+        } else if matches!(
+            health.state,
+            Phase::Running | Phase::Initializing | Phase::Paused
+        ) {
+            *health = Health {
+                state: Phase::Stopped,
+                reason: "receiver_finished",
+            };
+        }
+        *finished = true;
     }
     pub fn set_receiver(&self, receiver: crate::receiver::Receiver) {
         *self.2.lock().unwrap_or_else(|e| e.into_inner()) = Some(receiver);
@@ -79,6 +141,27 @@ impl ScanControl {
         if let Some(source) = self.3.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             value["location"] = source.health();
         }
+        let receivers = self.4.lock().unwrap_or_else(|e| e.into_inner());
+        if !receivers.is_empty() {
+            value.as_object_mut().unwrap().remove("scanners");
+            value["receivers"] = serde_json::Value::Array(
+                receivers
+                    .iter()
+                    .map(|source| {
+                        serde_json::json!({
+                            "id":source.id,
+                            "scanners":*source.health.lock().unwrap_or_else(|e| e.into_inner()),
+                            "receiver":*source.receiver.lock().unwrap_or_else(|e| e.into_inner()),
+                            "requested_assignment":source.assignment,
+                            "queue_capacity":32,
+                            "relay_queue_policy":"bounded_backpressure",
+                            "backend_ingress_policy":"backend_specific",
+                            "radio_loss":"unknown_unless_reported_by_backend"
+                        })
+                    })
+                    .collect(),
+            );
+        }
         value
     }
     pub fn load(&self, _: Ordering) -> bool {
@@ -89,15 +172,21 @@ impl ScanControl {
             if state.shutdown || state.enabled == enabled {
                 return false;
             }
-            let mut health = self.1.lock().unwrap_or_else(|e| e.into_inner());
-            let health = &mut *health;
-            for scanner in [&mut health.ble, &mut health.wifi] {
-                if !enabled && matches!(scanner.state, Phase::Running | Phase::Initializing) {
-                    *scanner = Health {
-                        state: Phase::Paused,
-                        reason: "pause_requested",
-                    };
+            let pause = |snapshot: &Arc<Mutex<Snapshot>>| {
+                let mut health = snapshot.lock().unwrap_or_else(|e| e.into_inner());
+                let health = &mut *health;
+                for scanner in [&mut health.ble, &mut health.wifi] {
+                    if !enabled && matches!(scanner.state, Phase::Running | Phase::Initializing) {
+                        *scanner = Health {
+                            state: Phase::Paused,
+                            reason: "pause_requested",
+                        };
+                    }
                 }
+            };
+            pause(&self.1);
+            for receiver in self.4.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+                pause(&receiver.health);
             }
             state.enabled = enabled;
             state.generation = state.generation.wrapping_add(1);
@@ -136,6 +225,38 @@ pub async fn wait_running<T>(state: &mut watch::Receiver<State>, tx: &mpsc::Send
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[test]
+    fn children_share_commands_but_keep_independent_health() {
+        let root = ScanControl::new(true);
+        let first = root.fork_receiver("one".into(), serde_json::json!({"channel":37}));
+        let second = root.fork_receiver("two".into(), serde_json::json!({"channel":38}));
+        first.set_health(Scanner::Ble, Phase::Running, "ready");
+        second.set_health(Scanner::Ble, Phase::Unavailable, "missing");
+        root.store(false, Ordering::Relaxed);
+        assert!(!first.load(Ordering::Relaxed));
+        assert!(!second.load(Ordering::Relaxed));
+        assert_eq!(first.health().ble.state, Phase::Paused);
+        assert_eq!(second.health().ble.state, Phase::Unavailable);
+        root.store(true, Ordering::Relaxed);
+        assert!(first.load(Ordering::Relaxed));
+        // A command is not confirmation that a backend restarted.
+        assert_eq!(first.health().ble.state, Phase::Paused);
+        let message = root.health_message();
+        assert!(message.get("scanners").is_none());
+        assert_eq!(message["receivers"][0]["id"], "one");
+        assert_eq!(
+            message["receivers"][1]["scanners"]["ble"]["reason"],
+            "missing"
+        );
+        assert_eq!(
+            message["receivers"][1]["requested_assignment"]["channel"],
+            38
+        );
+        root.shutdown();
+        assert!(first.subscribe().borrow().shutdown);
+        assert!(second.subscribe().borrow().shutdown);
+    }
+
     #[test]
     fn requested_state_does_not_hide_permission_or_adapter_failures() {
         let control = ScanControl::new(true);
