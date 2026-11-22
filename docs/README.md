@@ -62,6 +62,7 @@ These do not claim production integration or validated support for every listed 
 - [Preview release status, assets and publication procedure](release-status.md)
 - [Contribution process](../CONTRIBUTING.md)
 - [Priorities, issue inventory and release gates](roadmap.md)
+- [Durable sessions, SQLite recording and staged source acceptance](storage-plan.md)
 - [Change history](../CHANGELOG.md)
 
 ## Native macOS interface
