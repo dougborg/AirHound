@@ -8,6 +8,7 @@ The preview is under acceptance, not a signed-off production release.
 | Shared Rust capture/control boundary | Swift uses the shared Rust CLI client; no Swift scan/policy/database implementation | Implemented |
 | Discover/select/default setup | Native candidate controls and native Wi-Fi/BLE defaults; app-model service test | Automated model check passes; user confirmed connection and expandable receiver details on 2026-11-22 |
 | Advanced receiver/channel setup | ALFA/CatSniffer fields plus backend-validated JSON/import | Compiles; native interaction check pending |
+| Packaged CatSniffer GUI start | User imported the prepared plan and showed Bluetooth running; backend subsequently retained a finished run with 3,629 records | Start/reception and persistence confirmed; pause/resume and close/reopen still pending |
 | Durable history/evidence/export | Real-service synthetic replay, retry, page decoding and SQLite export tests | Automated checks pass |
 | Client disconnect/reconnect | App-model starts a real service, disconnects, reconnects a new model | Automated model check passes |
 | Uncertain start after app loss | Private fsynced intent record; replacement model resolves accepted ID with input file removed | Automated recovery check passes |
@@ -38,3 +39,8 @@ keyboard focus and a narrow window. Rebuild and verify the artifact after fixes.
 
 ALFA recovery and successful ALFA + CatSniffer capture remain separate open
 hardware follow-ups (#155), not prerequisites for this native preview.
+
+The observation-selection regression now covers automatic selection of both live
+and completed runs, plus preservation of a manually stopped Follow Live state.
+The incomplete-setup regression names missing receiver paths in shared Rust
+validation; a configuration error no longer changes the connection indicator.

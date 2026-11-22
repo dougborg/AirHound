@@ -71,9 +71,7 @@ pub(crate) fn load(path: &std::path::Path) -> io::Result<SessionConfig> {
             "session file exceeds 64 KiB",
         ));
     }
-    serde_json::from_slice::<SessionConfig>(&bytes)
-        .map_err(io::Error::other)?
-        .resolve()
+    SessionConfig::from_json(serde_json::from_slice(&bytes).map_err(io::Error::other)?)?.resolve()
 }
 
 /// The same load/prepare preflight used by a real session, without invoking any

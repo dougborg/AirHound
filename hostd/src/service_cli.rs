@@ -168,7 +168,7 @@ impl Backend for LocalBackend {
     }
     fn validate(&self, config: Value) -> BackendResult {
         Box::pin(async move {
-            let plan = serde_json::from_value(config)
+            let plan = airhound_hostd::session::SessionConfig::from_json(config)
                 .map_err(|e| ApiError::new(ErrorCode::InvalidSession, e.to_string()))?;
             crate::session_runtime::preview(plan)
                 .await

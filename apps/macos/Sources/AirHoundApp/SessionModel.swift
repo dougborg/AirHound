@@ -230,6 +230,14 @@ final class SessionModel: ObservableObject {
     }
   }
 
+  func showCurrentRecordingIfNeeded(app: AppModel) {
+    guard connected, !busy, browsingRun == nil, app.recording == nil,
+      let id = activeID ?? capture?["last"]?["run_id"]?.string,
+      let run = runs.first(where: { $0.id == id })
+    else { return }
+    open(run, app: app)
+  }
+
   func open(_ run: StoredRun, app: AppModel) {
     guard !busy else { return }
     browsingRun = run.id
