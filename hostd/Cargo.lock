@@ -44,18 +44,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "airhound-flipper"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.4",
+ "serde",
+ "serde-json-core",
+]
+
+[[package]]
 name = "airhound-hostd"
 version = "0.1.0"
 dependencies = [
  "airhound",
  "airhound-api",
  "airhound-client",
+ "airhound-flipper",
  "btleplug",
  "chrono",
  "clap",
  "corebluetooth-address",
  "csv",
  "env_logger",
+ "flipper-rpc",
  "futures-lite",
  "heapless 0.9.4",
  "libc",
@@ -66,6 +77,7 @@ dependencies = [
  "objc2-foundation",
  "pcap",
  "plist",
+ "prost",
  "rusqlite",
  "serde",
  "serde_json",
@@ -134,6 +146,12 @@ dependencies = [
  "once_cell_polyfill",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "async-trait"
@@ -737,6 +755,16 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "flipper-rpc"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd9a12d00f8216c09473f3bc7d1deffcf9e9f9982c18065e7367549bb7c2b52"
+dependencies = [
+ "prost",
+ "thiserror",
+]
 
 [[package]]
 name = "foldhash"
@@ -1659,6 +1687,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "prost"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef0b569d1d907ab3a28596aee62cf1f61dacb0529a4bedcd8e7460e2d5228b4"
+dependencies = [
+ "bytes",
+ "prost-derive",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad9c5423459fa2f729b8d9235fab810aa29628b171467744fc86d21460ad70d"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
