@@ -252,3 +252,65 @@ fn wal_reader_snapshot_does_not_block_recording() {
     reader.connection.execute_batch("COMMIT").unwrap();
     assert_eq!(reader.runs(1).unwrap()[0].record_count, 1);
 }
+
+#[test]
+fn dedicated_writer_finish_commits_all_accepted_records() {
+    let f = Fixture::new();
+    let writer = writer::Writer::start(
+        f.database(),
+        RecordingMode::Replay,
+        json!({"fixture":true}),
+        vec![("receiver-a".into(), json!({"physical_identity":null}))],
+    )
+    .unwrap();
+    let run = writer.run_id.clone();
+    for _ in 0..64 {
+        writer.append(record("receiver-a")).unwrap();
+    }
+    writer.finish(true).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let runs = reader.runs(1).unwrap();
+    assert_eq!(runs[0].id, run);
+    assert_eq!(runs[0].state, "finished");
+    assert_eq!(runs[0].record_count, 64);
+    assert_eq!(reader.records(&run, 0, 100).unwrap().records.len(), 64);
+}
+
+#[test]
+fn dedicated_writer_never_finishes_after_rejection_or_database_error() {
+    for source in ["", "unregistered"] {
+        let f = Fixture::new();
+        let writer = writer::Writer::start(
+            f.database(),
+            RecordingMode::Replay,
+            json!({}),
+            vec![("receiver-a".into(), json!({}))],
+        )
+        .unwrap();
+        // Invalid identifiers fail at enqueue; unknown source IDs fail at commit.
+        let _ = writer.append(record(source));
+        assert!(writer.finish(true).is_err());
+        let reader = Reader::open(&f.database()).unwrap();
+        let runs = reader.runs(1).unwrap();
+        assert_eq!(runs[0].state, "failed");
+        assert_eq!(runs[0].record_count, 0);
+    }
+}
+
+#[test]
+fn dedicated_writer_capture_failure_retains_committed_evidence() {
+    let f = Fixture::new();
+    let writer = writer::Writer::start(
+        f.database(),
+        RecordingMode::Replay,
+        json!({}),
+        vec![("receiver-a".into(), json!({}))],
+    )
+    .unwrap();
+    writer.append(record("receiver-a")).unwrap();
+    writer.finish(false).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let runs = reader.runs(1).unwrap();
+    assert_eq!(runs[0].state, "failed");
+    assert_eq!(runs[0].record_count, 1);
+}
