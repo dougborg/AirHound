@@ -248,7 +248,13 @@ impl Session {
         // Autonomous failures may report their final evidence, but cannot promote
         // the source to a successful paused/stopped state.
         if status.cause >= 3 || status.state == State::Failed {
-            return Err(invalid("Bridge reported autonomous stop or failure"));
+            return Err(invalid(match status.cause {
+                6 => "Bridge reported malformed UART framing",
+                10 => "Bridge stop acknowledgment deadline expired",
+                11 => "Bridge stop drain ended with an incomplete frame",
+                12 => "Bridge stop drain deadline expired before quiet completion",
+                _ => "Bridge reported autonomous stop or failure",
+            }));
         }
         let expected = match status.state {
             State::Ready => {

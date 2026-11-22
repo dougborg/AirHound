@@ -210,10 +210,102 @@ fn paired_finish_escalates_pending_pause_without_reusing_evidence_or_extending_d
     assert_eq!(p.producer.evidence & 4, 0);
     assert!(p.host.command(Command::Stop).is_err());
     // No fresh Stop response: old pause response cannot establish success.
-    p.poll(1100);
+    p.poll(1150); // Fresh Stop has its own 1s acknowledgment deadline.
     assert_eq!(p.producer.state, State::Failed);
     assert!(p.drain().is_err());
     assert_eq!(p.host.last_reported_status().unwrap().evidence & 4, 0);
+    assert_eq!(p.host.last_reported_status().unwrap().cause, 10);
+}
+
+#[test]
+fn paired_stop_failures_retain_specific_diagnostic_evidence_without_resuming() {
+    for (tail, cause, message) in [
+        (None, 10, "Bridge stop acknowledgment deadline expired"),
+        (
+            Some(b"[BUF/BEGIN]".as_slice()),
+            11,
+            "Bridge stop drain ended with an incomplete frame",
+        ),
+        (
+            Some(b"console\r\n".as_slice()),
+            12,
+            "Bridge stop drain deadline expired before quiet completion",
+        ),
+    ] {
+        let mut p = Pair::new();
+        p.start(10);
+        assert_eq!(p.command(Command::Pause, 100), Some(UartAction::Stop));
+        p.drain().unwrap();
+        let request = p.producer.request_id();
+        let deadline = if let Some(tail) = tail {
+            p.feed(725, b"Stopping WiFi tran/recv\r\n");
+            p.drain().unwrap();
+            p.poll(725);
+            p.drain().unwrap();
+            p.feed(800, tail);
+            p.drain().unwrap();
+            if cause == 12 {
+                p.producer.pending_input(2725);
+            }
+            2725
+        } else {
+            1100
+        };
+        p.poll(deadline);
+        assert_eq!(p.producer.request_id(), request);
+        let error = p.drain().unwrap_err();
+        assert_eq!(error.to_string(), message);
+        let reported = p.host.last_reported_status().unwrap();
+        assert_eq!(reported, p.producer.status(deadline));
+        assert_eq!(reported.cause, cause);
+        assert_eq!(reported.app_uptime_ms, deadline);
+        assert_eq!(reported.state, State::Failed);
+        assert_eq!(p.host.state(), Some(State::Failed));
+        assert!(p.host.command(Command::StartBeacon).is_err());
+    }
+}
+
+#[test]
+fn paired_queued_tail_remains_parseable_after_old_stop_deadline() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.command(Command::Pause, 100);
+    p.drain().unwrap();
+    p.feed(725, b"Stopping WiFi tran/recv\r\n");
+    p.drain().unwrap();
+    p.poll(725);
+    p.drain().unwrap();
+    let mut bytes = b"[BUF/BEGIN]".to_vec();
+    // The scan's global PCAP header was already received by start().
+    // A finite ~16 KiB stress tail, not a claim about the attached board's RAM.
+    for _ in 0..8 {
+        for n in [0u32, 123, 2000, 2000] {
+            bytes.extend(n.to_le_bytes());
+        }
+        bytes.extend([0x80; 2000]);
+    }
+    bytes.extend(b"[BUF/CLOSE]");
+    let mut packets = 0;
+    let mut now = 725;
+    for chunk in bytes.chunks(115) {
+        now += 10; // <= 115200 baud, 8N1.
+        p.feed(now, chunk);
+        for event in p.drain().unwrap() {
+            if let Event::Raw { packets: batch, .. } = event {
+                packets += batch.len();
+            }
+        }
+        p.poll(now);
+        p.drain().unwrap();
+        assert_eq!(p.host.state(), Some(State::Stopping));
+    }
+    assert!(now > 1100 && now < 3100);
+    p.poll(now + 50);
+    p.drain().unwrap();
+    assert_eq!(packets, 8);
+    assert_eq!(p.host.state(), Some(State::Paused));
+    assert_eq!(p.host.last_reported_status().unwrap().evidence, 7);
+    p.stopped(now + 100, Command::Stop, State::Stopped);
 }
 
 #[test]
