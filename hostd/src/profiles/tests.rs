@@ -266,6 +266,7 @@ fn endpoint_reuse_does_not_certify_identity_or_rebind_devices() {
         bindings: bindings(&plan, &current),
         saved_at_ms: 0,
         validation_scope: "configuration_only".into(),
+        origin: None,
     };
     let checks = check_bindings(&profile, &current);
     assert_eq!(
@@ -341,4 +342,102 @@ fn store_and_lock_symlinks_never_follow_external_files() {
     symlink(&outside, temp.0.join("profiles/.lock")).unwrap();
     assert!(Store::open(&temp.0.join("profiles")).is_err());
     assert_eq!(fs::read(outside).unwrap(), b"untouched");
+}
+
+#[test]
+fn origin_survives_reopen_and_copied_profile_is_advisory_foreign_scope() {
+    let first = Temp::new();
+    let second = Temp::new();
+    let store = first.store();
+    let profile = save(&store);
+    let origin = profile.origin.clone().unwrap();
+    assert_eq!(origin.platform, std::env::consts::OS);
+    assert_eq!(store.origin_check(&profile)["state"], "same_store");
+    drop(store);
+    let store = first.store();
+    assert_eq!(store.load("test").unwrap().origin.as_ref(), Some(&origin));
+    assert_eq!(store.origin_check(&profile)["state"], "same_store");
+    let other = second.store();
+    fs::copy(
+        first.0.join("profiles/test.json"),
+        second.0.join("profiles/test.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        other.origin_check(&other.load("test").unwrap())["state"],
+        "different_store"
+    );
+    let mut different = profile.clone();
+    different.origin.as_mut().unwrap().platform = "another-platform".into();
+    assert_eq!(
+        store.origin_check(&different)["state"],
+        "different_platform"
+    );
+    let mut legacy = serde_json::to_value(profile).unwrap();
+    legacy.as_object_mut().unwrap().remove("origin");
+    fs::write(
+        first.0.join("profiles/test.json"),
+        serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        store.origin_check(&store.load("test").unwrap())["state"],
+        "unknown"
+    );
+    assert_eq!(
+        store.origin_check(&different)["physical_identity_verified"],
+        false
+    );
+}
+
+#[test]
+fn alias_change_keeps_a_saved_profile_editable_but_invalidates_current_resolution() {
+    let temp = Temp::new();
+    let store = temp.store();
+    let one = temp.file("one-port", b"");
+    let two = temp.file("two-port", b"");
+    let alias = temp.0.join("alias-port");
+    symlink(&two, &alias).unwrap();
+    let python = temp.file("python", b"not executed");
+    fs::set_permissions(&python, fs::Permissions::from_mode(0o700)).unwrap();
+    let helper = temp.file("helper", b"not executed");
+    let source =
+        |port: &Path| json!({"kind":"sniffle","port":port,"python":python,"helper":helper});
+    let plan = json!({"version":1,"receivers":[{"id":"one","source":source(&one)},{"id":"two","source":source(&alias)}]});
+    store
+        .save(
+            "two".into(),
+            "Two receivers".into(),
+            plan.clone(),
+            &inventory(),
+            false,
+        )
+        .unwrap();
+    fs::remove_file(&alias).unwrap();
+    symlink(&one, &alias).unwrap();
+    let loaded = store.load("two").unwrap();
+    assert_eq!(loaded.config, plan);
+    assert!(SessionConfig::from_json(loaded.config)
+        .unwrap()
+        .resolve()
+        .is_err());
+    assert!(store
+        .save(
+            "two".into(),
+            "Still conflicts".into(),
+            plan,
+            &inventory(),
+            true
+        )
+        .is_err());
+    // Semantic readiness changed, but the last valid saved profile is unchanged.
+    assert_eq!(store.load("two").unwrap().name, "Two receivers");
+    let mut broken = serde_json::to_value(store.load("two").unwrap()).unwrap();
+    broken["config"]["version"] = json!(99);
+    fs::write(
+        temp.0.join("profiles/two.json"),
+        serde_json::to_vec(&broken).unwrap(),
+    )
+    .unwrap();
+    assert!(store.load("two").is_err());
 }

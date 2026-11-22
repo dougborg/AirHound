@@ -17,6 +17,8 @@ use std::{
 const MAX_BYTES: usize = 128 * 1024;
 const MAX_PROFILES: usize = 64;
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+mod origin;
+pub use origin::Origin;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +41,8 @@ pub struct Profile {
     pub bindings: Vec<Binding>,
     /// A saved configuration is not evidence that RF reception was tested.
     pub validation_scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -65,13 +69,16 @@ fn name_valid(name: &str) -> io::Result<()> {
     }
     Ok(())
 }
-fn checked_config(config: &Value) -> io::Result<()> {
+fn parsed_config(config: &Value) -> io::Result<SessionConfig> {
     if serde_json::to_vec(config).map_err(io::Error::other)?.len() > airhound_api::MAX_CONFIG_BYTES
     {
         return Err(invalid("profile configuration exceeds 64 KiB"));
     }
-    SessionConfig::from_json(config.clone())?.resolve()?;
-    Ok(())
+    let plan = SessionConfig::from_json(config.clone())?;
+    if plan.version != 1 {
+        return Err(invalid("unsupported saved session schema version"));
+    }
+    Ok(plan)
 }
 fn private_metadata(metadata: &fs::Metadata, directory: bool) -> io::Result<()> {
     // SAFETY: geteuid has no preconditions.
@@ -93,6 +100,7 @@ fn private_metadata(metadata: &fs::Metadata, directory: bool) -> io::Result<()> 
 pub struct Store {
     directory: PathBuf,
     _lock: File,
+    origin: Origin,
 }
 impl Store {
     /// Lock a private store. The service's socket parent is the persistence scope.
@@ -155,6 +163,7 @@ impl Store {
         Ok(Self {
             directory: directory.into(),
             _lock: lock,
+            origin: origin::load_or_create(directory)?,
         })
     }
     fn path(&self, id: &str) -> io::Result<PathBuf> {
@@ -182,7 +191,7 @@ impl Store {
             return Err(invalid("profile ID does not match its filename"));
         }
         name_valid(&profile.name)?;
-        checked_config(&profile.config)?;
+        parsed_config(&profile.config)?;
         if profile.validation_scope != "configuration_only" {
             return Err(invalid("profile cannot assert RF verification"));
         }
@@ -196,7 +205,7 @@ impl Store {
         let mut profiles = Vec::new();
         for entry in fs::read_dir(&self.directory)?.take(MAX_PROFILES + 3) {
             let entry = entry?;
-            if entry.file_name() == ".lock" {
+            if entry.file_name() == ".lock" || entry.file_name() == ".origin.json" {
                 continue;
             }
             let path = entry.path();
@@ -208,7 +217,7 @@ impl Store {
                 .and_then(|v| v.to_str())
                 .ok_or_else(|| invalid("invalid profile filename"))?;
             let profile = self.load(id)?;
-            profiles.push(json!({"id":profile.id,"name":profile.name,"saved_at_ms":profile.saved_at_ms,"receiver_count":profile.bindings.len(),"schema_version":profile.schema_version,"validation_scope":profile.validation_scope}));
+            profiles.push(json!({"id":profile.id,"name":profile.name,"saved_at_ms":profile.saved_at_ms,"receiver_count":profile.bindings.len(),"schema_version":profile.schema_version,"validation_scope":profile.validation_scope,"origin":profile.origin}));
             if profiles.len() > MAX_PROFILES {
                 return Err(invalid("profile store exceeds 64 profiles"));
             }
@@ -228,7 +237,7 @@ impl Store {
     ) -> io::Result<Profile> {
         let destination = self.path(&id)?;
         name_valid(&name)?;
-        checked_config(&config)?;
+        parsed_config(&config)?.resolve()?;
         if check_resources(&config)["valid"] != true {
             return Err(invalid(
                 "profile helper or replay paths are missing or invalid",
@@ -267,6 +276,7 @@ impl Store {
             bindings: bindings(&config, inventory),
             config,
             validation_scope: "configuration_only".into(),
+            origin: Some(self.origin.clone()),
         };
         let bytes = serde_json::to_vec_pretty(&profile).map_err(io::Error::other)?;
         if bytes.len() > MAX_BYTES {
@@ -305,6 +315,15 @@ impl Store {
         fs::remove_file(path)?;
         File::open(&self.directory)?.sync_all()?;
         Ok(json!({"schema_version":1,"deleted":id}))
+    }
+    pub fn origin_check(&self, profile: &Profile) -> Value {
+        let state = match &profile.origin {
+            None => "unknown",
+            Some(origin) if origin.platform != self.origin.platform => "different_platform",
+            Some(origin) if origin.store_id != self.origin.store_id => "different_store",
+            Some(_) => "same_store",
+        };
+        json!({"state":state,"current_origin":self.origin,"physical_identity_verified":false,"message":"Origin identifies a saved backend profile namespace, not a physical computer or receiver. Copying a store also copies its namespace."})
     }
 }
 
