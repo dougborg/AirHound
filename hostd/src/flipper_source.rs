@@ -126,7 +126,7 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
         |event| {
             match event {
                 Output::FailureStatus(status) => {
-                    latest_status = json!({"accepted_lifecycle":false,"state":format!("{:?}",status.state),"cause":status.cause,"uart_text_evidence":status.evidence,"capture_generation":status.generation,"uart_rx_bytes":status.uart_rx_bytes,"uart_dropped_bytes":status.uart_dropped_bytes,"uart_error_events":status.uart_error_events,"rpc_dropped_messages":status.rpc_dropped_messages,"unread_ring_bytes":status.unread_ring_bytes});
+                    latest_status = diagnostic_status(status);
                     set_reported_health(control, State::Failed, false);
                 }
                 Output::DeviceInfo(info) => {
@@ -192,6 +192,24 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
     let _=tx.try_send(ScanEvent::FirmwareStatus(json!({"type":"flipper_bridge_status","schema_version":1,"state":if result.is_ok(){"finished"}else{"failed"},"producer_last_report":latest_status,"host_dropped_observations":dropped,"emitted_packets":packets,"radio_stop":if result.is_ok(){"see_uart_evidence"}else{"unverified"},"radio_loss":"unknown"})));
     control.set_bridge_status(json!({"state":if result.is_ok(){"finished"}else{"failed"},"producer_last_report":latest_status,"host_dropped_observations":dropped,"emitted_packets":packets,"radio_stop":if result.is_ok(){"see_uart_evidence"}else{"unverified"},"radio_loss":"unknown"}));
     result
+}
+
+fn diagnostic_status(status: airhound_flipper::bridge::Status) -> serde_json::Value {
+    // Keep the original clock and every reported counter even when the lifecycle
+    // validator rejects this status. This is diagnostic evidence, not readiness.
+    json!({
+        "accepted_lifecycle":false,
+        "state":format!("{:?}",status.state),
+        "cause":status.cause,
+        "uart_text_evidence":status.evidence,
+        "capture_generation":status.generation,
+        "app_uptime_ms":status.app_uptime_ms,
+        "uart_rx_bytes":status.uart_rx_bytes,
+        "uart_dropped_bytes":status.uart_dropped_bytes,
+        "uart_error_events":status.uart_error_events,
+        "rpc_dropped_messages":status.rpc_dropped_messages,
+        "unread_ring_bytes":status.unread_ring_bytes,
+    })
 }
 
 fn set_reported_health(control: &ScanControl, state: State, packet_verified: bool) {
@@ -441,7 +459,24 @@ mod tests {
             clock_discontinuity: false,
             frame: vec![0x80],
         };
-        let producer = json!({"uart_dropped_bytes":17,"cause":5});
+        let producer = diagnostic_status(airhound_flipper::bridge::Status {
+            state: State::Failed,
+            cause: 5,
+            evidence: 7,
+            generation: 1,
+            app_uptime_ms: 9876,
+            uart_rx_bytes: 12345,
+            uart_dropped_bytes: 17,
+            uart_error_events: 2,
+            rpc_dropped_messages: 3,
+            unread_ring_bytes: 4,
+        });
+        assert_eq!(producer["app_uptime_ms"], 9876);
+        assert_eq!(producer["accepted_lifecycle"], false);
+        assert_eq!(producer["uart_rx_bytes"], 12345);
+        assert_eq!(producer["uart_error_events"], 2);
+        assert_eq!(producer["rpc_dropped_messages"], 3);
+        assert_eq!(producer["unread_ring_bytes"], 4);
         for _ in 0..8 {
             forward_packet(
                 packet(),
