@@ -20,17 +20,37 @@ open apps/macos/dist/AirHound.app
 
 The bundle is ad-hoc signed for local testing, not Developer ID signed or
 notarized. Its identifier is `tools.airhound.desktop`. The optional argument to
-`bundle.sh` embeds that exact backend executable. Omitting it builds an app that
+`bundle.sh` embeds that exact backend executable inside **AirHound Service.app**
+(`tools.airhound.service`), with its own signed privacy usage descriptions.
+The GUI starts this application through LaunchServices and waits for the shared
+service socket; short-lived client commands use its executable directly.
+Omitting the argument builds an app that
 can browse NDJSON and lets you select a trusted backend manually. External radio
 helpers, their runtimes and firmware are not bundled. The native UI targets
 macOS 14; an embedded backend may require a newer version depending on its SDK
 and deployment target. See the packaged backend's platform requirements.
+
+For native radio testing, install the generated AirHound.app at a stable location
+such as `~/Applications/AirHound.app`, then open that copy. Temporary worktree
+paths can be excluded from application lookup by LaunchServices even when the
+process launches. Keep the same installed copy while testing permissions; do not
+overwrite a bundle whose service is still running. The standalone command-line
+scanner retains its existing `com.airhound.hostd` identity.
+
+Local ad-hoc signatures use a binary hash as their designated requirement.
+Rebuilding the app or backend can invalidate a previous privacy grant even when
+the identifier and install path stay the same. A stable developer signing
+identity is needed for reliable permission continuity across builds; this
+preview does not weaken signature requirements or reset privacy settings.
 
 ## Connect and capture
 
 1. Open **Capture**, then click the service status at the bottom to open connection
    settings. Choose a trusted backend if one is not embedded.
 2. Click **Start Local Service**, or **Connect** if a service already exists.
+   Starting a service does not start scanning. An existing service keeps its
+   current executable and permissions until it is explicitly stopped; installing
+   a newer GUI does not replace the capture owner.
 3. Select receivers. System Wi-Fi and Bluetooth form the initial suggested plan;
    selection does not start scanning or prove permission/readiness.
 4. Expand a receiver row to inspect identification evidence, requirements and

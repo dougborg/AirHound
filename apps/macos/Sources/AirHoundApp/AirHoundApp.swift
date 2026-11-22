@@ -20,10 +20,14 @@ final class AppModel: ObservableObject {
   private var discoveryTask: Task<Void, Never>?
 
   init() {
+    let service = Bundle.main.bundleURL.appendingPathComponent(
+      "Contents/MacOS/AirHound Service.app/Contents/MacOS/airhound-hostd")
     let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/airhound-hostd")
     let sibling = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(
       "airhound-hostd")
-    executable = [bundled, sibling].first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    executable = [service, bundled, sibling].first {
+      FileManager.default.isExecutableFile(atPath: $0.path)
+    }
   }
 
   func chooseBackend() {
