@@ -75,6 +75,7 @@ that opening the port is nondisruptive.
 | CatSniffer + managed GPSD, 20 seconds | 1,356 BLE packets; 1,346 had fresh receiver/rig location, ten startup packets correctly unlocated; finished | Setup save/load and owned daemon startup/finish passed. gpsd 3.27.5/protocol 16.1 and Sniffle 1.11.0/API 0 reported; daemon/private service exited and endpoints released. Native form remains to be checked in the actual final GUI |
 | Assembled M5 + CatSniffer + ALFA + managed GPS, 65.72 seconds | 6,191 observations: M5 467 WiFi + 26 BLE, Cat 2,693, ALFA 3,005; 6,062 fresh receiver-location associations | Pause/resume, M5 connection/boot continuity, one owned Cat helper failure and bounded recovery, and clean finish passed. All configured ALFA channels 1/6/11 received observations |
 | Same saved setup after backend restart, 30.09 seconds | 3,475 observations: M5 263 WiFi + 15 BLE, Cat 1,646, ALFA 1,551; 3,326 fresh receiver-location associations | Saved plan reloaded unchanged, actual producer identities verified again, all three ALFA channels received observations, clean finish |
+| Actual GUI-launched service, native WiFi + BLE, 35 seconds | Zero observations; **failed** terminal state | GUI Start Local Service launch and authenticated connection were verified. CoreWLAN reported redacted addresses; CoreBluetooth initialization timed out. The test recording was stopped, the service stayed running, and existing recordings/profiles were preserved |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
 
@@ -163,10 +164,12 @@ installed GUI launch/connection path, not native-radio permission or reception.
 
 ## Remaining acceptance
 
-- Validate a combined session through the now-connected installed GUI service,
-  including native radios, M5 and explicit GPS where compatible. Its idle launch
-  and history connection passed; capture controls and native permission acceptance
-  remain separate checks.
+- Resolve native radio access under the actual GUI-launched service identity.
+  Start Local Service and the authenticated default connection now work, but the
+  subsequent native WiFi/BLE test failed as recorded above. Capture was requested
+  through the CLI against that GUI-launched service; the GUI's Start Recording
+  control is a separate acceptance check. Do not infer native reception from a
+  successful service launch or extend the native combined test before this passes.
 - Extend the passed external combined/restart/helper-recovery checks to native
   radios under the authorized app identity. Physical unplug/replug, sleep/wake
   and prolonged load remain untested in this assembled build. Synthetic
@@ -175,6 +178,10 @@ installed GUI launch/connection path, not native-radio permission or reception.
 - Retry Flipper after the requested USB reconnect, then exercise the existing
   passive AWOK control path and import a genuine resulting capture. No fresh
   Flipper/AWOK live acceptance is claimed while that user reconnect is pending.
+  A separate bounded BLE management discovery found no advertisement for the
+  known Flipper identity; no BLE connection, authenticated read, pairing request
+  or write occurred. The cached paired application name is not current firmware
+  or management availability evidence.
 - Exercise saved GPS/provider setup through the native UI. Backend session
   configuration and provenance are implemented and live-tested; location must
   remain an explicit association and is not evidence of a transmitter location.
