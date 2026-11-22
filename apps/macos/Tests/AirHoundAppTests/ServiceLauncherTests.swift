@@ -22,27 +22,24 @@ final class ServiceLauncherTests: XCTestCase {
     defer { defaults.removePersistentDomain(forName: suite) }
     let model = SessionModel(preferences: defaults)
     model.socketPath = root.appendingPathComponent("control.sock").path
-    let previous = Set(
-      NSRunningApplication.runningApplications(withBundleIdentifier: "tools.airhound.service").map(
-        \.processIdentifier))
     model.startService(executable: executable)
     for _ in 0..<100 {
       if model.connected && !model.busy { break }
       try await Task.sleep(for: .milliseconds(50))
     }
-    let running = try XCTUnwrap(
-      NSRunningApplication.runningApplications(withBundleIdentifier: "tools.airhound.service").first
-      { !previous.contains($0.processIdentifier) })
-    let pid = running.processIdentifier
-    defer {
-      model.disconnect()
-      kill(pid, SIGTERM)
-    }
     let client = BackendClient(
       executable: executable, socket: URL(fileURLWithPath: model.socketPath))
     let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))
     let instance = try XCTUnwrap(status["instance_id"]?.string)
-    XCTAssertEqual(Int32(instance.split(separator: "-")[0], radix: 16), pid)
+    let pid = try XCTUnwrap(
+      Int32(instance.split(separator: "-")[0], radix: 16).flatMap { $0 > 1 ? $0 : nil })
+    let running = try XCTUnwrap(NSRunningApplication(processIdentifier: pid))
+    // Target only the process answering our private socket, even if the user
+    // starts another same-ID service concurrently with this test.
+    defer {
+      model.disconnect()
+      if !running.isTerminated { kill(pid, SIGTERM) }
+    }
     XCTAssertTrue(model.connected, model.error ?? model.message)
     XCTAssertNil(model.service, "An app bundle must use LaunchServices rather than a raw Process")
     XCTAssertFalse(model.isActive, "Starting the service must not open radios")
