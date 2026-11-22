@@ -12,7 +12,7 @@ use tokio::{
 };
 
 pub(crate) enum Action {
-    Start(Value),
+    Start { request_id: String, config: Value },
     Pause(String),
     Resume(String),
     Finish(String),
@@ -49,11 +49,36 @@ pub(crate) fn spawn(database: PathBuf) -> (Handle, JoinHandle<io::Result<()>>) {
             let shutdown = matches!(request.action, Action::Shutdown);
             let paused = matches!(request.action, Action::Pause(_));
             let result = match request.action {
-                Action::Start(config) => {
-                    if active.is_some() {
+                Action::Start { request_id, config } => {
+                    let path = database.clone();
+                    let key = request_id.clone();
+                    let original = config.clone();
+                    let receipt = tokio::task::spawn_blocking(move || {
+                        if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
+                            return Err(invalid(
+                                "start request id must contain 1–128 non-control bytes",
+                            ));
+                        }
+                        match storage::Reader::open(&path) {
+                            Ok(reader) => reader.start_receipt(&key, &original),
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                            Err(error) => Err(error),
+                        }
+                    })
+                    .await
+                    .map_err(io::Error::other)
+                    .and_then(|result| result);
+                    if let Ok(Some(mut receipt)) = receipt {
+                        receipt["active"] = json!(active
+                            .as_ref()
+                            .is_some_and(|run| receipt["run_id"] == run.id));
+                        Ok(receipt)
+                    } else if let Err(error) = receipt {
+                        Err(error)
+                    } else if active.is_some() {
                         Err(invalid("a recording is already active"))
                     } else {
-                        match start(database.clone(), config).await {
+                        match start(database.clone(), request_id, config).await {
                             Ok(run) => {
                                 let status = run.status();
                                 active = Some(run);
@@ -96,6 +121,11 @@ pub(crate) fn spawn(database: PathBuf) -> (Handle, JoinHandle<io::Result<()>>) {
             };
             let _ = request.reply.send(result);
             if shutdown {
+                if last.as_ref().is_some_and(|run| run["state"] == "failed") {
+                    return Err(io::Error::other(
+                        "capture ended with a failure; inspect recording history",
+                    ));
+                }
                 return Ok(());
             }
         }
@@ -152,12 +182,13 @@ impl Active {
         }
     }
 }
-async fn start(database: PathBuf, config: Value) -> io::Result<Active> {
+async fn start(database: PathBuf, request_id: String, config: Value) -> io::Result<Active> {
     if serde_json::to_vec(&config).map_err(io::Error::other)?.len() > airhound_api::MAX_CONFIG_BYTES
     {
         return Err(invalid("session config exceeds 64 KiB"));
     }
     let plan: SessionConfig = serde_json::from_value(config.clone()).map_err(io::Error::other)?;
+    let request = (request_id, config);
     let plan = plan.resolve()?;
     let mut filter = FilterConfig::new();
     if let Some(policy) = plan.alert_policy {
@@ -186,7 +217,7 @@ async fn start(database: PathBuf, config: Value) -> io::Result<Active> {
     ));
     let receivers = session_runtime::prepare(plan).await?;
     let writer = tokio::task::spawn_blocking(move || {
-        Writer::start(
+        Writer::start_request(
             database,
             if replay {
                 RecordingMode::Replay
@@ -195,6 +226,7 @@ async fn start(database: PathBuf, config: Value) -> io::Result<Active> {
             },
             config,
             sources,
+            Some(request),
         )
     })
     .await

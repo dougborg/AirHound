@@ -65,6 +65,15 @@ impl Writer {
         config: Value,
         sources: Vec<(String, Value)>,
     ) -> io::Result<Self> {
+        Self::start_request(path, mode, config, sources, None)
+    }
+    pub fn start_request(
+        path: PathBuf,
+        mode: RecordingMode,
+        config: Value,
+        sources: Vec<(String, Value)>,
+        request: Option<(String, Value)>,
+    ) -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(QUEUE_RECORDS);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let failure: Failure = Arc::default();
@@ -84,7 +93,11 @@ impl Writer {
                             return Err(invalid("duplicate recording source"));
                         }
                     }
-                    let run = store.start(mode, &config)?;
+                    let run = store.start_request(
+                        mode,
+                        &config,
+                        request.as_ref().map(|(id, value)| (id.as_str(), value)),
+                    )?;
                     for (id, metadata) in sources {
                         if let Err(error) = store.add_source(&run, &id, &metadata) {
                             let _ =

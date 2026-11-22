@@ -368,7 +368,7 @@ create a CSV file or print the live observation stream.
 
 ```sh
 airhound-hostd serve --capture --socket "$PWD/private/control.sock" --database "$PWD/captures.sqlite"
-airhound-hostd client --socket "$PWD/private/control.sock" start --session-config session.json
+airhound-hostd client --socket "$PWD/private/control.sock" start --request-id my-first-run --session-config session.json
 airhound-hostd client --socket "$PWD/private/control.sock" capture-status
 airhound-hostd client --socket "$PWD/private/control.sock" pause --run-id RUN_ID
 airhound-hostd client --socket "$PWD/private/control.sock" resume --run-id RUN_ID
@@ -377,8 +377,13 @@ airhound-hostd client --socket "$PWD/private/control.sock" finish --run-id RUN_I
 
 Finish stops receivers and drains their accepted output before its recording
 commit barrier. Inspect the returned `state`: a failed run is reported explicitly.
-Service-owned replay and cross-connection finish are tested; live service
-pause/resume, retry behavior and hardware cleanup still need acceptance checks.
+Reuse the same `--request-id` and configuration when retrying a start whose reply
+was lost. The durable receipt returns the original run, even after a service
+restart; a different configuration with the same ID is rejected. Use a new ID
+for a new run. Capture-enabled service startup recovers interrupted recordings
+without restarting their receivers. History-only service startup never recovers.
+Service-owned replay, cross-connection finish and restart retries are tested;
+live service pause/resume and hardware cleanup still need acceptance checks.
 
 One writer owns a database at a time. Records include original source tags,
 capture timestamps, replay markers and detection evidence; missing identities

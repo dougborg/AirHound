@@ -181,10 +181,31 @@ impl Store {
         })
     }
     pub fn start(&mut self, mode: RecordingMode, config: &Value) -> io::Result<String> {
+        self.start_request(mode, config, None)
+    }
+    pub fn start_request(
+        &mut self,
+        mode: RecordingMode,
+        config: &Value,
+        request: Option<(&str, &Value)>,
+    ) -> io::Result<String> {
+        let request = request
+            .map(|(id, value)| {
+                identifier(id)?;
+                Ok::<_, io::Error>((id, json(value, 65536)?))
+            })
+            .transpose()?;
         let config = json(config, 65536)?;
         let at = now_us()?;
         let tx = self.connection.transaction().map_err(sql)?;
         let id:String=tx.query_row("INSERT INTO runs(id,state,mode,started_at_us,config_json) VALUES(lower(hex(randomblob(16))),'recording',?1,?2,?3) RETURNING id",params![mode.as_str(),at,config],|r|r.get(0)).map_err(sql)?;
+        if let Some((request_id, request_json)) = request {
+            tx.execute(
+                "INSERT INTO start_requests(request_id,run_id,request_json) VALUES(?1,?2,?3)",
+                params![request_id, id, request_json],
+            )
+            .map_err(sql)?;
+        }
         tx.execute(
             "INSERT INTO transitions(run_id,state,at_us,reason) VALUES(?1,'recording',?2,'start')",
             params![id, at],
@@ -280,6 +301,23 @@ pub struct Reader {
     connection: Connection,
 }
 impl Reader {
+    /// Retries return the original run, including after service restart. Reusing
+    /// an id for a different request is an error, never a new capture.
+    pub fn start_receipt(&self, request_id: &str, config: &Value) -> io::Result<Option<Value>> {
+        identifier(request_id)?;
+        let row = self.connection.query_row("SELECT r.id,r.state,s.request_json FROM start_requests s JOIN runs r ON r.id=s.run_id WHERE s.request_id=?1", [request_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))
+            .optional().map_err(sql)?;
+        row.map(|(id, state, original)| {
+            let original: Value = serde_json::from_str(&original).map_err(io::Error::other)?;
+            if &original != config {
+                return Err(invalid(
+                    "start request id was already used with a different configuration",
+                ));
+            }
+            Ok(serde_json::json!({"run_id":id,"state":state,"reused":true}))
+        })
+        .transpose()
+    }
     pub fn open(path: &Path) -> io::Result<Self> {
         if !std::fs::symlink_metadata(path)?.is_file() {
             return Err(invalid("database reader requires a regular file"));
