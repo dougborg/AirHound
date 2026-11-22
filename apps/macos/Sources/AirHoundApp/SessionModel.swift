@@ -282,6 +282,28 @@ final class SessionModel: ObservableObject {
     (try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)))?["location"]
   }
   func setLocation(_ value: JSONValue?) { editPlan { try PlanEditing.location($0, value: value) } }
+  func selectLocationDevice(_ hint: JSONValue) {
+    if let kind = planLocation?["kind"]?.string, ["gpsd", "managed_gpsd"].contains(kind),
+      let device = hint["device"]
+    {
+      setLocationField("device", value: device)
+    } else {
+      setLocation(hint)
+    }
+  }
+  func setManagedLocation(_ managed: Bool) {
+    guard var location = planLocation, case .object(var fields) = location else { return }
+    fields["kind"] = .string(managed ? "managed_gpsd" : "gpsd")
+    if managed {
+      fields["endpoint"] = .string("127.0.0.1:12947")
+      fields["executable"] = .string("")
+      fields["device"] = fields["device"] ?? .string("")
+    } else {
+      fields.removeValue(forKey: "executable")
+    }
+    location = .object(fields)
+    setLocation(location)
+  }
   func setLocationField(_ name: String, value: JSONValue) {
     guard case .object(var location) = planLocation else { return }
     location[name] = value

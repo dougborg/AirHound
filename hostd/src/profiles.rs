@@ -439,6 +439,19 @@ pub fn check_resources(config: &Value) -> Value {
             );
         }
     }
+    if config["location"]["kind"] == "managed_gpsd" {
+        let path = config["location"]["executable"]
+            .as_str()
+            .unwrap_or_default();
+        let state = if !Path::new(path).is_absolute() {
+            "absolute_path_required"
+        } else if fs::metadata(path).is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0) {
+            "present"
+        } else {
+            "missing_or_not_executable"
+        };
+        checks.push(json!({"provider":"location","field":"executable","path":path,"state":state}));
+    }
     json!({"valid":checks.iter().all(|check| check["state"] == "present"),"checks":checks,"scope":"local_resource_metadata_only"})
 }
 

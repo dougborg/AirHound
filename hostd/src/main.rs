@@ -592,6 +592,7 @@ async fn main() -> io::Result<()> {
         .with_gpsd(args.gpsd.clone().map(|endpoint| gpsd::Options {
             endpoint,
             device: args.gpsd_device.clone(),
+            managed_executable: None,
         })),
         args.filter_config(),
         writer,
