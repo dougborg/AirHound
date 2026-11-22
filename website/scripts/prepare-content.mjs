@@ -62,10 +62,6 @@ export async function prepare() {
       .use(remarkParse)
       .use(remarkStringify, { fences: true });
     const tree = parser.parse(original);
-    // Keep the source H1 as an anchored H2: inbound README heading links remain valid.
-    visit(tree, "heading", (node) => {
-      if (node.depth === 1) node.depth = 2;
-    });
     for (const kind of ["link", "image", "definition"])
       visit(tree, kind, (node) => {
         node.url = rewriteUrl(node.url, source, sources, revision);

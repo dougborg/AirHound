@@ -34,3 +34,31 @@ test("links cannot escape the repository", () =>
     () => rewriteUrl("../../secret", "README.md", sources, "abc"),
     /escapes/,
   ));
+
+test("imported titles retain anchors without duplicate visible headings", async () => {
+  const { importedHeadingVisitor } =
+    await import("../scripts/imported-headings.mjs");
+  const {
+    element: { visit },
+  } = importedHeadingVisitor();
+  const ctx = { textContent: (node) => node.children[0].value };
+  const heading = (tagName, value) => ({
+    type: "element",
+    tagName,
+    properties: {},
+    children: [{ type: "text", value }],
+  });
+  const title = visit(heading("h1", "AirHound docs"), ctx);
+  assert.equal(title.tagName, "span");
+  assert.equal(title.properties.id, "airhound-docs");
+  assert.deepEqual(title.children, []);
+  assert.equal(
+    visit(heading("h2", "AirHound docs"), ctx).properties.id,
+    "airhound-docs-1",
+  );
+  assert.equal(
+    visit(heading("h2", "Permissions"), ctx).properties.id,
+    "permissions",
+  );
+  assert.equal(visit(heading("h1", "Other title"), ctx).tagName, "h2");
+});

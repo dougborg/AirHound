@@ -4,21 +4,21 @@ import hardware from "../data/hardware.json";
 ---
 
 <Site
-  title="Hardware & receivers"
+  title="Hardware support"
   description="Compare AirHound observation sources, operating systems, setup guides and verified limitations."
 >
   <header class="page-header wrap">
-    <h1>Know your receiver.</h1>
+    <h1>Hardware support</h1>
     <p class="lead">
-      Radio capability, firmware, transport and operating system all shape what
-      reaches the detector. Support is more than a USB device appearing.
+      Receiver integrations, setup guides, and test results. Available data
+      depends on the radio, firmware, transport, and operating system.
     </p>
   </header>
   <div class="wrap content">
     <div class="notice">
-      <strong>Experimental means unfinished acceptance.</strong>This matrix
-      summarizes development documentation. Follow each evidence link for exact
-      test conditions; parser replay is not proof of live RF reception.{" "}
+      <strong>Testing status</strong>This matrix summarizes development
+      documentation. Follow each evidence link for exact test conditions; parser
+      replay is not proof of live RF reception.{" "}
       <a href="/reference/docs/release-status/">
         Read the release support record.
       </a>
@@ -36,6 +36,9 @@ import hardware from "../data/hardware.json";
       </label>
       <p id="receiver-count" role="status"></p>
     </div>
+    <p class="table-hint">
+      Scroll horizontally for capabilities and setup links.
+    </p>
     <div
       class="table-scroll"
       tabindex="0"
@@ -74,7 +77,7 @@ import hardware from "../data/hardware.json";
         </tbody>
       </table>
     </div>
-    <h2>Match the data, not the connector.</h2>
+    <h2>Receiver capabilities</h2>
     <div class="prose">
       <p>
         BLE extended advertising and Coded PHY depend on the controller,

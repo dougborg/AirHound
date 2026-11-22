@@ -4,149 +4,212 @@ import Site from "../layouts/Site.astro";
 
 <Site
   title="AirHound"
-  description="An open-source WiFi and Bluetooth observation toolkit. Run on desktop, take an ESP32 into the field, or connect an external receiver."
+  description="AirHound project reference: Wi-Fi and Bluetooth observation, signature matching, desktop and ESP32 setup, supported receivers, and downloads."
 >
-  <section class="hero wrap">
-    <h1>
-      Read the
-      <br />
-      <em>wireless world.</em>
-    </h1>
-    <div class="hero-bottom">
-      <div>
-        <p class="lead">
-          WiFi and Bluetooth leave clues. AirHound brings observations from
-          desktop radios, pocket-sized detectors and external receivers into a
-          shared detection toolkit.
+  <header class="page-header home-header wrap">
+    <h1>AirHound</h1>
+    <p class="lead">
+      AirHound is open-source software for collecting Wi-Fi and Bluetooth
+      observations from desktop radios, ESP32 devices, and supported external
+      receivers. It records observations and attaches evidence from matching
+      signature rules.
+    </p>
+  </header>
+  <div class="wrap content home-content">
+    <div class="reference-grid">
+      <section aria-labelledby="capabilities">
+        <h2 id="capabilities">Capabilities</h2>
+        <p>
+          Use AirHound to inspect nearby radio activity, collect observations
+          during a field session, or investigate signature matches. The
+          available data depends on the receiver and operating system.
         </p>
-        <div class="actions">
-          <a class="button" href="/start/">
-            Choose your setup <span aria-hidden="true">→</span>
-          </a>
-          <a class="text-link" href="/downloads/">
-            Find a release
-          </a>
+        <div class="capability-list">
+          <div>
+            <h3>Desktop scanning</h3>
+            <p>
+              Command-line scanning on macOS and Linux. Wi-Fi and BLE support
+              depend on OS permissions and radio configuration.
+            </p>
+            <a href="/reference/hostd/">Desktop guide</a>
+          </div>
+          <div>
+            <h3>ESP32 detectors</h3>
+            <p>
+              Dedicated firmware for M5StickC Plus2 and XIAO ESP32-S3. Board and
+              runtime variants have separate validation records.
+            </p>
+            <a href="/reference/docs/firmware/">Firmware guide</a>
+          </div>
+          <div>
+            <h3>External receivers</h3>
+            <p>
+              CatSniffer/Sniffle BLE capture and an experimental ALFA MT7610U
+              passive Wi-Fi receiver.
+            </p>
+            <a href="/hardware/">Receiver support</a>
+          </div>
+          <div>
+            <h3>Signature evidence</h3>
+            <p>
+              Matching rules, source references, and limitations attached to
+              observations. A match does not establish a device’s identity or
+              intent.
+            </p>
+            <a href="/signatures/">Signature catalog</a>
+          </div>
         </div>
-        <p class="preview-note">
-          Open source · macOS & Linux CLI · ESP32 firmware
-        </p>
-      </div>
-      <div class="signal-flow">
-        <h2>From radio signal to inspectable evidence</h2>
-        <div class="flow-line">
-          <span>Observe</span>
-          <span aria-hidden="true">→</span>
-          <span>Match</span>
-          <span aria-hidden="true">→</span>
-          <span>Review</span>
-        </div>
-        <p>
-          Keep the observation. Attach the matching rule and its limitations.
-          Decide what the evidence actually supports.
-        </p>
-        <div class="flow-key">
-          <span>WiFi frames</span>
-          <span>BLE advertisements</span>
-          <span>Explicit uncertainty</span>
-        </div>
-      </div>
+      </section>
+      <aside class="reference-sidebar" aria-labelledby="getting-started">
+        <h2 id="getting-started">Getting started</h2>
+        <ul class="reference-links">
+          <li>
+            <a href="/start/#desktop">macOS or Linux</a>
+            <p>Installation, permissions, and output</p>
+          </li>
+          <li>
+            <a href="/start/#firmware">M5StickC Plus2 or XIAO</a>
+            <p>Board selection and flashing</p>
+          </li>
+          <li>
+            <a href="/start/#external">External receivers</a>
+            <p>Capture sources and setup</p>
+          </li>
+        </ul>
+        <h2>Project reference</h2>
+        <ul class="reference-links compact">
+          <li>
+            <a href="/reference/docs/">Documentation index</a>
+          </li>
+          <li>
+            <a href="/downloads/">Downloads</a>
+          </li>
+          <li>
+            <a href="/reference/docs/release-status/">
+              Release and testing status
+            </a>
+          </li>
+          <li>
+            <a href="https://github.com/dougborg/AirHound/issues/160">
+              Roadmap
+            </a>
+          </li>
+          <li>
+            <a href="/contribute/">Contributing</a>
+          </li>
+        </ul>
+      </aside>
     </div>
-  </section>
-  <section class="section wrap">
-    <div class="section-heading">
-      <h2>
-        Start with the radio
-        <br />
-        you have.
-      </h2>
+    <section class="reference-section" aria-labelledby="observation-data">
+      <h2 id="observation-data">Observation data</h2>
       <p>
-        Different receivers see different things. Pick a setup, check its
-        limits, then follow the component guide.
+        Receiver data enters the shared Rust detection code. Output includes
+        ordinary observations as well as signature matches; supported fields and
+        export formats vary by source.
       </p>
-    </div>
-    <ul class="paths">
-      <li>
-        <h3>On your desktop</h3>
-        <p>
-          Scan with the macOS or Linux command line. Export observations as
-          NDJSON or WiGLE CSV; add gpsd for receiver-location context.
-        </p>
-        <a href="/start/#desktop">
-          Set up desktop <span aria-hidden="true">→</span>
-        </a>
-      </li>
-      <li>
-        <h3>Out in the field</h3>
-        <p>
-          Run dedicated firmware on M5StickC Plus2 or XIAO ESP32-S3. Board and
-          runtime validation varies.
-        </p>
-        <a href="/start/#firmware">
-          Choose firmware <span aria-hidden="true">→</span>
-        </a>
-      </li>
-      <li>
-        <h3>With an external receiver</h3>
-        <p>
-          Bring CatSniffer/Sniffle BLE observations into the desktop pipeline,
-          or evaluate the experimental ALFA WiFi receiver.
-        </p>
-        <a href="/hardware/">
-          Compare receivers <span aria-hidden="true">→</span>
-        </a>
-      </li>
-    </ul>
-  </section>
-  <section class="section wrap editorial">
-    <div>
-      <h2>
-        A signal is a clue.
-        <br />
-        Keep its context.
-      </h2>
-      <div class="statement">
-        <p>
-          A matching name, vendor prefix or service is evidence. It is not proof
-          of a device’s identity or intent.
-        </p>
-      </div>
-    </div>
-    <div class="body-copy">
-      <p>
-        AirHound’s shared Rust core attaches rules to observations, with
-        explicit review status and limitations. The canonical signature data is
-        open to inspection.
-      </p>
-      <p>
-        Broad identifiers can match ordinary devices. Rotating addresses do not
-        equal new physical devices. Receiver limits and incomplete payloads
-        matter.
-      </p>
-      <a class="text-link" href="/signatures/">
-        Inspect the signature catalog <span aria-hidden="true">→</span>
+      <ol class="data-flow" aria-label="Observation processing">
+        <li>
+          <h3>Radio sources</h3>
+          <p>Wi-Fi frames and BLE advertisements</p>
+        </li>
+        <li>
+          <h3>Signature matching</h3>
+          <p>Shared rules and evidence metadata</p>
+        </li>
+        <li>
+          <h3>Observation output</h3>
+          <p>Source data, matches, and limitations</p>
+        </li>
+      </ol>
+      <a href="/reference/docs/detection-evidence/">
+        Detection evidence and output semantics
       </a>
-    </div>
-  </section>
-  <section class="section wrap editorial">
-    <h2>
-      Built in the open.
-      <br />
-      Improved by evidence.
-    </h2>
-    <div class="body-copy">
-      <p>
-        Read the implementation guides, reproduce a hardware test, or contribute
-        a well-sourced signature. Experimental paths stay visible, with the
-        acceptance work still to do.
-      </p>
-      <div class="actions">
-        <a class="button" href="/contribute/">
-          Help build AirHound
-        </a>
-        <a class="text-link" href="/reference/docs/">
-          Read the docs
-        </a>
+    </section>
+    <section
+      class="reference-section field-reference"
+      aria-labelledby="location-exports"
+    >
+      <div>
+        <h2 id="location-exports">Location and exports</h2>
+        <p>
+          The desktop scanner can add receiver-location context through gpsd and
+          export observations as NDJSON or WiGLE CSV. Missing or stale location
+          fixes are not treated as current positions. A receiver’s coordinates
+          do not locate a detected device.
+        </p>
+        <ul class="inline-reference">
+          <li>
+            <a href="/reference/docs/gnss-wardriving/">
+              GPS setup and wardriving notes
+            </a>
+          </li>
+          <li>
+            <a href="/reference/hostd/#observation-identity-and-export">
+              Export formats and identity limits
+            </a>
+          </li>
+        </ul>
       </div>
-    </div>
-  </section>
+      <figure class="route-figure">
+        <svg
+          viewBox="0 0 600 190"
+          role="img"
+          aria-labelledby="route-title route-description"
+        >
+          <title id="route-title">Example receiver route</title>
+          <desc id="route-description">
+            A schematic route with observation markers. The route and markers
+            are synthetic and do not show live observations or transmitter
+            positions.
+          </desc>
+          <defs>
+            <pattern
+              id="route-grid"
+              width="60"
+              height="46"
+              patternUnits="userSpaceOnUse"
+            >
+              <path
+                d="M0 0H60V46H0Z"
+                fill="none"
+                stroke="#cbd9eb"
+                stroke-width="1"
+              />
+            </pattern>
+          </defs>
+          <rect width="600" height="190" fill="url(#route-grid)" />
+          <path
+            d="M410-10C330 45 485 105 415 200"
+            fill="none"
+            stroke="#c2d5eb"
+            stroke-width="25"
+          />
+          <path
+            d="M0 145L600 32M480-10L210 200"
+            fill="none"
+            stroke="#f8fafc"
+            stroke-width="10"
+          />
+          <path
+            d="M55 143H155V97H275V51H455V97H540"
+            fill="none"
+            stroke="#1552ce"
+            stroke-width="2.5"
+            stroke-linejoin="round"
+          />
+          <g fill="#f2f5f7" stroke="#1552ce" stroke-width="2.5">
+            <circle cx="55" cy="143" r="4" />
+            <circle cx="155" cy="97" r="6" />
+            <circle cx="275" cy="51" r="6" />
+            <circle cx="455" cy="97" r="6" />
+            <circle cx="540" cy="97" r="4" />
+          </g>
+        </svg>
+        <figcaption>
+          Illustrative receiver route. Markers represent observations along the
+          route, not transmitter locations.
+        </figcaption>
+      </figure>
+    </section>
+  </div>
 </Site>
