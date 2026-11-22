@@ -358,8 +358,20 @@ time.sleep({})
         assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
 
         let fixture = Fixture::new(false);
-        let script = std::fs::read_to_string(fixture.0.join("gpsd")).unwrap().replace(
-            "time.sleep(30)", "time.sleep(0.3)\nc.close(); s.close()\n(root/'released').write_text('yes')\ntime.sleep(30)");
+        // Keep the established stream alive until the replacement listener is
+        // bound. Closing it first lets the supervisor reap this child before it
+        // writes its marker, or restart before the test can claim the endpoint.
+        let takeover = r#"s.close()
+(root/'listener_released').write_text('yes')
+deadline=time.monotonic()+5
+while not (root/'release_stream').exists():
+    if time.monotonic() >= deadline: raise TimeoutError('test did not bind replacement')
+    time.sleep(0.01)
+c.close()
+time.sleep(30)"#;
+        let script = std::fs::read_to_string(fixture.0.join("gpsd"))
+            .unwrap()
+            .replace("time.sleep(30)", takeover);
         std::fs::write(fixture.0.join("gpsd"), script).unwrap();
         let listen_port = port();
         let source = Source::new(Some("/dev/null".into()));
@@ -371,7 +383,7 @@ time.sleep({})
         ));
         until(&source, "fix").await;
         tokio::time::timeout(Duration::from_secs(3), async {
-            while !fixture.0.join("released").exists() {
+            while !fixture.0.join("listener_released").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -381,6 +393,7 @@ time.sleep({})
             tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, listen_port))
                 .await
                 .unwrap();
+        std::fs::write(fixture.0.join("release_stream"), "yes").unwrap();
         tokio::time::timeout(Duration::from_secs(5), task)
             .await
             .unwrap()
