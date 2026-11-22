@@ -143,6 +143,7 @@ fn missing_ack_has_one_retry_then_bounded_unknown_failure() {
     c.poll(1100);
     assert_eq!(c.state, State::Failed);
     assert_eq!(c.evidence & 4, 0);
+    assert_eq!(c.cause, 10);
 }
 #[test]
 fn final_transport_loss_after_stop_cannot_retain_clean_success() {
@@ -187,6 +188,123 @@ fn pause_to_stop_escalation_and_repeated_stop_cannot_extend_deadline() {
     assert_eq!(c.request_id(), 4);
     assert_eq!(c.evidence, 3);
     assert!(c.request(h(5, 42), Command::Stop, 1099).is_err());
-    c.poll(1100);
+    c.poll(1900);
     assert_eq!(c.state, State::Failed);
+    assert_eq!(c.cause, 10);
+}
+
+fn pcap_tail(bytes: usize) -> Vec<u8> {
+    let mut data = vec![0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0];
+    data.extend([0; 8]);
+    data.extend(4096u32.to_le_bytes());
+    data.extend(105u32.to_le_bytes());
+    while data.len() < bytes {
+        let n = (bytes - data.len()).saturating_sub(16).min(2000);
+        // Reserve enough space for a following record header if needed.
+        let n = if bytes - data.len() - 16 - n < 16 && bytes - data.len() - 16 != n {
+            n - 16
+        } else {
+            n
+        };
+        for x in [1u32, 2, n as u32, n as u32] {
+            data.extend(x.to_le_bytes());
+        }
+        data.extend(vec![0x80; n]);
+    }
+    let mut framed = b"[BUF/BEGIN]".to_vec();
+    framed.extend(data);
+    framed.extend(b"[BUF/CLOSE]");
+    framed
+}
+
+#[test]
+fn delayed_ack_and_valid_queued_tail_drain_within_fixed_bounds() {
+    // Ordinary non-PSRAM source buffers: 2*3KiB. The optional 2*8KiB
+    // PSRAM case is an upper-capacity stress, not this board's proven config.
+    for bytes in [6 * 1024, 16 * 1024] {
+        for origin in [0u32, u32::MAX - 900] {
+            let mut c = running(origin);
+            let stop = origin.wrapping_add(100);
+            c.request(h(3, 42), Command::Pause, stop).unwrap();
+            let ack = stop.wrapping_add(625);
+            c.feed(ack, b"Stopping WiFi tran/recv\r\n");
+            c.poll(ack);
+            let tail = pcap_tail(bytes);
+            for (i, chunk) in tail.chunks(115).enumerate() {
+                // <=11,520 bytes/s (115200 baud, 8N1), including framing.
+                let now = ack.wrapping_add((i as u32 + 1) * 10);
+                c.feed(now, chunk);
+                c.poll(now);
+                assert_eq!(c.state, State::Stopping);
+                if now.wrapping_sub(stop) >= 1000 {
+                    // The prior shared 1s ack+drain deadline failed here even
+                    // though this is a complete, finite valid queued stream.
+                    assert_eq!(c.cause, 1);
+                }
+            }
+            let finished = ack.wrapping_add(tail.len().div_ceil(115) as u32 * 10 + 50);
+            c.poll(finished);
+            assert_eq!(c.state, State::Paused);
+            assert_eq!(c.evidence, 7);
+            assert!(finished.wrapping_sub(stop) < 3000);
+        }
+    }
+}
+
+#[test]
+fn incomplete_malformed_and_endless_tail_have_specific_bounded_failure() {
+    for (tail, expected) in [
+        (b"[BUF/BEGIN]".as_slice(), 11),
+        (b"[BUF/BEGIN]xxxxxxxxxxxxxxxxxxxxxxxx".as_slice(), 6),
+        (b"plain console\r\n".as_slice(), 12),
+    ] {
+        let mut c = running(0);
+        c.request(h(3, 42), Command::Pause, 100).unwrap();
+        c.feed(725, b"Stopping WiFi tran/recv\r\n");
+        c.poll(725);
+        c.feed(800, tail);
+        // Keep recent input observable for the endless-but-well-framed case.
+        if expected == 12 {
+            c.pending_input(2725);
+        }
+        c.poll(2725);
+        assert_eq!(c.state, State::Failed);
+        assert_eq!(c.cause, expected);
+        assert_eq!(c.evidence, 7);
+        assert_eq!(c.request_id(), 3);
+    }
+}
+
+#[test]
+fn repeated_ack_heartbeat_and_stop_escalation_never_extend_absolute_bound() {
+    let mut c = running(0);
+    c.request(h(3, 42), Command::Pause, 100).unwrap();
+    c.feed(900, b"Stopping WiFi tran/recv\r\n");
+    c.poll(900);
+    for now in [1400, 1900, 2400, 2800] {
+        c.feed(now, b"Stopping WiFi tran/recv\r\n");
+        c.poll(now);
+        assert_eq!(c.state, State::Stopping);
+    }
+    c.request(h(4, 42), Command::Heartbeat, 2801).unwrap();
+    c.request(h(5, 42), Command::Stop, 2899).unwrap();
+    assert!(c.request(h(6, 42), Command::Stop, 2999).is_err());
+    c.feed(3090, b"Stopping WiFi tran/recv\r\n");
+    c.poll(3090);
+    c.pending_input(3100);
+    c.poll(3100);
+    assert_eq!(c.state, State::Failed);
+    assert_eq!(c.cause, 12);
+    assert_eq!(c.request_id(), 5);
+}
+
+#[test]
+fn late_ack_cannot_reopen_expired_ack_budget() {
+    let mut c = running(0);
+    c.request(h(3, 42), Command::Stop, 100).unwrap();
+    c.feed(1100, b"Stopping WiFi tran/recv\r\n");
+    c.poll(1150);
+    assert_eq!(c.state, State::Failed);
+    assert_eq!(c.cause, 10);
+    assert_eq!(c.evidence, 7); // observed late text, not a valid bounded stop
 }

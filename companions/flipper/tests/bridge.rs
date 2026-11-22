@@ -228,3 +228,31 @@ fn binding_rejects_wrong_nonce_instance_stale_sequence_and_gap() {
     assert!(Binding::new([0; 16], 1).is_err());
     assert!(Binding::new([1; 16], 0).is_err());
 }
+
+#[test]
+fn stop_failure_causes_roundtrip_and_unknown_causes_fail_closed() {
+    let mut out = [0; MAX_MESSAGE];
+    let mut status = Status {
+        state: State::Failed,
+        cause: 10,
+        evidence: 7,
+        generation: 1,
+        app_uptime_ms: 3000,
+        uart_rx_bytes: 5000,
+        uart_dropped_bytes: 0,
+        uart_error_events: 0,
+        rpc_dropped_messages: 0,
+        unread_ring_bytes: 0,
+    };
+    for cause in 10..=12 {
+        status.cause = cause;
+        let message = Message {
+            header: hello_message().header,
+            body: Body::Status(status),
+        };
+        let len = encode(message, &mut out).unwrap();
+        assert_eq!(decode(&out[..len]).unwrap(), message);
+        out[45] = 13;
+        assert!(decode(&out[..len]).is_err());
+    }
+}
