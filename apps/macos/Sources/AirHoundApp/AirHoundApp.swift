@@ -18,6 +18,14 @@ final class AppModel: ObservableObject {
   @Published var showDevices = false
   @Published var executable: URL?
   private var discoveryTask: Task<Void, Never>?
+  private(set) var recordingSelection = UUID()
+
+  @discardableResult
+  func beginRecordingSelection() -> UUID {
+    recordingSelection = UUID()
+    loadingRecording = false
+    return recordingSelection
+  }
 
   init() {
     let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/airhound-hostd")
@@ -64,6 +72,7 @@ final class AppModel: ObservableObject {
   func loadExample() {
     guard !loadingRecording else { return }
     session.leaveRecording()
+    beginRecordingSelection()
     do {
       guard
         let url = Bundle.main.url(forResource: "example", withExtension: "ndjson")
@@ -80,7 +89,6 @@ final class AppModel: ObservableObject {
   }
   func openRecording() {
     guard !loadingRecording else { return }
-    session.leaveRecording()
     let panel = NSOpenPanel()
     panel.title = "Open hostd recording"
     panel.message =
@@ -88,18 +96,33 @@ final class AppModel: ObservableObject {
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
+    loadRecording(url)
+  }
+
+  @discardableResult
+  func loadRecording(
+    _ url: URL,
+    loader: @escaping @Sendable (URL) async throws -> Recording = { url in
+      try await Task.detached(priority: .userInitiated) { try Recording.load(url) }.value
+    }
+  ) -> Task<Void, Never> {
+    session.leaveRecording()
+    let selection = beginRecordingSelection()
     loadingRecording = true
-    Task {
-      defer { loadingRecording = false }
+    return Task {
+      defer { if recordingSelection == selection { loadingRecording = false } }
       do {
-        let loaded = try await Task.detached(priority: .userInitiated) { try Recording.load(url) }
-          .value
+        let loaded = try await loader(url)
+        guard recordingSelection == selection else { return }
         recording = loaded
         selectedTab = "observations"
         recordingLabel = "Recording: " + url.lastPathComponent
         isExample = false
         recordingRevision = UUID()
-      } catch { self.error = error.localizedDescription }
+      } catch {
+        guard recordingSelection == selection else { return }
+        self.error = error.localizedDescription
+      }
     }
   }
 }
