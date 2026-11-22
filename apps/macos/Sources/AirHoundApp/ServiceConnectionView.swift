@@ -42,6 +42,11 @@ struct ServiceConnectionView: View {
   private var serviceConfiguration: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Service connection").font(.headline)
+      Text(
+        session.connected
+          ? "Backend: \(session.backendBuild ?? "Version unreported")" : "Backend not connected"
+      )
+      .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       TextField("Socket", text: $session.socketPath)
         .disabled(session.connected || session.busy)
       Text(app.executable?.path ?? "No backend selected")

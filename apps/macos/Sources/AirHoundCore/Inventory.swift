@@ -11,7 +11,8 @@ public struct Inventory: Decodable {
     devices.flatMap { device in
       device.candidates.enumerated().map { index, candidate in
         ReceiverChoice(
-          id: device.id + ":" + String(index), deviceName: device.name, candidate: candidate)
+          id: device.id + ":" + String(index), device: device, deviceName: device.name,
+          candidate: candidate)
       }
     }
   }
@@ -21,7 +22,9 @@ public struct Inventory: Decodable {
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .convertFromSnakeCase
     let inventory = try decoder.decode(Self.self, from: data)
-    guard inventory.schemaVersion == 1, inventory.mode == "passive" else {
+    guard inventory.schemaVersion == 1,
+      ["passive", "passive_with_active_metadata"].contains(inventory.mode)
+    else {
       throw ModelError.invalid("Unsupported inventory schema or discovery mode")
     }
     guard Set(inventory.devices.map(\.id)).count == inventory.devices.count else {
@@ -58,6 +61,9 @@ public struct Candidate: Decodable {
   public let state: String
   public let evidence: [String]
   public let requirements: [Requirement]
+  public let supportIssue: URL?
+  public let locationConfigurationHint: JSONValue?
+  public let identification: JSONValue?
   public let configurationHint: JSONValue?
   public var statusDescription: String {
     switch state {
@@ -85,6 +91,7 @@ public enum ModelError: LocalizedError {
 /// Globally unique row identities survive Form's flattening of nested content.
 public struct ReceiverChoice: Identifiable {
   public let id: String
+  public let device: Device
   public let deviceName: String
   public let candidate: Candidate
 }
