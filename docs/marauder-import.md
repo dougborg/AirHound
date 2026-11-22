@@ -95,7 +95,7 @@ from the attached hardware still needs acceptance testing.
 
 Use `format: "pcap"` for bare DLT105 PCAP, or `"serial"` for saved binary
 `[BUF/BEGIN]` / `[BUF/CLOSE]` output. The format is mandatory. The backend reads a
-regular saved file (64 MiB / 100,000 packets maximum), validates the complete
+regular nonsymlink saved file (64 MiB / 100,000 packets maximum), validates the complete
 capture before emitting packets, and supports pause/resume/finish with bounded
 queues. Corrupt or partial captures fail the recording; they are not silently
 accepted as partial imports. Saving or loading a profile only checks file metadata.
