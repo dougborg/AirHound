@@ -370,3 +370,41 @@ fn incomplete_output_cannot_finish_successfully() {
     let reader = Reader::open(&f.database()).unwrap();
     assert_eq!(reader.runs(1).unwrap()[0].state, "failed");
 }
+
+#[test]
+fn run_history_pages_by_bytes_and_cursor_without_skipping() {
+    let f = Fixture::new();
+    let mut store = Store::open(&f.database()).unwrap();
+    let mut expected = std::collections::BTreeSet::new();
+    for _ in 0..12 {
+        let run = store
+            .start(
+                RecordingMode::Replay,
+                &json!({"padding":"x".repeat(60_000)}),
+            )
+            .unwrap();
+        store.transition(&run, "finished", "fixture").unwrap();
+        expected.insert(run);
+    }
+    let reader = Reader::open(&f.database()).unwrap();
+    let first = reader.run_page(None, 100).unwrap();
+    assert!(first.has_more);
+    assert!(serde_json::to_vec(&first).unwrap().len() < 1024 * 1024);
+    let second = reader.run_page(first.next_before.as_deref(), 100).unwrap();
+    assert!(!second.has_more);
+    let ids: Vec<_> = first
+        .runs
+        .iter()
+        .chain(&second.runs)
+        .map(|run| run.id.clone())
+        .collect();
+    assert_eq!(ids.len(), 12);
+    assert_eq!(
+        ids.into_iter().collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    assert!(reader.run_page(Some("bad cursor"), 10).is_err());
+    assert!(reader
+        .run_page(Some("00000000000000000000000000000000"), 10)
+        .is_err());
+}

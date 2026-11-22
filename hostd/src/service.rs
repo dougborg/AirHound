@@ -28,6 +28,22 @@ pub type BackendResult = Pin<Box<dyn Future<Output = Result<Value, ApiError>> + 
 pub trait Backend: Send + Sync + 'static {
     fn devices(&self, all: bool) -> BackendResult;
     fn validate(&self, config: Value) -> BackendResult;
+    fn recordings(&self, _before: Option<String>, _limit: u16) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "recording history is not configured",
+            ))
+        })
+    }
+    fn recording_records(&self, _run_id: String, _after: i64, _limit: u16) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "recording history is not configured",
+            ))
+        })
+    }
 }
 
 struct SocketFile {
@@ -225,6 +241,14 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 json!({"instance_id": hello.instance_id, "mode":"passive_control", "capture_control":false, "methods": METHODS}),
             ),
             Command::DevicesList { all } => bounded(backend.devices(all)).await,
+            Command::RecordingsList { before, limit } => {
+                bounded(backend.recordings(before, limit)).await
+            }
+            Command::RecordingRecords {
+                run_id,
+                after,
+                limit,
+            } => bounded(backend.recording_records(run_id, after, limit)).await,
             Command::SessionValidate { config } => {
                 if serde_json::to_vec(&config).map_or(true, |bytes| bytes.len() > MAX_CONFIG_BYTES)
                 {
