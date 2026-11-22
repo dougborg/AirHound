@@ -158,7 +158,6 @@ pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>
             },
             needs_macos_location: matches!(source, Source::NativeWifi {}),
             assignment: source.assignment(),
-            needs_macos_location: matches!(source, Source::NativeWifi {}),
             shutdown_budget: source.shutdown_budget(),
             start: Box::new(move |tx, control| Box::pin(start_source(source, tx, control))),
         });
