@@ -1,5 +1,6 @@
 import AirHoundCore
 import AppKit
+import Darwin
 import SwiftUI
 import XCTest
 
@@ -29,7 +30,10 @@ final class FlipperPresentationTests: XCTestCase {
     replay.standardOutput = FileHandle.nullDevice
     replay.standardError = FileHandle.nullDevice
     try replay.run()
-    replay.waitUntilExit()
+    defer { XCTAssertTrue(stopOwned(replay), "Replay fixture could not be reaped") }
+    guard waitForExit(replay, seconds: 5) else {
+      throw ModelError.invalid("Private replay fixture exceeded its deadline")
+    }
     XCTAssertEqual(replay.terminationStatus, 0)
     let socket = root.appendingPathComponent("control.sock")
     let server = Process()
@@ -39,12 +43,7 @@ final class FlipperPresentationTests: XCTestCase {
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
     try server.run()
-    defer {
-      if server.isRunning {
-        server.terminate()
-        server.waitUntilExit()
-      }
-    }
+    defer { XCTAssertTrue(stopOwned(server), "Private service could not be reaped") }
     for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket.path) {
       try await Task.sleep(for: .milliseconds(20))
     }
@@ -102,6 +101,50 @@ final class FlipperPresentationTests: XCTestCase {
       model.error ?? "Missing backend validation error")
     XCTAssertFalse(model.isActive)
     XCTAssertEqual(model.runs.count, 1, "Only the empty replay fixture may exist")
+  }
+
+  private func waitForExit(_ process: Process, seconds: TimeInterval) -> Bool {
+    let deadline = ProcessInfo.processInfo.systemUptime + seconds
+    while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    return !process.isRunning
+  }
+
+  private func stopOwned(_ process: Process, grace: TimeInterval = 2) -> Bool {
+    guard process.isRunning else { return true }
+    process.terminate()
+    if waitForExit(process, seconds: grace) { return true }
+    // Only this test's still-running Process is eligible for forced cleanup.
+    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+    return waitForExit(process, seconds: 2)
+  }
+
+  func testPrivateFixtureDeadlineKillsAndReapsUncooperativeOwnedProcess() throws {
+    let ready = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ah-flipper-cleanup-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: ready) }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [
+      "-c", "trap '' TERM; : > \"$1\"; while :; do :; done", "fixture", ready.path,
+    ]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    defer { XCTAssertTrue(stopOwned(process, grace: 0.05)) }
+    let deadline = ProcessInfo.processInfo.systemUptime + 2
+    while !FileManager.default.fileExists(atPath: ready.path)
+      && ProcessInfo.processInfo.systemUptime < deadline
+    { Thread.sleep(forTimeInterval: 0.01) }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
+    XCTAssertFalse(
+      waitForExit(process, seconds: 0.05), "Fixture must actually outlive its deadline")
+    XCTAssertTrue(stopOwned(process, grace: 0.05))
+    XCTAssertEqual(process.terminationReason, .uncaughtSignal)
+    XCTAssertEqual(process.terminationStatus, SIGKILL)
+    XCTAssertEqual(Darwin.kill(process.processIdentifier, 0), -1)
+    XCTAssertEqual(errno, ESRCH, "Owned child must be reaped, not left as a zombie")
   }
 
   func testFlipperSetupGatesBackendAndPreservesPlanWithoutStarting() throws {
