@@ -10,7 +10,7 @@ capture completeness or readiness of every listed device.
 | Durable lifecycle | Controlled receiver exercises cancelled pause request, repeated pause, resume, wrong-run finish, drain and cleanup; receiver failure persists failed state | Passed |
 | Shared clients | Real CLI processes start and finish through separate service connections; cursor history queries, request-ID retries and service restart | Passed |
 | Single live receiver | ALFA AWUS036ACHM/MT7610U, explicit USB selector, existing GPL helper, seven requested receive channels; service start/pause/resume/finish | Passed short acceptance |
-| Multiple live receivers | Concurrent radios, per-source counts and lifecycle | Pending |
+| Multiple live receivers | ALFA WiFi plus CatSniffer BLE; separate source identities, shared lifecycle and committed counts | Short recording acceptance passed; ALFA recovery observed |
 | Sustained recording | Long-duration load, bounded memory and storage latency under realistic traffic | Pending |
 | Other platforms/hardware | Linux radios, unplug/replug, suspend/resume, operator-assisted RF checks | Pending |
 
@@ -35,6 +35,25 @@ final SQL inspection used immutable mode only after shutdown and verification
 that the WAL was absent or empty. The external-reader compatibility limitation
 remains to be investigated; it is not evidence that all SQLite consumers can
 read a live recording without additional handling.
+
+## Concurrent ALFA and CatSniffer acceptance
+
+The service retained **1,107 records**: **335 ALFA WiFi observations** and **749
+CatSniffer BLE packet observations**, plus lifecycle and health records. Source
+identities remained distinct. Both adapters reported running, paused, running
+again and stopped. Durable transitions were recording → paused → recording →
+finished; database integrity and record counts passed. The service exited zero.
+CatSniffer reported zero host packet drops and zero reconnect attempts. ALFA
+reported zero host/producer observation drops but **two reconnect attempts** and
+entered recovery after resume before the test finished. This does not establish
+uninterrupted reception or zero radio loss. ALFA recovery/endurance needs further
+investigation and remains a hardware acceptance limitation.
+
+The initial verifier expected `ble_observation`; Sniffle correctly emits
+`ble_packet_observation`. The saved capture was audited using the correct record
+type, without another radio run. History pages were read through AirHound's shared
+API during the run; final immutable SQL inspection occurred only after shutdown
+and confirmation of an absent/empty WAL. Raw captures remain private.
 
 ## Software gates
 
