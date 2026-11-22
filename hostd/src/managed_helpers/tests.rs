@@ -56,7 +56,7 @@ fn fixture(dir: &Path) -> Manifest {
             runtime_sha256: "0".repeat(64),
             runtime_version: "test".into(),
             runtime_base_prefix: "test".into(),
-            source_revision: "1".repeat(40),
+            source_revision: "18252f2c5a05f9ad906865b776652e31c61471c4".into(),
             version: "1.11.0".into(),
             pyserial_version: "3.5".into(),
             licenses: vec!["license1".into(), "license2".into()],
@@ -173,4 +173,41 @@ fn failed_runtime_check_preserves_old_pointer() {
     assert!(install(&root, &source, true).is_err());
     assert_eq!(status(&root)["bundle_id"], first["bundle_id"]);
     assert!(verify(&root).is_ok());
+}
+
+#[test]
+fn unexpected_importable_code_and_nodes_fail_integrity_and_reuse() {
+    let t = Temp::new();
+    let source = t.0.join("source");
+    write_fixture(&source);
+    let root = t.0.join("helpers");
+    let first = install(&root, &source, false).unwrap();
+    let modules = PathBuf::from(
+        first["defaults"]["sniffle"]["module_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let injected = modules.join("extra.py");
+    fs::write(&injected, b"unexpected code").unwrap();
+    assert!(verify(&root).is_err());
+    assert!(install(&root, &source, true).is_err());
+    fs::remove_file(&injected).unwrap();
+    std::os::unix::fs::symlink("missing", &injected).unwrap();
+    assert!(verify(&root).is_err());
+    fs::remove_file(&injected).unwrap();
+    assert!(verify(&root).is_ok());
+}
+#[test]
+fn dangling_current_pointer_requires_explicit_replacement() {
+    let t = Temp::new();
+    let source = t.0.join("source");
+    write_fixture(&source);
+    let root = t.0.join("helpers");
+    fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+    std::os::unix::fs::symlink("missing", root.join("current")).unwrap();
+    assert_eq!(
+        install(&root, &source, false).unwrap_err().kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert!(install(&root, &source, true).is_ok());
 }
