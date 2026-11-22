@@ -18,6 +18,7 @@ const APPLICATION_ID: i64 = 1_095_257_668;
 const SCHEMA_VERSION: i64 = 1;
 mod migrations;
 pub mod output;
+mod snapshot;
 pub mod writer;
 pub const MAX_RECORD_BYTES: usize = 128 * 1024;
 pub const MAX_BATCH_RECORDS: usize = 128;

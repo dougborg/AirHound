@@ -13,12 +13,15 @@ pub const METHODS: &[&str] = &[
     "session.validate",
     "recordings.list",
     "recordings.records",
+    "recordings.export",
     "capture",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Command {
+    #[serde(rename = "recordings.export")]
+    RecordingExport { destination: String },
     #[serde(rename = "capture")]
     Capture { action: CaptureAction },
     #[serde(rename = "hello")]

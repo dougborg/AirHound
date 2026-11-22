@@ -444,3 +444,67 @@ fn start_request_identity_commits_atomically_and_survives_restart() {
     assert!(reader.start_receipt("unknown", &request).unwrap().is_none());
     assert!(reader.start_receipt("", &request).is_err());
 }
+
+#[test]
+fn snapshot_export_is_consistent_standalone_and_never_overwrites() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    store.append(&run, &[record("receiver-a")]).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let destination = f.0.join("snapshot.sqlite");
+    let summary = reader.export(&destination).unwrap();
+    assert_eq!(summary["journal_mode"], "delete");
+    assert_eq!(summary["consistent_snapshot"], true);
+    store.append(&run, &[record("receiver-a")]).unwrap();
+    let snapshot = Reader::open(&destination).unwrap();
+    assert_eq!(snapshot.runs(1).unwrap()[0].record_count, 1);
+    assert_eq!(snapshot.runs(1).unwrap()[0].state, "recording");
+    assert_eq!(reader.runs(1).unwrap()[0].record_count, 2);
+    assert_eq!(
+        snapshot.records(&run, 0, 10).unwrap().records[0].payload,
+        record("receiver-a").payload
+    );
+    assert_eq!(
+        snapshot
+            .connection
+            .pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "delete"
+    );
+    let before = std::fs::read(&destination).unwrap();
+    assert_eq!(
+        reader.export(&destination).unwrap_err().kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(std::fs::read(&destination).unwrap(), before);
+    assert!(reader.export(Path::new("relative.sqlite")).is_err());
+    let link = f.0.join("link.sqlite");
+    std::os::unix::fs::symlink(&destination, &link).unwrap();
+    assert!(reader.export(&link).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), before);
+    assert!(!std::fs::read_dir(&f.0).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".airhound-snapshot-")));
+}
+
+#[test]
+fn invalid_snapshot_is_not_published_and_temporary_file_is_removed() {
+    let f = Fixture::new();
+    let (store, run) = setup(&f);
+    store
+        .connection
+        .execute_batch("PRAGMA foreign_keys=OFF")
+        .unwrap();
+    store.connection.execute("INSERT INTO records(run_id,source_id,kind,received_at_us,payload_json) VALUES(?1,'missing','fixture',0,'{}')", [&run]).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let destination = f.0.join("must-not-publish.sqlite");
+    assert!(reader.export(&destination).is_err());
+    assert!(!destination.exists());
+    assert!(!std::fs::read_dir(&f.0).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".airhound-snapshot-")));
+}

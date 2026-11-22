@@ -131,7 +131,13 @@ missing identities or timestamps.
 `recordings.list` uses `before`/`limit` and returns `runs`, `next_before`,
 `has_more`. `recordings.records` uses `run_id`/`after`/`limit` and returns
 `records`, `next_after`, `has_more`. Continue only while `has_more` is true.
-Run limits are 1–100; record limits are 1–500, with independent byte bounds.
+Run limits are 1–100; record limits are 1–500, with independent byte bounds. `recordings.export`
+takes an absolute `destination` on the backend host and writes a consistent
+standalone SQLite snapshot without replacing existing files. It is an explicit
+file-writing operation, available when a database is configured; it does not
+recover or mutate the source recording. The CLI exposes `export --output PATH`.
+Copy/verification is budgeted to ten seconds and 512 MiB; export uses DELETE
+journaling so consumers do not need live WAL sidecars.
 History readers do not own receivers or recover runs. The service capture path
 currently writes SQLite, not a parallel CSV or live stdout stream; the standalone
 capture CLI can retain SQLite alongside its JSON/CSV output. Explicit gpsd

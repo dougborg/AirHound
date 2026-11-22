@@ -100,6 +100,23 @@ mod passive_cli {
         assert!(records.status.success());
         let records: Value = serde_json::from_slice(&records.stdout).unwrap();
         assert_eq!(records["records"][0]["payload"], payload);
+        let snapshot_path = service.root.join("snapshot.sqlite");
+        let exported = client(&["export", "--output", snapshot_path.to_str().unwrap()]);
+        assert!(
+            exported.status.success(),
+            "{}",
+            String::from_utf8_lossy(&exported.stderr)
+        );
+        let exported: Value = serde_json::from_slice(&exported.stdout).unwrap();
+        assert_eq!(exported["consistent_snapshot"], true);
+        let snapshot = airhound_hostd::storage::Reader::open(&snapshot_path).unwrap();
+        assert_eq!(snapshot.runs(1).unwrap()[0].record_count, 1);
+        drop(snapshot);
+        assert!(
+            !client(&["export", "--output", snapshot_path.to_str().unwrap()])
+                .status
+                .success()
+        );
         assert!(!client(&["recordings", "--limit", "101"]).status.success());
         assert!(!client(&["records", "--run-id", &run, "--limit", "501"])
             .status
