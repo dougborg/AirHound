@@ -164,7 +164,7 @@ public struct RunPage: Decodable {
   public let nextBefore: String?
   public let hasMore: Bool
 }
-public struct StoredRecord: Decodable, Identifiable {
+public struct StoredRecord: Decodable, Identifiable, Sendable {
   enum CodingKeys: String, CodingKey {
     case cursor, kind, payload
     case sourceID = "source_id"
@@ -178,7 +178,7 @@ public struct StoredRecord: Decodable, Identifiable {
   public let payload: JSONValue
   public var id: Int64 { cursor }
 }
-public struct RecordPage: Decodable {
+public struct RecordPage: Decodable, Sendable {
   enum CodingKeys: String, CodingKey {
     case records
     case nextAfter = "next_after"

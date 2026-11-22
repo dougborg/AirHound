@@ -11,23 +11,17 @@ struct MainView: View {
   @State private var matchesOnly = false
   @State private var showInspector = true
   @State private var sortOrder = [KeyPathComparator(\Observation.name)]
-  var filtered: [Observation] {
-    observations.filter { row in
-      (receiver == nil || receiver == "all" || row.receiver == receiver)
-        && (medium == "All types" || row.medium == medium) && (!matchesOnly || row.match == "Match")
-        && (search.isEmpty
-          || [row.name, row.address, row.receiver, row.medium].contains {
-            $0.localizedCaseInsensitiveContains(search)
-          })
-    }.sorted(using: sortOrder)
-  }
+  // Rebuild only when the data or query changes, never while rendering a row,
+  // scrolling, selecting an observation, or opening the inspector.
+  @State private var filtered: [Observation] = []
+  @State private var receiverIDs: [String] = []
   var selected: Observation? { filtered.first { $0.id == selection } }
   var body: some View {
     NavigationSplitView {
       List(selection: $receiver) {
         Label("All observations", systemImage: "list.bullet").tag("all")
         Section(model.isExample ? "Example receivers" : "Recorded receivers") {
-          ForEach(Array(Set(observations.map(\.receiver))).sorted(), id: \.self) { id in
+          ForEach(receiverIDs, id: \.self) { id in
             receiverLabel(
               id, id: id, icon: "antenna.radiowaves.left.and.right",
               assignment: "Source of retained observations")
@@ -132,9 +126,26 @@ struct MainView: View {
       receiver = "all"
       selection = nil
     }
-    .onChange(of: filtered.map(\.id)) { _, ids in
-      if let selection, !ids.contains(selection) { self.selection = nil }
+    .onChange(of: model.recording?.revision, initial: true) { _, _ in
+      receiverIDs = Array(Set(observations.map(\.receiver))).sorted()
+      refreshRows()
     }
+    .onChange(of: receiver) { _, _ in refreshRows() }
+    .onChange(of: medium) { _, _ in refreshRows() }
+    .onChange(of: matchesOnly) { _, _ in refreshRows() }
+    .onChange(of: search) { _, _ in refreshRows() }
+    .onChange(of: sortOrder) { _, _ in refreshRows() }
+  }
+  private func refreshRows() {
+    filtered = observations.filter { row in
+      (receiver == nil || receiver == "all" || row.receiver == receiver)
+        && (medium == "All types" || row.medium == medium) && (!matchesOnly || row.match == "Match")
+        && (search.isEmpty
+          || [row.name, row.address, row.receiver, row.medium].contains {
+            $0.localizedCaseInsensitiveContains(search)
+          })
+    }.sorted(using: sortOrder)
+    if let selection, !filtered.contains(where: { $0.id == selection }) { self.selection = nil }
   }
   private func receiverLabel(_ name: String, id: String, icon: String, assignment: String)
     -> some View

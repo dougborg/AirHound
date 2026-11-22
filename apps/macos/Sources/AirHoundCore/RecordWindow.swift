@@ -1,12 +1,13 @@
 import Foundation
 
 /// A bounded presentation window; the complete recording remains in the Rust store.
-public struct RecordWindow {
+public struct RecordWindow: Sendable {
   public private(set) var records: [StoredRecord] = []
   public private(set) var cursor: Int64 = 0
   public private(set) var omitted = 0
   private var sizes: [Int] = []
   private var bytes = 0
+  private var decodedRows: [Observation] = []
   public init() {}
 
   public mutating func append(_ page: RecordPage) throws {
@@ -20,32 +21,46 @@ public struct RecordWindow {
       }
       previous = record.cursor
     }
+    // Decode only new records, before changing the window. A rejected page must
+    // leave its cursor and cached observations intact so the caller can retry.
+    var stream = Data()
+    var newSizes: [Int] = []
     for record in page.records {
-      let size = try record.payload.data().count + 1
-      records.append(record)
-      sizes.append(size)
-      bytes += size
-      cursor = record.cursor
-      while bytes > 4 * 1024 * 1024 || records.count > 1000 {
-        records.removeFirst()
-        bytes -= sizes.removeFirst()
-        omitted += 1
+      let data = try record.payload.data()
+      newSizes.append(data.count + 1)
+      stream.append(data)
+      stream.append(10)
+    }
+    let decoded = try Recording.decode(stream)
+    let newRows = decoded.observations.map { observation in
+      var row = observation
+      row.id = Int(page.records[observation.id].cursor)
+      return row
+    }
+    records.append(contentsOf: page.records)
+    sizes.append(contentsOf: newSizes)
+    bytes += newSizes.reduce(0, +)
+    decodedRows.append(contentsOf: newRows)
+    var removed = 0
+    while bytes > 4 * 1024 * 1024 || records.count - removed > 1000 {
+      bytes -= sizes[removed]
+      removed += 1
+    }
+    if removed > 0 {
+      records.removeFirst(removed)
+      sizes.removeFirst(removed)
+      omitted += removed
+      if let first = records.first {
+        decodedRows.removeAll { $0.id < Int(first.cursor) }
+      } else {
+        decodedRows.removeAll()
       }
     }
     cursor = page.nextAfter
   }
+
+  /// Cached immutable rows: reading a window does not parse or pretty-print JSON.
   public func observations() throws -> Recording {
-    var stream = Data()
-    for record in records {
-      stream.append(try record.payload.data())
-      stream.append(10)
-    }
-    let decoded = try Recording.decode(stream)
-    let observations = decoded.observations.map { observation in
-      var row = observation
-      row.id = Int(records[observation.id].cursor)
-      return row
-    }
-    return Recording(observations: observations, ignoredRecords: decoded.ignoredRecords)
+    Recording(observations: decodedRows, ignoredRecords: records.count - decodedRows.count)
   }
 }

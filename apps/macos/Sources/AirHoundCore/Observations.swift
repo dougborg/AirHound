@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public struct Observation: Identifiable {
+public struct Observation: Identifiable, Sendable {
   public internal(set) var id: Int
   public let name: String
   public let medium: String
@@ -21,7 +21,8 @@ public struct Observation: Identifiable {
   public let raw: String
 }
 
-public struct Recording {
+public struct Recording: Sendable {
+  public let revision = UUID()
   public let observations: [Observation]
   public let ignoredRecords: Int
   public static let byteLimit = 8 * 1024 * 1024
