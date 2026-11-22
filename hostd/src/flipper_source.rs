@@ -127,11 +127,7 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
             match event {
                 Output::FailureStatus(status) => {
                     latest_status = json!({"accepted_lifecycle":false,"state":format!("{:?}",status.state),"cause":status.cause,"uart_text_evidence":status.evidence,"capture_generation":status.generation,"uart_rx_bytes":status.uart_rx_bytes,"uart_dropped_bytes":status.uart_dropped_bytes,"uart_error_events":status.uart_error_events,"rpc_dropped_messages":status.rpc_dropped_messages,"unread_ring_bytes":status.unread_ring_bytes});
-                    control.set_health(
-                        Scanner::Wifi,
-                        Phase::Unavailable,
-                        "flipper_producer_failure_evidence",
-                    );
+                    set_reported_health(control, State::Failed, false);
                 }
                 Output::DeviceInfo(info) => {
                     identity["flipper_firmware"] =
@@ -162,16 +158,11 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
                         State::Failed => "failed",
                     };
                     latest_status = json!({"state":name,"cause":status.cause,"uart_text_evidence":status.evidence,"capture_generation":status.generation,"app_uptime_ms":status.app_uptime_ms,"uart_rx_bytes":status.uart_rx_bytes,"uart_dropped_bytes":status.uart_dropped_bytes,"uart_error_events":status.uart_error_events,"rpc_dropped_messages":status.rpc_dropped_messages,"unread_ring_bytes":status.unread_ring_bytes});
-                    let phase = match status.state {
-                        State::Paused => Phase::Paused,
-                        State::Stopped => Phase::Stopped,
-                        State::Failed => Phase::Unavailable,
-                        State::Capturing if last_packet_generation == Some(status.generation) => {
-                            Phase::Running
-                        }
-                        _ => Phase::Initializing,
-                    };
-                    control.set_health(Scanner::Wifi, phase, "flipper_bridge_reported_state");
+                    set_reported_health(
+                        control,
+                        status.state,
+                        last_packet_generation == Some(status.generation),
+                    );
                     let _=tx.try_send(ScanEvent::FirmwareStatus(json!({"type":"flipper_bridge_status","schema_version":1,"producer":latest_status,"host_dropped_observations":dropped,"radio_loss":"unknown"})));
                 }
                 Output::Bridge(Event::Raw {
@@ -201,6 +192,27 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
     let _=tx.try_send(ScanEvent::FirmwareStatus(json!({"type":"flipper_bridge_status","schema_version":1,"state":if result.is_ok(){"finished"}else{"failed"},"producer_last_report":latest_status,"host_dropped_observations":dropped,"emitted_packets":packets,"radio_stop":if result.is_ok(){"see_uart_evidence"}else{"unverified"},"radio_loss":"unknown"})));
     control.set_bridge_status(json!({"state":if result.is_ok(){"finished"}else{"failed"},"producer_last_report":latest_status,"host_dropped_observations":dropped,"emitted_packets":packets,"radio_stop":if result.is_ok(){"see_uart_evidence"}else{"unverified"},"radio_loss":"unknown"}));
     result
+}
+
+fn set_reported_health(control: &ScanControl, state: State, packet_verified: bool) {
+    let availability = match state {
+        State::Ready | State::Preflight | State::Capturing => "available",
+        State::Stopping => "stopping",
+        State::Paused => "paused",
+        State::Stopped => "stopped",
+        State::Failed => "unavailable",
+    };
+    let phase = match state {
+        State::Paused => Phase::Paused,
+        State::Stopped => Phase::Stopped,
+        State::Failed => Phase::Unavailable,
+        State::Capturing if packet_verified => Phase::Running,
+        _ => Phase::Initializing,
+    };
+    // Inventory consults availability independently of scanner phase. Publish
+    // failure/stop immediately, before bounded RPC teardown completes.
+    control.set_receiver_availability(availability);
+    control.set_health(Scanner::Wifi, phase, "flipper_bridge_reported_state");
 }
 
 fn receiver(port: &str) -> Receiver {
@@ -466,5 +478,40 @@ mod tests {
         .unwrap();
         assert!(rx.try_recv().is_err());
         assert_eq!(counts, (0, 8));
+    }
+    #[test]
+    fn lifecycle_availability_changes_before_transport_teardown_without_erasing_evidence() {
+        let control = ScanControl::new(true);
+        control.set_receiver(receiver("/dev/fixture"));
+        control.set_bridge_identity(Some(json!({"application":{"evidence":"ahfb_hello"}})));
+        control.set_bridge_status(
+            json!({"host_dropped_observations":8,"producer_last_report":{"uart_dropped_bytes":17}}),
+        );
+        for (state, availability, phase) in [
+            (State::Ready, "available", "initializing"),
+            (State::Capturing, "available", "running"),
+            (State::Stopping, "stopping", "initializing"),
+            (State::Paused, "paused", "paused"),
+            (State::Stopped, "stopped", "stopped"),
+            (State::Failed, "unavailable", "unavailable"),
+        ] {
+            set_reported_health(&control, state, true);
+            let health = control.health_message();
+            assert_eq!(health["receiver"]["availability"], availability);
+            assert_eq!(health["scanners"]["wifi"]["state"], phase);
+            assert_eq!(
+                health["receiver"]["bridge_status"]["host_dropped_observations"],
+                8
+            );
+            assert_eq!(
+                health["receiver"]["bridge_status"]["producer_last_report"]["uart_dropped_bytes"],
+                17
+            );
+        }
+        set_reported_health(&control, State::Capturing, false);
+        assert_eq!(
+            control.health_message()["scanners"]["wifi"]["state"],
+            "initializing"
+        );
     }
 }
