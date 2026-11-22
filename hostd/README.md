@@ -12,6 +12,14 @@ checksum verification, signing limitations, and separate receiver/source package
 Extract the archive and run `AirHound.app/Contents/MacOS/airhound-hostd --help`
 on macOS or `bin/airhound-hostd --help` on Linux from a terminal.
 
+## Embedded AirHound receivers
+
+Use an explicit [`airhound_serial` receiver](../docs/airhound-serial-source.md) to
+record WiFi/BLE observations from existing M5 firmware alongside other sources.
+Firmware version and board identity come from received status, not USB descriptors.
+Pause retains the serial port and pauses host ingestion; it does not stop the
+board's autonomous radios.
+
 ## Build and run
 
 Run the recipes below from the repository root with stable Rust and `just` installed.

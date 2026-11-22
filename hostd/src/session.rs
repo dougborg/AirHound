@@ -29,6 +29,12 @@ pub enum Source {
     LinuxWifi {
         interface: String,
     },
+    /// Explicit attachment to firmware that already emits AirHound NDJSON.
+    /// Opening a UART bridge may reset its board; never selected by passive discovery.
+    AirhoundSerial {
+        port: String,
+        baud: u32,
+    },
     Sniffle {
         port: String,
         python: PathBuf,
@@ -79,6 +85,7 @@ impl SessionConfig {
                 let source = &receiver["source"];
                 let fields: &[&str] = match source["kind"].as_str() {
                     Some("sniffle") => &["port", "python", "helper"],
+                    Some("airhound_serial") => &["port"],
                     Some("external_wifi") => &["executable", "firmware"],
                     Some("wifi_pcap" | "ble_pcap") => &["path"],
                     _ => &[],
@@ -154,6 +161,19 @@ impl SessionConfig {
                     format!("ble:{}", adapter.as_deref().unwrap_or("default"))
                 }
                 Source::NativeWifi {} => "native_wifi".into(),
+                Source::AirhoundSerial { port, baud } => {
+                    if port.is_empty()
+                        || port.len() > 1024
+                        || ![115200, 460800, 921600].contains(baud)
+                    {
+                        return Err(invalid(
+                            "AirHound serial requires a port and baud 115200, 460800 or 921600",
+                        ));
+                    }
+                    let canonical =
+                        std::fs::canonicalize(&*port).unwrap_or_else(|_| PathBuf::from(&*port));
+                    serial_resource(&canonical)
+                }
                 Source::LinuxWifi { interface } => {
                     if interface.is_empty()
                         || interface.len() > 15
@@ -275,6 +295,11 @@ impl Source {
             Self::LinuxWifi { .. } => {
                 serde_json::json!({"mode":"externally_configured","channel":null})
             }
+            Self::AirhoundSerial { baud, .. } => serde_json::json!({
+                "mode":"device_managed", "media":["wifi","ble"], "baud":baud,
+                "pause":"host_ingestion_only", "stop":"close_transport_only",
+                "port_open_may_reset_board":true
+            }),
             Self::Sniffle { channel, coded, .. } => {
                 serde_json::json!({"mode":"fixed_primary","channel":channel,"phy":if *coded {"coded"} else {"1m"},"secondary_following":true})
             }
@@ -642,6 +667,36 @@ mod tests {
         let decoded: SessionConfig = serde_json::from_value(encoded.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(decoded.resolve().unwrap()).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn airhound_serial_is_explicit_mixed_media_and_rejects_aliases_and_bad_baud() {
+        let serial = |port: &str, baud| Source::AirhoundSerial {
+            port: port.into(),
+            baud,
+        };
+        let resolved = plan(vec![serial("/dev/cu.fixture", 460800)])
+            .resolve()
+            .unwrap();
+        let assignment = resolved.receivers[0].source.assignment();
+        assert_eq!(assignment["media"], json!(["wifi", "ble"]));
+        assert_eq!(assignment["pause"], "host_ingestion_only");
+        assert_eq!(assignment["port_open_may_reset_board"], true);
+        invalid_plan(plan(vec![
+            serial("/dev/cu.fixture", 460800),
+            serial("/dev/tty.fixture", 460800),
+        ]));
+        invalid_plan(plan(vec![
+            serial("/dev/cu.fixture", 460800),
+            sniffle("/dev/tty.fixture", None),
+        ]));
+        invalid_plan(plan(vec![serial("/dev/cu.fixture", 9600)]));
+        invalid_plan(plan(vec![serial("", 460800)]));
+        let encoded = serde_json::to_value(&resolved).unwrap();
+        assert_eq!(
+            serde_json::to_value(SessionConfig::from_json(encoded.clone()).unwrap()).unwrap(),
             encoded
         );
     }

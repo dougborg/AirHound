@@ -12,6 +12,11 @@ pub enum ScanEvent {
     BlePacket(Box<crate::ble_packet::Packet>),
     BleSourceStatus(serde_json::Value),
     WifiReplayStatus(serde_json::Value),
+    FirmwareStatus(serde_json::Value),
+    Firmware {
+        record: airhound_hostd::device_stream::Record,
+        generation: u64,
+    },
     Replay {
         event: Box<ScanEvent>,
         metadata: crate::wifi_pcap::Metadata,
