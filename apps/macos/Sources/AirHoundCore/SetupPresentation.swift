@@ -15,6 +15,7 @@ public struct PlanReceiver: Identifiable {
     case "airhound_serial": return "AirHound sensor"
     case "linux_wifi": return "Linux monitor interface"
     case "marauder_capture": return "Saved Marauder capture"
+    case "flipper_marauder": return "Flipper / AWOK"
     case "wifi_pcap": return "Wi-Fi recording"
     case "ble_pcap": return "Bluetooth recording"
     default: return kind

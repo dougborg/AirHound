@@ -23,6 +23,9 @@ struct SessionView: View {
                   if let companion = identity["external_identity"], companion != .null {
                     CompanionIdentityDetails(identity: companion)
                   }
+                  if let bridge = identity["bridge_identity"], bridge != .null {
+                    FlipperBridgeIdentityDetails(identity: bridge)
+                  }
                   if let producer = identity["producer_identity"] {
                     Text(
                       "\(producer["application"]?.string ?? "Firmware") \(producer["version"]?.string ?? "version unreported") · \(producer["board"]?.string ?? "board unreported")"
@@ -55,6 +58,9 @@ struct SessionView: View {
               .foregroundStyle(.secondary)
             }
             AvailableReceivers(session: session)
+            if session.connected && session.sessionSources.contains("flipper_marauder") {
+              FlipperBridgeSetup(session: session)
+            }
             if session.connected && session.sessionSources.contains("marauder_capture") {
               Menu("Add Saved Marauder Capture") {
                 Button("PCAP…") { addMarauderCapture(format: "pcap") }

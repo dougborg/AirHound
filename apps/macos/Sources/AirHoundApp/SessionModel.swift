@@ -303,10 +303,31 @@ final class SessionModel: ObservableObject {
     } catch { self.error = error.localizedDescription }
   }
   func addReceiver(source: JSONValue) {
+    if source["kind"] == .string("flipper_marauder"), !canAddFlipperBridge {
+      error =
+        "Connect to a backend with Flipper bridge support before adding this prototype receiver."
+      return
+    }
     editPlan {
       try PlanEditing.add(
         $0, id: "receiver-" + UUID().uuidString.prefix(8).lowercased(), source: source)
     }
+  }
+  var canAddFlipperBridge: Bool {
+    connected && canEditPlan && sessionSources.contains("flipper_marauder")
+  }
+  func addFlipperBridge(port: String) {
+    let endpoint = port.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard canAddFlipperBridge else {
+      error =
+        "Connect to a backend with Flipper bridge support and finish any active recording before editing the plan."
+      return
+    }
+    guard !endpoint.isEmpty else {
+      error = "Choose the Flipper USB serial port."
+      return
+    }
+    addReceiver(source: .object(["kind": .string("flipper_marauder"), "port": .string(endpoint)]))
   }
   var canAddMarauderCapture: Bool {
     connected && canEditPlan && sessionSources.contains("marauder_capture")
