@@ -10,8 +10,9 @@ firmware; it shows one synthetic AP observation and labels itself disconnected.
 
 The separate `airhound-uart-diagnostic` target below is experimental. Its default
 launch also leaves UART untouched. Only explicit `capture` mode controls the
-attached Marauder using fixed passive commands. It has not been installed or
-hardware accepted. Neither target replaces the existing third-party companion.
+attached Marauder using fixed passive commands. An earlier diagnostic revision passed UART-free load/selftest/exit, but capture
+is not accepted; see the dated evidence below. Neither target replaces the
+existing third-party companion.
 
 ## Parser contract
 
@@ -112,12 +113,16 @@ References: [Rust SDK 0.16.0](https://github.com/flipperzero-rs/flipperzero-rs/t
 This separate API87.1 application investigates the failed binary capture path
 recorded in the [hardware ledger](../../docs/attached-hardware-validation.md#flipper-and-awok-follow-up).
 It does not claim to fix the installed companion's unknown NULL-pointer fault.
-It has not been installed or exercised on hardware. The original third-party FAP
+Revision `de00984` passed UART-free load/selftest/exit; the subsequent capture-mode
+preflight aborted before issuing any scan command. The newer stop-only diagnostic
+mode remains a separate test gate. The original third-party FAP
 and both device firmwares must remain preserved during diagnostic acceptance.
 
-Default launch, `selftest`, and unknown arguments never acquire UART. The only
-hardware mode is the exact argument `capture`; it is intentionally not started by
-browsing the app menu. There is no arbitrary-command API. Its commands are fixed:
+Default launch, `selftest`, and unknown arguments never acquire UART. The explicit
+`preflight` mode sends only the initial `stopscan`, retains received bytes and
+**cannot emit a scan-start command**. The exact `capture` argument enables the
+passive sequence; browsing the app menu does not start it. There is no arbitrary-
+command API. Its commands are fixed:
 initial `stopscan`, then `sniffbeacon -serial`, then `stopscan` (one retry if the
 stop text acknowledgment is missing). It never sends `info`, because Marauder
 1.21.0 leaves a state that prevents the subsequent sniff command.
@@ -153,7 +158,7 @@ RX is stopped before releasing its callback context. Final counters are read
 only after shutdown, including late ISR losses after the last state-machine poll.
 Any accepted bytes still queued at shutdown are counted as `unread_ring_bytes`
 and force an incomplete result, even when overflow/error counters are zero.
-Only then does the app persist the raw serial bytes and metadata under
+Only then does the app persist the raw serial bytes, including bounded preflight input, and metadata under
 `/ext/apps_data/airhound_diag/run-<boot-tick>.*`. All files use create-new semantics;
 boot-tick collisions fail instead of overwriting. The closed `.begin.json`
 marker survives independently of the final report; an empty/partial `.serial` or
@@ -162,7 +167,10 @@ is attempted even after write failure. The final report cannot certify its own
 close: failure is also returned by the application. Records and raw bytes must
 still pass the host's strict Marauder importer and private durable replay before
 capture acceptance. RSSI, channel, GPS and synchronized wall time are not invented.
-The report always retains `capture_accepted: false`.
+The report always retains `capture_accepted: false`. `preflight_raw_bytes` counts
+received preflight bytes, including any not retained after overflow; `raw_bytes`
+is the retained total. `otg_enabled_at_entry` is a read-only Flipper 5V-output
+state, not proof of AWOK power; the diagnostic does not toggle it.
 
 Build with source and matching debug symbols retained (from this directory):
 
@@ -197,3 +205,23 @@ still needs a backend-controlled companion/live source or an accepted bridge
 route, with device discovery, setup and lifecycle controls. It does not close
 [the attached-hardware milestone #269](https://github.com/dougborg/AirHound/issues/269)
 on the strength of an offline parser test.
+
+
+### Device evidence (2026-11-22)
+
+The uniquely installed `de00984` artifact (SHA-256
+`4136890072bc078f1ceb621cd6822382880adc8df891321dbb0f0d083d6545cd`) showed
+**Synthetic test: PASS** with UART unopened. Free heap was 117,152 bytes before
+load, 53,048 while loaded (largest block 43,240), and 127,752 after exit. Its
+61,960 allocated ELF bytes and requested 8 KiB stack are separate static figures.
+The original companion's device hash remained unchanged.
+
+One explicit capture-mode attempt then **failed its stop preflight**. The report
+recorded `start_sent: false`; it issued no passive scan command. Drop/error/unread
+counters were zero, but that revision discarded preflight input and therefore
+could not distinguish silence from a line-matching failure. It saved a closed,
+hash-verified zero-byte raw file and failure metadata, then exited without an
+observed crash. A separate stop-only recovery returned two firmware-text stop
+acknowledgments in an 85-byte hash-verified result; the last AWOK command was
+`stopscan`. No RF retry followed. The new preflight-only mode retains this missing
+evidence without starting a scan or changing baud/framing/power settings.

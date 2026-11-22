@@ -26,6 +26,8 @@ struct CaptureMemory(UnsafeCell<[u8; d::CAPACITY]>);
 unsafe impl Sync for CaptureMemory {}
 static RAW: CaptureMemory = CaptureMemory(UnsafeCell::new([0; d::CAPACITY]));
 static CANCEL: AtomicBool = AtomicBool::new(false);
+// Set once before attaching the viewport; unchanged until it is removed.
+static PREFLIGHT_ONLY: AtomicBool = AtomicBool::new(false);
 
 struct Rx {
     stream: *mut sys::FuriStreamBuffer,
@@ -89,8 +91,13 @@ unsafe extern "C" fn draw(canvas: *mut sys::Canvas, _: *mut c_void) {
         sys::canvas_set_font(canvas, sys::FontPrimary);
         sys::canvas_draw_str(canvas, 2, 14, c"AirHound diagnostic".as_ptr());
         sys::canvas_set_font(canvas, sys::FontSecondary);
-        sys::canvas_draw_str(canvas, 2, 31, c"Passive beacon / raw UART".as_ptr());
-        sys::canvas_draw_str(canvas, 2, 44, c"Local deadline: 2 seconds".as_ptr());
+        if PREFLIGHT_ONLY.load(Ordering::Relaxed) {
+            sys::canvas_draw_str(canvas, 2, 31, c"Stop-only preflight".as_ptr());
+            sys::canvas_draw_str(canvas, 2, 44, c"No scan will start".as_ptr());
+        } else {
+            sys::canvas_draw_str(canvas, 2, 31, c"Passive beacon / raw UART".as_ptr());
+            sys::canvas_draw_str(canvas, 2, 44, c"Local deadline: 2 seconds".as_ptr());
+        }
         sys::canvas_draw_str(canvas, 2, 58, c"Back: request stop".as_ptr());
     }
 }
@@ -194,11 +201,12 @@ fn now() -> u32 {
     unsafe { sys::furi_get_tick() }
 }
 
-fn capture() -> Result<(), &'static str> {
+fn capture(preflight_only: bool) -> Result<(), &'static str> {
     // Core deadlines use milliseconds; reject a different firmware tick rate.
     if unsafe { sys::furi_kernel_get_tick_frequency() } != 1000 {
         return Err("Unsupported clock rate");
     }
+    let otg_enabled = unsafe { sys::furi_hal_power_is_otg_enabled() };
     let heap_at_entry = unsafe { sys::memmgr_get_free_heap() };
     if heap_at_entry < 16 * 1024 {
         return Err("Insufficient free heap; UART not opened");
@@ -215,7 +223,19 @@ fn capture() -> Result<(), &'static str> {
     let result_path = path(id, "json");
     let mut begin =
         File::create(&storage, cpath(&begin_path)).ok_or("Output already exists / unavailable")?;
-    let began=d::persist(b"{\"schema\":1,\"complete\":false,\"mode\":\"passive_beacon\",\"reset_stop_state\":\"unknown\"}\n", &mut begin);
+    let mode = if preflight_only {
+        "stop_only_preflight"
+    } else {
+        "passive_beacon"
+    };
+    let mut begin_json = heapless::String::<160>::new();
+    writeln!(
+        begin_json,
+        "{{\"schema\":1,\"complete\":false,\"mode\":\"{}\",\"reset_stop_state\":\"unknown\"}}",
+        mode
+    )
+    .map_err(|_| "Begin formatting failed")?;
+    let began = d::persist(begin_json.as_bytes(), &mut begin);
     if !began.written || !began.closed {
         return Err("Cannot retain begin marker");
     }
@@ -225,6 +245,7 @@ fn capture() -> Result<(), &'static str> {
     let mut result_file =
         File::create(&storage, cpath(&result_path)).ok_or("Cannot create result output")?;
     CANCEL.store(false, Ordering::Relaxed);
+    PREFLIGHT_ONLY.store(preflight_only, Ordering::Relaxed);
     let screen = Screen::new();
     let rx = Rx {
         stream: unsafe { sys::furi_stream_buffer_alloc(4096, 1) },
@@ -250,9 +271,15 @@ fn capture() -> Result<(), &'static str> {
         );
     }
     // Sole command owner. No info command (it changes Marauder's scan mode).
-    let mut run = Run::new(now());
+    let uart_started = now();
+    let mut run = if preflight_only {
+        Run::preflight(uart_started)
+    } else {
+        Run::new(uart_started)
+    };
     serial.send(Command::Stop);
     let mut count = 0usize;
+    let mut preflight_bytes = 0usize;
     let mut overflow = false;
     let mut chunk = [0u8; 512];
     // SAFETY: only this entry owns RAW; ISR writes only to its separate stream.
@@ -271,6 +298,9 @@ fn capture() -> Result<(), &'static str> {
             sys::furi_stream_buffer_receive(rx.stream, chunk.as_mut_ptr().cast(), chunk.len(), 0)
         };
         if n > 0 {
+            if run.phase == Phase::Preflight {
+                preflight_bytes += n;
+            }
             if run.retain_bytes() {
                 let keep = n.min(raw.len() - count);
                 raw[count..count + keep].copy_from_slice(&chunk[..keep]);
@@ -287,6 +317,7 @@ fn capture() -> Result<(), &'static str> {
     // Stop ISR before freeing ring/context. Storage work starts only after local
     // stop/drain has completed or timed out; timeout remains explicitly unknown.
     drop(serial);
+    let uart_owned_ms = now().wrapping_sub(uart_started);
     // IRQ is disabled now: accepted bytes can remain queued even with no drop.
     // Preserve their count and mark the retained stream incomplete, never silently
     // present a clean transport when discarding this final bounded ring tail.
@@ -300,8 +331,9 @@ fn capture() -> Result<(), &'static str> {
     let mut report = heapless::String::<1024>::new();
     let formatted = writeln!(
         report,
-        "{{\"schema\":1,\"airhound_version\":\"{}\",\"mode\":\"passive_beacon\",\"capture_accepted\":false,\"firmware_version_verified\":false,\"ack_basis\":\"unauthenticated_firmware_console_text\",\"preflight_stop_text_ack\":{},\"start_sent\":{},\"start_text_ack\":{},\"stop_text_ack\":{},\"stop_attempts\":{},\"stop_after_ms\":{},\"cancelled\":{},\"buffer_overflow\":{},\"uart_dropped_bytes\":{},\"uart_error_events\":{},\"unread_ring_bytes\":{},\"framing_error\":{},\"framing_complete\":{},\"heap_at_entry\":{},\"heap_before_uart\":{},\"pcap_records\":{},\"raw_bytes\":{},\"raw_write_complete\":{},\"raw_file_closed\":{}}}",
+        "{{\"schema\":1,\"airhound_version\":\"{}\",\"mode\":\"{}\",\"capture_accepted\":false,\"firmware_version_verified\":false,\"ack_basis\":\"unauthenticated_firmware_console_text\",\"preflight_stop_text_ack\":{},\"start_sent\":{},\"start_text_ack\":{},\"stop_text_ack\":{},\"stop_attempts\":{},\"stop_after_ms\":{},\"cancelled\":{},\"buffer_overflow\":{},\"uart_dropped_bytes\":{},\"uart_error_events\":{},\"unread_ring_bytes\":{},\"framing_error\":{},\"framing_complete\":{},\"heap_at_entry\":{},\"heap_before_uart\":{},\"pcap_records\":{},\"otg_enabled_at_entry\":{},\"uart_owned_ms\":{},\"preflight_raw_bytes\":{},\"raw_bytes\":{},\"raw_write_complete\":{},\"raw_file_closed\":{}}}",
         env!("CARGO_PKG_VERSION"),
+        mode,
         e.preflight_stop_text_ack,
         e.start_sent,
         e.start_text_ack,
@@ -318,6 +350,9 @@ fn capture() -> Result<(), &'static str> {
         heap_at_entry,
         heap_before_uart,
         run.witness.packets,
+        otg_enabled,
+        uart_owned_ms,
+        preflight_bytes,
         count,
         raw_result.written,
         raw_result.closed
@@ -330,13 +365,18 @@ fn capture() -> Result<(), &'static str> {
     {
         return Err("Storage failed; retain partial files");
     }
-    if !run.raw_ready(dropped, errors, unread_ring_bytes) {
+    let ready = if preflight_only {
+        run.preflight_ready(dropped, errors, unread_ring_bytes)
+    } else {
+        run.raw_ready(dropped, errors, unread_ring_bytes)
+    };
+    if !ready {
         return Err("Incomplete diagnostic; inspect files");
     }
     Ok(())
 }
 fn main(args: Option<&CStr>) -> i32 {
-    if args != Some(c"capture") {
+    if args != Some(c"capture") && args != Some(c"preflight") {
         if args.is_some() && args != Some(c"selftest") {
             flipperzero::dialogs::alert("Unknown mode. UART not opened.");
             return 1;
@@ -349,11 +389,14 @@ fn main(args: Option<&CStr>) -> i32 {
         });
         return i32::from(!passed);
     }
-    match capture() {
+    let preflight_only = args == Some(c"preflight");
+    match capture(preflight_only) {
         Ok(()) => {
-            flipperzero::dialogs::alert(
-                "Raw diagnostic saved.\nHost validation still required.\nRF loss is unknown.",
-            );
+            flipperzero::dialogs::alert(if preflight_only {
+                "Stop-only complete.\nNo scan was started.\nRaw bytes saved."
+            } else {
+                "Raw diagnostic saved.\nHost validation needed.\nRF loss is unknown."
+            });
             0
         }
         Err(message) => {

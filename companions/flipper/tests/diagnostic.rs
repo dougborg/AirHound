@@ -245,3 +245,22 @@ fn packet_must_fit_the_declared_global_snaplen() {
 fn default_device_selftest_runs_synthetic_framing_and_deadlines_only() {
     assert!(airhound_flipper::diagnostic::synthetic_self_test());
 }
+
+#[test]
+fn preflight_only_retains_receive_evidence_but_can_never_start() {
+    for ack in [false, true] {
+        let mut run = Run::preflight(0);
+        assert!(run.retain_bytes());
+        if ack {
+            run.feed(1, b"Stopping WiFi tran/recv\r\n");
+        }
+        for now in [0, 50, 51, 100, 1499, 1500, 3000] {
+            assert_ne!(run.poll(now, false, false), Some(Command::Start));
+        }
+        assert_eq!(run.phase, Phase::Done);
+        assert!(!run.evidence.start_sent);
+        assert_eq!(run.preflight_ready(0, 0, 0), ack);
+        assert!(!run.raw_ready(0, 0, 0));
+        assert!(!run.preflight_ready(0, 0, 1));
+    }
+}

@@ -193,6 +193,7 @@ pub struct Run {
     started: u32,
     last_rx: u32,
     baseline_stops: u32,
+    allow_start: bool,
 }
 impl Run {
     pub fn new(now: u32) -> Self {
@@ -204,7 +205,27 @@ impl Run {
             started: now,
             last_rx: now,
             baseline_stops: 0,
+            allow_start: true,
         }
+    }
+    /// Stop-only diagnostic: this instance can never emit Command::Start.
+    pub fn preflight(now: u32) -> Self {
+        Self {
+            allow_start: false,
+            ..Self::new(now)
+        }
+    }
+    pub fn preflight_ready(&self, dropped: u32, errors: u32, unread: usize) -> bool {
+        !self.allow_start
+            && self.phase == Phase::Done
+            && self.evidence.preflight_stop_text_ack
+            && !self.evidence.start_sent
+            && !self.evidence.cancelled
+            && !self.evidence.overflow
+            && !self.evidence.malformed
+            && dropped == 0
+            && errors == 0
+            && unread == 0
     }
     pub fn feed(&mut self, now: u32, bytes: &[u8]) {
         self.last_rx = now;
@@ -229,7 +250,10 @@ impl Run {
             && self.witness.packets > 0
     }
     pub fn retain_bytes(&self) -> bool {
-        matches!(self.phase, Phase::Capture | Phase::Stopping)
+        matches!(
+            self.phase,
+            Phase::Preflight | Phase::Capture | Phase::Stopping
+        )
     }
     pub fn poll(&mut self, now: u32, cancel: bool, overflow: bool) -> Option<Command> {
         self.evidence.cancelled |= cancel;
@@ -244,11 +268,15 @@ impl Run {
                 {
                     self.phase = Phase::Done;
                 } else if self.witness.stops > 0 && now.wrapping_sub(self.last_rx) >= 50 {
+                    self.evidence.preflight_stop_text_ack = true;
+                    if !self.allow_start {
+                        self.phase = Phase::Done;
+                        return None;
+                    }
                     self.phase = Phase::Capture;
                     self.since = now;
                     self.started = now;
                     self.witness = Witness::new();
-                    self.evidence.preflight_stop_text_ack = true;
                     self.evidence.start_sent = true;
                     return Some(Command::Start);
                 }
