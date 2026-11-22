@@ -395,11 +395,25 @@ async fn main() -> io::Result<()> {
         ));
     }
     if args.session_config.is_some() || replay_plan.is_some() {
-        let plan = match replay_plan {
+        let mut plan = match replay_plan {
             Some(plan) => plan.resolve()?,
             None => session_runtime::load(args.session_config.as_ref().expect("session path"))?,
         };
         let filter = args.session_filter_config(&plan)?;
+        if plan.location.is_some() && args.gpsd.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "choose gpsd in the session plan or CLI flags, not both",
+            ));
+        }
+        if let Some(endpoint) = args.gpsd.clone() {
+            plan.location = Some(airhound_hostd::session::LocationConfig::Gpsd {
+                endpoint,
+                device: args.gpsd_device.clone(),
+            });
+            plan = plan.resolve()?;
+        }
+        let gps = plan.location.as_ref().map(gpsd::Options::from);
         let recording_config =
             serde_json::json!({"session":plan,"alert_policy":filter.alert_policy});
         let mut sources: Vec<_> = plan
@@ -454,10 +468,7 @@ async fn main() -> io::Result<()> {
             filter,
             writer,
             output,
-            args.gpsd.clone().map(|endpoint| gpsd::Options {
-                endpoint,
-                device: args.gpsd_device.clone(),
-            }),
+            gps,
             move |config, start, control| async move {
                 if let Some(recording) = command_recording {
                     let (tx, rx) = mpsc::channel(8);
@@ -951,6 +962,9 @@ async fn filter_task<W: Write, O: Write>(
         } else {
             get_location(&control)
         };
+        if replay.is_none() && !matches!(&event, ScanEvent::BlePacket(packet) if packet.replay) {
+            output.receiver_location = control.external_location_evidence();
+        }
 
         match event {
             ScanEvent::Sourced { .. } => return Err(io::Error::other("nested receiver envelope")),

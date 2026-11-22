@@ -371,3 +371,27 @@ fn airhound_identity_requires_current_serial_owner_and_actual_status() {
     assert_eq!(ended.devices[0].candidates[0].kind, "serial_unknown");
     assert!(ended.devices[0].candidates[0].configuration_hint.is_none());
 }
+
+#[test]
+fn gnss_hint_is_a_location_provider_not_a_capture_source() {
+    let mut device = raw(0x1546, 0x01a8);
+    device.endpoints = vec![Endpoint {
+        kind: "serial".into(),
+        path: "/dev/gps-fixture".into(),
+    }];
+    let candidates = classify(&device, "linux", &Options::default());
+    let candidate = &candidates[0];
+    assert_eq!(candidate.role, "location_source");
+    assert!(candidate.configuration_hint.is_none());
+    assert_eq!(
+        candidate.location_configuration_hint.as_ref().unwrap()["device"],
+        "/dev/gps-fixture"
+    );
+    assert_eq!(candidate.state, "needs_configuration");
+    device.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/gps-ambiguous".into(),
+    });
+    let candidates = classify(&device, "linux", &Options::default());
+    assert!(candidates[0].location_configuration_hint.as_ref().unwrap()["device"].is_null());
+}

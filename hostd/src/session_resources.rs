@@ -70,6 +70,7 @@ mod tests {
         SessionConfig {
             version: 1,
             alert_policy: None,
+            location: None,
             receivers: names
                 .iter()
                 .enumerate()
@@ -140,6 +141,7 @@ mod tests {
         let config = SessionConfig {
             version: 1,
             alert_policy: None,
+            location: None,
             receivers: vec![ReceiverConfig {
                 id: "ble".into(),
                 source: Source::NativeBle { adapter: None },
