@@ -13,6 +13,8 @@ pub struct Session {
     state: Option<State>,
     status: Option<Status>,
     last_reported_status: Option<Status>,
+    status_request: u32,
+    stop_boundary: Option<u32>,
     generation: u32,
     parser: Option<crate::marauder_stream::Decoder>,
     last_device_timestamp: Option<u32>,
@@ -56,6 +58,8 @@ impl Session {
             state: None,
             status: None,
             last_reported_status: None,
+            status_request: 0,
+            stop_boundary: None,
             generation: 0,
             parser: None,
             last_device_timestamp: None,
@@ -90,7 +94,10 @@ impl Session {
             }
             Command::Pause => matches!(self.state, Some(State::Preflight | State::Capturing)),
             Command::Stop => {
-                self.state.is_some() && !matches!(self.state, Some(State::Stopped | State::Failed))
+                self.state.is_some()
+                    && !matches!(self.state, Some(State::Stopped | State::Failed))
+                    && !(self.state == Some(State::Stopping)
+                        && matches!(self.lifecycle, Some((_, Command::Stop))))
             }
             Command::Heartbeat => {
                 self.state.is_some() && !matches!(self.state, Some(State::Stopped | State::Failed))
@@ -273,6 +280,7 @@ impl Session {
                     self.generation = status.generation;
                     self.parser = None;
                     self.last_device_timestamp = None;
+                    self.stop_boundary = None;
                 }
                 Some(Command::StartBeacon)
             }
@@ -315,6 +323,7 @@ impl Session {
                 if !unopened_stop
                     && (!(previous_state == State::Stopping || previous_state == status.state)
                         || status.evidence & 4 == 0
+                        || self.stop_boundary != Some(request)
                         || status.unread_ring_bytes != 0)
                 {
                     return Err(invalid("Stop lacks observed text or clean drain"));
@@ -347,12 +356,24 @@ impl Session {
             }
         }
         if let Some(previous) = self.status {
-            if previous.generation == status.generation
-                && status.evidence & previous.evidence != previous.evidence
-            {
-                return Err(invalid("Bridge evidence disappeared within generation"));
+            if previous.generation == status.generation {
+                if status.evidence & previous.evidence & 3 != previous.evidence & 3 {
+                    return Err(invalid("Bridge start/preflight evidence disappeared"));
+                }
+                if request == self.status_request
+                    && status.evidence & previous.evidence & 4 != previous.evidence & 4
+                {
+                    return Err(invalid("Current stop evidence disappeared"));
+                }
             }
         }
+        if status.state == State::Stopping && self.stop_boundary != Some(request) {
+            if status.evidence & 4 != 0 {
+                return Err(invalid("New stop reused prior stop evidence"));
+            }
+            self.stop_boundary = Some(request);
+        }
+        self.status_request = request;
         if status.state == State::Preflight && status.evidence & 1 != 0 && self.parser.is_none() {
             self.parser = Some(crate::marauder_stream::Decoder::new());
         }
@@ -587,6 +608,38 @@ mod tests {
         );
         assert_eq!(peer.session.last_reported_status().unwrap().evidence, 0);
         assert!(peer.session.command(Command::StartBeacon).is_err());
+    }
+
+    #[test]
+    fn each_stop_requires_a_fresh_zero_evidence_boundary_and_acknowledgment() {
+        let mut peer = Peer::new();
+        let start = peer.start();
+        peer.status(start, State::Preflight, 0, 1, 1).unwrap();
+        peer.receive(
+            0,
+            Body::Raw {
+                generation: 1,
+                app_uptime_ms: 2,
+                bytes: &capture(),
+            },
+        )
+        .unwrap();
+        peer.status(start, State::Capturing, 0, 3, 1).unwrap();
+        let pause = peer.command(Command::Pause);
+        peer.ack(pause, Command::Pause);
+        peer.status(pause, State::Stopping, 1, 3, 1).unwrap();
+        peer.status(pause, State::Paused, 1, 7, 1).unwrap();
+        let stop = peer.command(Command::Stop);
+        peer.ack(stop, Command::Stop);
+        peer.status(stop, State::Stopping, 2, 3, 1).unwrap();
+        assert!(peer.session.command(Command::Stop).is_err());
+        peer.status(stop, State::Stopped, 2, 7, 1).unwrap();
+        let mut peer = Peer::new();
+        peer.start();
+        let stop = peer.command(Command::Stop);
+        peer.ack(stop, Command::Stop);
+        // A positive stale witness cannot replace the required new boundary.
+        assert!(peer.status(stop, State::Stopping, 2, 4, 1).is_err());
     }
 
     #[test]
