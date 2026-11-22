@@ -11,6 +11,7 @@ mod address_macos;
 mod ble;
 mod ble_payload;
 mod ble_remote_id;
+mod capture_service;
 mod control;
 mod gpsd;
 mod health;
@@ -218,6 +219,9 @@ enum DiscoveryCommand {
         /// Expose read-only history from this recording database
         #[arg(long)]
         database: Option<PathBuf>,
+        /// Enable explicit client requests to start recorded capture sessions
+        #[arg(long, requires = "database")]
+        capture: bool,
     },
     /// Attach to an existing service using the shared Rust client
     Client {
@@ -298,9 +302,10 @@ async fn main() -> io::Result<()> {
     if let Some(DiscoveryCommand::Serve {
         ref socket,
         ref database,
+        capture,
     }) = args.command
     {
-        return service_cli::serve(socket, database.clone()).await;
+        return service_cli::serve(socket, database.clone(), capture).await;
     }
     if let Some(DiscoveryCommand::Client { socket, command }) = args.command {
         return service_cli::client(&socket, command).await;

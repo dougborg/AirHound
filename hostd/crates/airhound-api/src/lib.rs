@@ -13,11 +13,14 @@ pub const METHODS: &[&str] = &[
     "session.validate",
     "recordings.list",
     "recordings.records",
+    "capture",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Command {
+    #[serde(rename = "capture")]
+    Capture { action: CaptureAction },
     #[serde(rename = "hello")]
     Hello {},
     #[serde(rename = "status")]
@@ -37,6 +40,16 @@ pub enum Command {
         after: i64,
         limit: u16,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CaptureAction {
+    Start { config: Value },
+    Pause { run_id: String },
+    Resume { run_id: String },
+    Finish { run_id: String },
+    Status,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

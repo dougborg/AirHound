@@ -241,6 +241,35 @@ pub(crate) async fn run<W, O, C, CF, S>(
     receivers: Vec<ReceiverTask>,
     config: FilterConfig,
     writer: WigleWriter<W>,
+    output: O,
+    gps: Option<gpsd::Options>,
+    commands: C,
+    shutdown: S,
+) -> io::Result<()>
+where
+    W: Write + Send + 'static,
+    O: Write + Send + 'static,
+    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant, ScanControl) -> CF,
+    CF: Future<Output = ()> + Send + 'static,
+    S: Future<Output = io::Result<()>>,
+{
+    run_controlled(
+        receivers,
+        (config, ScanControl::new(true)),
+        writer,
+        output,
+        gps,
+        commands,
+        shutdown,
+    )
+    .await
+}
+
+/// The caller owns session control independently of any client connection.
+pub(crate) async fn run_controlled<W, O, C, CF, S>(
+    receivers: Vec<ReceiverTask>,
+    state: (FilterConfig, ScanControl),
+    writer: WigleWriter<W>,
     mut output: O,
     gps: Option<gpsd::Options>,
     commands: C,
@@ -253,7 +282,7 @@ where
     CF: Future<Output = ()> + Send + 'static,
     S: Future<Output = io::Result<()>>,
 {
-    let control = ScanControl::new(true);
+    let (config, control) = state;
     let alert_policy = config.alert_policy;
     let config = Arc::new(Mutex::new(config));
     let start = Instant::now();

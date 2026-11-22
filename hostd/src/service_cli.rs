@@ -13,6 +13,24 @@ use std::{
 
 #[derive(clap::Subcommand)]
 pub(crate) enum ClientCommand {
+    /// Start a durable session on a service launched with --capture
+    Start {
+        #[arg(long)]
+        session_config: PathBuf,
+    },
+    Pause {
+        #[arg(long)]
+        run_id: String,
+    },
+    Resume {
+        #[arg(long)]
+        run_id: String,
+    },
+    Finish {
+        #[arg(long)]
+        run_id: String,
+    },
+    CaptureStatus,
     /// Show the connected service's capabilities (not RF readiness)
     Status,
     /// List durable recordings, newest first
@@ -46,6 +64,7 @@ pub(crate) enum ClientCommand {
 #[derive(Default)]
 struct LocalBackend {
     database: Option<PathBuf>,
+    capture: Option<crate::capture_service::Handle>,
 }
 impl LocalBackend {
     fn history(
@@ -79,6 +98,39 @@ impl LocalBackend {
     }
 }
 impl Backend for LocalBackend {
+    fn capture_enabled(&self) -> bool {
+        self.capture.is_some()
+    }
+    fn capture(&self, action: airhound_api::CaptureAction) -> BackendResult {
+        let handle = self.capture.clone();
+        Box::pin(async move {
+            use crate::capture_service::Action;
+            use airhound_api::CaptureAction;
+            let handle = handle.ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::UnsupportedMethod,
+                    "capture control is not enabled",
+                )
+            })?;
+            let action = match action {
+                CaptureAction::Start { config } => Action::Start(config),
+                CaptureAction::Pause { run_id } => Action::Pause(run_id),
+                CaptureAction::Resume { run_id } => Action::Resume(run_id),
+                CaptureAction::Finish { run_id } => Action::Finish(run_id),
+                CaptureAction::Status => Action::Status,
+            };
+            handle.request(action).await.map_err(|error| {
+                ApiError::new(
+                    if error.kind() == io::ErrorKind::InvalidInput {
+                        ErrorCode::InvalidRequest
+                    } else {
+                        ErrorCode::Internal
+                    },
+                    error.to_string(),
+                )
+            })
+        })
+    }
     fn recordings(&self, before: Option<String>, limit: u16) -> BackendResult {
         self.history(move |reader| {
             serde_json::to_value(reader.run_page(before.as_deref(), limit.into())?)
@@ -114,19 +166,43 @@ impl Backend for LocalBackend {
     }
 }
 
-pub(crate) async fn serve(path: &Path, database: Option<PathBuf>) -> io::Result<()> {
-    airhound_hostd::service::serve(path, Arc::new(LocalBackend { database }), async {
-        use tokio::signal::unix::{signal, SignalKind};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+pub(crate) async fn serve(path: &Path, database: Option<PathBuf>, capture: bool) -> io::Result<()> {
+    let actor = if capture {
+        Some(crate::capture_service::spawn(database.clone().ok_or_else(
+            || io::Error::other("capture requires a database"),
+        )?))
+    } else {
+        None
+    };
+    let handle = actor.as_ref().map(|(handle, _)| handle.clone());
+    let result = airhound_hostd::service::serve(
+        path,
+        Arc::new(LocalBackend {
+            database,
+            capture: handle,
+        }),
+        async {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut terminate) => {
+                    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+                }
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
             }
-            Err(_) => {
-                let _ = tokio::signal::ctrl_c().await;
-            }
-        }
-    })
-    .await
+        },
+    )
+    .await;
+    if let Some((handle, task)) = actor {
+        let stopped = handle
+            .request(crate::capture_service::Action::Shutdown)
+            .await;
+        drop(handle);
+        task.await.map_err(io::Error::other)??;
+        stopped?;
+    }
+    result
 }
 
 fn read_config(path: &Path) -> io::Result<Value> {
@@ -159,6 +235,29 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         .await
         .map_err(io::Error::other)?;
     let result = match command {
+        ClientCommand::Start { session_config } => {
+            client
+                .capture(airhound_api::CaptureAction::Start {
+                    config: read_config(&session_config)?,
+                })
+                .await
+        }
+        ClientCommand::Pause { run_id } => {
+            client
+                .capture(airhound_api::CaptureAction::Pause { run_id })
+                .await
+        }
+        ClientCommand::Resume { run_id } => {
+            client
+                .capture(airhound_api::CaptureAction::Resume { run_id })
+                .await
+        }
+        ClientCommand::Finish { run_id } => {
+            client
+                .capture(airhound_api::CaptureAction::Finish { run_id })
+                .await
+        }
+        ClientCommand::CaptureStatus => client.capture(airhound_api::CaptureAction::Status).await,
         ClientCommand::Status => client.status().await,
         ClientCommand::Recordings { before, limit } => client.recordings(before, limit).await,
         ClientCommand::Records {
