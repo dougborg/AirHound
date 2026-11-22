@@ -26,6 +26,67 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertEqual(session.configText, unchanged)
   }
 
+  func testSetupIntentWaitsForPollingAndRunsOnce() async throws {
+    let session = SessionModel()
+    session.connected = true
+    session.beginBackgroundRefresh()
+    var executed: [String] = []
+    XCTAssertTrue(session.submitSetupMutation { executed.append("save submitted plan") })
+    XCTAssertTrue(session.setupMutationQueued)
+    XCTAssertFalse(session.canEditPlan)
+    XCTAssertFalse(session.submitSetupMutation { executed.append("duplicate") })
+    XCTAssertTrue(executed.isEmpty)
+    session.finishBackgroundRefresh()
+    for _ in 0..<20 where session.busy { await Task.yield() }
+    XCTAssertEqual(executed, ["save submitted plan"])
+    XCTAssertFalse(session.setupMutationQueued)
+    XCTAssertFalse(session.busy)
+    session.beginBackgroundRefresh()
+    XCTAssertTrue(session.submitSetupMutation { executed.append("delete submitted ID") })
+    session.finishBackgroundRefresh()
+    for _ in 0..<20 where session.busy { await Task.yield() }
+    XCTAssertEqual(executed, ["save submitted plan", "delete submitted ID"])
+    session.busy = true
+    XCTAssertFalse(session.submitSetupMutation { executed.append("rejected") })
+    XCTAssertNotNil(session.error)
+  }
+
+  func testReceiverIdentityRequiresMatchingActiveRunSource() throws {
+    let session = SessionModel()
+    session.configText =
+      #"{"version":1,"receivers":[{"id":"same-id","source":{"kind":"sniffle","port":"/dev/cu.one","python":"/python","helper":"/helper"}}]}"#
+    session.capture = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        #"{"active":true,"run_id":"run-1","receiver_health":{"receivers":[{"id":"same-id","receiver":{"adapter_info":"actual firmware"}}]}}"#
+          .utf8))
+    func stored(_ source: String) throws -> StoredRun {
+      try JSONDecoder().decode(
+        StoredRun.self,
+        from: Data(
+          (#"{"id":"run-1","state":"recording","mode":"live","started_at_us":0,"record_count":0,"config":{"session":{"receivers":[{"id":"same-id","source":SOURCE}]}}}"#
+            .replacingOccurrences(of: "SOURCE", with: source)).utf8))
+    }
+    XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
+    session.runs = [try stored(#"{"kind":"native_ble"}"#)]
+    XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
+    session.runs = [
+      try stored(
+        #"{"kind":"sniffle","port":"/dev/cu.other","python":"/python","helper":"/helper","channel":38,"coded":false,"module_path":null}"#
+      )
+    ]
+    XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
+    session.runs = [
+      try stored(
+        #"{"kind":"sniffle","port":"/dev/cu.one","python":"/python","helper":"/helper","channel":38,"coded":false,"module_path":null}"#
+      )
+    ]
+    XCTAssertEqual(
+      session.currentReceiverIdentity(id: "same-id")?["adapter_info"], .string("actual firmware"))
+    session.capture = .object(["active": .bool(false), "run_id": .string("run-1")])
+    XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
+  }
+
   /// Optional bounded screenshot fixture. Never connects to a service or opens radios.
   func testNativeSetupPresentationSnapshot() throws {
     guard let destination = ProcessInfo.processInfo.environment["AIRHOUND_UI_SNAPSHOT_DIR"] else {

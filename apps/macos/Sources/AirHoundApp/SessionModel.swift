@@ -44,6 +44,9 @@ final class SessionModel: ObservableObject {
   private weak var observationApp: AppModel?
   private var client: BackendClient?
   private var pollTask: Task<Void, Never>?
+  private var polling = false
+  private var pendingSetupMutation: (() async throws -> Void)?
+  @Published private(set) var setupMutationQueued = false
   private var requestID = UUID().uuidString
   @Published private(set) var pendingConfig: Data?
   private var pendingSocket: String?
@@ -217,7 +220,9 @@ final class SessionModel: ObservableObject {
     useSelectedReceivers()
   }
 
-  var canEditPlan: Bool { !isActive && !busy && !hasPendingStart }
+  var canEditPlan: Bool {
+    !isActive && (!busy || polling) && !setupMutationQueued && !hasPendingStart
+  }
   var plannedReceivers: [PlanReceiver] {
     guard let config = try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)) else {
       return []
@@ -226,10 +231,30 @@ final class SessionModel: ObservableObject {
   }
 
   func currentReceiverIdentity(id: String) -> JSONValue? {
-    guard isActive, case .array(let receivers) = capture?["receiver_health"]?["receivers"] else {
-      return nil
-    }
+    guard isActive, let activeID,
+      let planSource = plannedReceivers.first(where: { $0.id == id })?.source,
+      let run = runs.first(where: { $0.id == activeID }),
+      case .array(let configured) = run.config["session"]?["receivers"],
+      let activeSource = configured.first(where: { $0["id"]?.string == id })?["source"],
+      identitySourcesMatch(planSource, activeSource),
+      case .array(let receivers) = capture?["receiver_health"]?["receivers"]
+    else { return nil }
     return receivers.first { $0["id"]?.string == id }?["receiver"]
+  }
+
+  private func identitySourcesMatch(_ planned: JSONValue, _ active: JSONValue) -> Bool {
+    guard case .object(var expected) = planned, case .object(var actual) = active else {
+      return false
+    }
+    expected = expected.filter { $0.value != .null }
+    actual = actual.filter { $0.value != .null }
+    // The service assigns an omitted Sniffle channel. All explicit source fields,
+    // including helper/module paths and endpoint, must still match the stored run.
+    if expected["kind"] == .string("sniffle") {
+      if expected["channel"] == nil { actual.removeValue(forKey: "channel") }
+      if expected["coded"] == nil { expected["coded"] = .bool(false) }
+    }
+    return expected == actual
   }
 
   private func editPlan(_ edit: (JSONValue) throws -> JSONValue) {
@@ -297,12 +322,21 @@ final class SessionModel: ObservableObject {
       message = "Setup loaded. Review the receivers before starting."
     } catch { self.error = error.localizedDescription }
   }
-  func saveSetup(name: String, replacing id: String? = nil) {
-    guard canEditPlan else { return }
+  @discardableResult
+  func saveSetup(name: String, replacing id: String? = nil) -> Bool {
+    guard let client else {
+      error = "Connect before saving a setup."
+      return false
+    }
     let config = Data(configText.utf8)
     let selectedID = id ?? UUID().uuidString.lowercased()
-    perform {
-      guard let client = self.client else { return }
+    return submitSetupMutation {
+      guard self.connected, self.client?.socket == client.socket, !self.isActive,
+        !self.hasPendingStart
+      else {
+        throw ModelError.invalid(
+          "The service or recording changed. Review the plan and save again.")
+      }
       _ = try await client.saveSetup(id: selectedID, name: name, config: config, replace: id != nil)
       self.setups = try await client.setups()
       self.selectedSetupID = selectedID
@@ -310,16 +344,52 @@ final class SessionModel: ObservableObject {
       self.message = "Setup saved on the backend."
     }
   }
-  func deleteSelectedSetup() {
-    guard canEditPlan, !selectedSetupID.isEmpty else { return }
+  @discardableResult
+  func deleteSelectedSetup() -> Bool {
+    guard let client, !selectedSetupID.isEmpty else { return false }
     let id = selectedSetupID
-    perform {
-      guard let client = self.client else { return }
+    return submitSetupMutation {
+      guard self.connected, self.client?.socket == client.socket, !self.isActive,
+        !self.hasPendingStart
+      else {
+        throw ModelError.invalid(
+          "The service or recording changed. Review the setup and delete again.")
+      }
       try await client.deleteSetup(id: id)
       self.setups = try await client.setups()
-      self.selectedSetupID = ""
+      if self.selectedSetupID == id { self.selectedSetupID = "" }
       self.message = "Saved setup removed. The current plan is unchanged."
     }
+  }
+
+  // Keep one explicit user action while an in-flight status refresh completes.
+  // The closure captures the submitted plan/ID, not later editor selection.
+  @discardableResult
+  func submitSetupMutation(_ operation: @escaping () async throws -> Void) -> Bool {
+    guard connected, canEditPlan else {
+      error = "The setup cannot be changed right now. Wait for the current operation and try again."
+      return false
+    }
+    if polling {
+      pendingSetupMutation = operation
+      setupMutationQueued = true
+    } else {
+      perform(operation)
+    }
+    return true
+  }
+
+  func beginBackgroundRefresh() {
+    polling = true
+    busy = true
+  }
+  func finishBackgroundRefresh() {
+    polling = false
+    busy = false
+    let operation = pendingSetupMutation
+    pendingSetupMutation = nil
+    setupMutationQueued = false
+    if let operation { perform(operation) }
   }
 
   func validate() {
@@ -511,16 +581,16 @@ final class SessionModel: ObservableObject {
         do { try await Task.sleep(for: .seconds(2)) } catch { return }
         guard let self else { return }
         if !self.busy {
-          self.busy = true
+          self.beginBackgroundRefresh()
           do { try await self.update() } catch {
-            self.busy = false
+            defer { self.finishBackgroundRefresh() }
             if Task.isCancelled { return }
             self.connected = false
             self.message =
               "Disconnected. Capture may still be running. Reconnect to check its state."
             return
           }
-          self.busy = false
+          self.finishBackgroundRefresh()
         }
       }
     }
