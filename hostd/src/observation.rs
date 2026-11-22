@@ -1,5 +1,4 @@
 //! Desktop-only identity. CoreBluetooth identifiers are not hardware MACs.
-#[cfg(any(target_os = "linux", test))]
 use airhound::scanner::OdidEvent;
 use airhound::scanner::{BleEvent, WiFiEvent};
 
@@ -12,6 +11,11 @@ pub enum ScanEvent {
     },
     BlePacket(Box<crate::ble_packet::Packet>),
     BleSourceStatus(serde_json::Value),
+    WifiReplayStatus(serde_json::Value),
+    Replay {
+        event: Box<ScanEvent>,
+        metadata: crate::wifi_pcap::Metadata,
+    },
     // Legacy synthetic inputs remain for regression fixtures; live adapters use BleSnapshot.
     #[cfg_attr(not(test), allow(dead_code))]
     Ble(BleEvent),
@@ -39,7 +43,6 @@ pub enum ScanEvent {
         producer_dropped: u64,
         reconnect_attempts: u64,
     },
-    #[cfg(any(target_os = "linux", test))]
     Odid(OdidEvent),
 }
 

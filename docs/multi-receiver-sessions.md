@@ -49,7 +49,7 @@ rejects the plan before starting radios; a later hardware or permission failure
 is reported for the affected receiver.
 
 Do not combine `--session-config` with individual source-selection flags such as
-`--ble-adapter`, `--sniffle-port`, `--external-scanner`, `--wifi-interface`,
+`--ble-adapter`, `--sniffle-port`, `--external-scanner`, `--wifi-interface`, `--wifi-pcap`,
 `--no-ble` or `--no-wifi`. Select all sources in the file. Session-wide options
 such as `--output`, `--rssi`, verbosity and `--gpsd` still apply. Existing files
 remain protected unless `--output` and `--overwrite` are both supplied.
@@ -64,6 +64,7 @@ remain protected unless `--output` and `--overwrite` are both supplied.
 | `sniffle` | `port`, `python`, `helper`; optional `module_path`, `channel`, `coded` | Separate Sniffle process and serial receiver; see [firmware/host prerequisites](sniffle-source.md) |
 | `external_wifi` | `executable`, `firmware`, `channels`, `dwell_ms`; optional `usb_selector` | Standalone MT7610U receiver process; see [protocol and limitations](external-scanner-stream-v1.md) |
 | `ble_pcap` | `path` | Finite classic DLT256 BLE PCAP replay; see [supported framing](sniffle-source.md#replay) |
+| `wifi_pcap` | `path` | Finite classic DLT127 radiotap replay; [offline WiFi replay](wifi-pcap-replay.md) |
 
 For Sniffle, `python` and `helper` are required in a session file, even though the
 single-source CLI provides a default Python executable. `coded` defaults to false.
