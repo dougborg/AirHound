@@ -8,3 +8,5 @@ pub mod session;
 
 pub mod discovery;
 pub mod service;
+
+pub mod storage;
