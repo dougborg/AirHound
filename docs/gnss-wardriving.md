@@ -185,7 +185,7 @@ The service integration also has a mock-gpsd → capture actor → durable SQLit
 regression covering receiver-location association, actual daemon version health,
 WATCH-only requests and shutdown. Unit checks reject malformed endpoints,
 replay-only location plans, stale evidence and accidental location attachment to
-replay records. These tests do not establish new live hardware acceptance.
+replay records. These mock tests are separate from the bounded live acceptance below.
 
 This is the desktop provider slice of [#79](https://github.com/dougborg/AirHound/issues/79).
 Portable location types and firmware integration remain in
@@ -196,3 +196,28 @@ References: [gpsd JSON protocol](https://gpsd.io/gpsd_json.html),
 [gpsd daemon and read-only mode](https://gpsd.io/gpsd.html),
 [u-blox receiver protocol reference](https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf).
 The protocol reference explains NMEA validity; it does not identify the attached model.
+
+## Service recording acceptance — 2026-11-22
+
+Two private service runs used the attached u-blox GNSS receiver through read-only
+gpsd and CatSniffer/Sniffle on BLE channel 37/1M. No native WiFi or Bluetooth
+receiver, default service, or GUI recording was used. Production code was the
+GNSS service integration plus the native-WiFi-only CoreLocation initialization
+change (`018eea9`); this source change is not in the published preview.
+
+| Check | Result |
+| --- | --- |
+| 60-second steady run | 4,520 BLE packet observations, all with retained receiver-location evidence; finished normally |
+| Freshness | GNSS fix age 16–1,020 ms; local monotonic age 0–1,004 ms; six of six sampled provider states reported a fix |
+| Version evidence | Actual Sniffle 1.11.0/API 0 and gpsd 3.27.5/protocol 16.1; GNSS receiver firmware remains unknown |
+| Loss counters | CatSniffer reported zero host drops and zero reconnects; RF loss remains unknown |
+| Separate 30-second provider-loss run | 2,441 packet observations total; 842 geotagged before provider loss. With a one-second disconnect guard, 1,476 later packet observations were retained with no receiver-location field |
+| Provider-loss state | Health changed from fix to disconnected; current gpsd daemon metadata cleared. Capture continued and finished normally |
+| Cleanup | Each private service and gpsd process exited with status 0; both capture and GNSS endpoints were released |
+
+Both recordings had zero invalid receiver-location association labels. The
+provider-loss test stopped only its own gpsd process, not the physical receiver;
+it does not establish USB unplug/replug, moving-route accuracy, or capture-time
+synchronization. Raw positions, wireless identifiers, plans, SQLite databases and
+logs stay in private local test directories. Only aggregate evidence is retained
+in this repository.
