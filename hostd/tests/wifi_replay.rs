@@ -38,8 +38,8 @@ fn capture() -> Vec<u8> {
         frame[4..10].fill(255);
         frame[10..16].copy_from_slice(&[2, 0, 0, 0, 0, 1]);
         frame[16..22].copy_from_slice(&[2, 0, 0, 0, 0, 1]);
-        frame.extend([0, 4]);
-        frame.extend(b"Test");
+        frame.extend([0, 12]);
+        frame.extend(b"Flock-123456");
         packet.extend(frame);
         for number in [
             1_700_000_000u32,
@@ -82,13 +82,19 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
         let csv = fixture.path("out.csv");
         std::fs::write(&pcap, capture()).unwrap();
         let config = fixture.path("session.json");
-        std::fs::write(&config,serde_json::to_vec(&serde_json::json!({"version":1,"receivers":[{"id":"recorded-wifi","source":{"kind":"wifi_pcap","path":pcap}}]})).unwrap()).unwrap();
+        std::fs::write(&config,serde_json::to_vec(&serde_json::json!({"version":1,"alert_policy":"silent","receivers":[{"id":"recorded-wifi","source":{"kind":"wifi_pcap","path":pcap}}]})).unwrap()).unwrap();
         let args = if session {
             vec![std::ffi::OsStr::new("--session-config"), config.as_os_str()]
         } else {
             vec![std::ffi::OsStr::new("--wifi-pcap"), pcap.as_os_str()]
         };
         let mut args = args;
+        if !session {
+            args.extend([
+                std::ffi::OsStr::new("--alert-policy"),
+                std::ffi::OsStr::new("silent"),
+            ]);
+        }
         args.extend([std::ffi::OsStr::new("--output"), csv.as_os_str()]);
         let output = run(&args);
         assert!(
@@ -107,6 +113,8 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
             .collect();
         assert_eq!(rows.len(), 2);
         for (row, frequency, band) in [(rows[0], 2412, "2.4GHz"), (rows[1], 5955, "6GHz")] {
+            assert_eq!(row["detection"]["policy"], "silent");
+            assert_eq!(row["detection"]["alert"], "suppressed");
             assert_eq!(row["ch"], 1);
             assert_eq!(row["frequency_mhz"], frequency);
             assert_eq!(row["band"], band);
@@ -122,6 +130,15 @@ fn standalone_and_session_replay_preserve_six_ghz_time_source_and_csv() {
             );
         }
         assert_eq!(rows[1]["capture"]["record_sequence"], 2);
+        assert!(records
+            .iter()
+            .any(|row| row["type"] == "session_started" && row["alert_policy"] == "silent"));
+        let evidence: Vec<_> = records
+            .iter()
+            .filter(|row| row["type"] == "detection")
+            .collect();
+        assert_eq!(evidence.len(), 2);
+        assert!(evidence.iter().all(|row| row["replay"] == true));
         let status = records
             .iter()
             .find(|row| row["type"] == "wifi_replay_status")
