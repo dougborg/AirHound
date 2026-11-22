@@ -54,8 +54,8 @@ configuration; rediscover the current endpoint and select it explicitly.
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | 66-second durable serial run: 407 WiFi  + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; gpsd NMEA0183/9600 | 60-second CatSniffer session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Explicit GPSD session configuration implemented and live-tested in #276. gpsd 3.27.5/protocol 16.1 is host software, not receiver firmware. Receiver model/firmware remains unverified |
-| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012` banner (`e1784e74`, built 2025-12-31) | Current USB connection returned firmware banner | Subsequent `device_info` commands did not respond, including after the user confirmed unlocked/main screen and AWOK seated. Waiting for requested USB reconnect before retry; older API 87.1 evidence is historical |
-| AWOK Dual Touch v3 | No directly attached CP2102 endpoint in this inventory; possible Flipper GPIO route | Prior-day official Marauder 1.21.0 and bounded GPIO test are documented separately | User confirmed board attached via GPIO; current USB CLI still fails to respond, so current UART control/reception remains unverified. Existing offline importer is implemented; fresh real-capture acceptance and live host bridge remain gaps |
+| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | After the user reconnected USB, fresh `device_info` and idle-loader checks responded; subsequent companion metadata reads matched the same hardware identity | Earlier nonresponsive attempts remain failures. A later JavaScript binary-capture attempt lost USB and the device reappeared; reboot cause is unproven. Stop recovery and transport release were verified |
+| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Fresh GPIO `info` reported official Marauder 1.21.0, Dev Board Pro target; settings reported SavePCAP enabled | Binary-capture attempt produced an empty file, not usable reception evidence. Stop-only recovery received two firmware stop acknowledgments and a prompt. Genuine capture/import and live host bridge remain gaps |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor | Recognized candidate only | No current AirHound live-source integration; product descriptor is not a queried firmware version |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
@@ -180,6 +180,43 @@ did not replace an existing setup. Loading reproduced the exact configuration
 and validated local resources without applying it or starting capture. Endpoint
 identity review remains necessary after moving or replacing hardware.
 
+The GUI-only update in [#289](https://github.com/dougborg/AirHound/pull/289)
+was then installed to preserve capture actions submitted during background polling
+and explain disabled Start controls. The installed backend and its recording store
+were preserved. Private synthetic-backend tests covered queued controls, duplicate
+Start rejection and stale Finish confirmation targets; user retry of the installed
+GUI controls remains pending. These tests do not replace an actual GUI-driven
+hardware recording.
+
+## Flipper and AWOK follow-up
+
+After USB reconnect, the Flipper's fresh identity and GPIO `info` exchange succeeded.
+A bounded settings-only binary transfer returned 681 bytes with a matching device
+hash. The following passive beacon capture lost USB connectivity; the endpoint
+reappeared, but its capture file was zero bytes. The first cleanup attempt lacked
+an acknowledgment and was not counted as success. A later stop-only recovery
+received two `Stopping WiFi tran/recv` responses, fresh Marauder information and
+a returned prompt. Its 372-byte result matched the device hash; USB was closed
+and no owner remained. No capture retry followed.
+
+Static inspection of the pinned Momentum mJS implementation shows that repeated
+`readBytes` ArrayBuffers accumulate in an arena until interpreter destruction;
+ordinary garbage collection does not reclaim that arena. This is a concrete memory
+hazard for the attempted script, not proof of the device's reboot cause.
+
+Read-only inspection of the installed third-party companion found app version
+7.6 (embedded display version `v0.7.6`), API 87.1, and a 108,256-byte FAP with SHA-256
+`fc9f2ae606722ac63866c120fe108e62a6e1c85df0e45a1708867a591376d680`.
+The downloaded FAP matched its device hash. Its Flipper-side save-PCAP and save-log
+settings were already enabled. No application was launched and no settings or
+firmware were changed during this inspection. The official
+[v0.7.6 source release](https://github.com/0xchocolate/flipperzero-wifi-marauder/releases/tag/v0.7.6)
+at `e77f2754b3ca97c14dcc27b5d8a19091b7bbfa62` has the native fixed-buffer
+capture-to-SD path and Back-to-stop behavior. The release publishes source archives,
+not a matching FAP asset, so byte equivalence to the installed binary has not been
+established. Further capture requires source/provenance and
+screen/control review; metadata recognition alone is not capture acceptance.
+
 ## Remaining acceptance
 
 - Exercise **Attached receiver rig** through the native Load, Start Recording
@@ -191,9 +228,10 @@ identity review remains necessary after moving or replacing hardware.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Retry Flipper after the requested USB reconnect, then exercise the existing
-  passive AWOK control path and import a genuine resulting capture. No fresh
-  Flipper/AWOK live acceptance is claimed while that user reconnect is pending.
+- Validate the installed companion's bounded passive capture-to-Flipper-SD path,
+  then import a genuine resulting capture. Fresh Flipper identity and AWOK control
+  passed, but the empty-file attempt establishes neither reception nor import.
+  Keep the acknowledged-stop state until the next reviewed test is coordinated.
   A separate bounded BLE management discovery found no advertisement for the
   known Flipper identity; no BLE connection, authenticated read, pairing request
   or write occurred. The cached paired application name is not current firmware
