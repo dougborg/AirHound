@@ -4,6 +4,7 @@
 use heapless::{String, Vec};
 use serde::Deserialize;
 
+pub mod diagnostic;
 mod syntax;
 
 /// Current sensor serializers use a 512-byte output buffer (including newline).

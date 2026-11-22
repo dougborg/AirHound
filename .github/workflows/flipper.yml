@@ -29,7 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
           targets: thumbv7em-none-eabihf
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -47,6 +47,13 @@ jobs:
           cp target/thumbv7em-none-eabihf/release/airhound-flipper target/airhound-flipper-demo.fap
           python scripts/check-fap.py target/airhound-flipper-demo.fap target/momentum-api.csv > target/fap-audit.json
           cat target/fap-audit.json
+      - name: Build diagnostic with matching symbols (no hardware acceptance)
+        run: python scripts/build-diagnostic.py target/momentum-api.csv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: flipper-uart-diagnostic-api87-unverified
+          path: companions/flipper/target/diagnostic/
+          retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flipper-synthetic-demo-api87

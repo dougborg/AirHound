@@ -12,7 +12,7 @@ processors, and control from a Flipper Zero. It records the setup tested on
 | Flipper firmware | Momentum mntm-012, API 87.1, retained unchanged |
 | Marauder companion | Existing third-party WiFi Marauder app installed; GPIO command/scan path tested separately with a bounded Flipper-side UART script |
 | AirHound capture importer | Experimental offline PCAP/serial-file import; real AWOK capture acceptance remains pending |
-| AirHound Flipper companion | Bounded receiver/parser and synthetic FAP prototype; not a working Marauder control application |
+| AirHound Flipper companion | Bounded receiver/parser and synthetic FAP prototype; separate fixed-memory UART diagnostic in development, not hardware accepted |
 | Flipper sub-GHz source | Planned; the UART test does not validate sub-GHz reception or host streaming |
 
 The WiFi Marauder app is the
@@ -108,6 +108,34 @@ This does not establish sustained stability, channel hopping, simultaneous two-c
 capture, complete packet reception, Bluetooth scanning, GPS, SD logging, or sub-GHz
 support. Longer scans, reconnects, capture transfer and import remain
 [#181](https://github.com/dougborg/AirHound/issues/181).
+
+## Current binary-capture limitation
+
+The newer acceptance runs in the [hardware ledger](attached-hardware-validation.md#flipper-and-awok-follow-up)
+failed to produce a complete binary capture. The accumulating mJS approach led to
+an out-of-memory screen. The installed v0.7.6 companion later displayed beacon
+reception but crashed with a NULL-pointer screen, leaving empty files. The precise
+native fault remains unknown. Final stop-only recovery observed two firmware-text
+stop acknowledgments; neither firmware nor the original companion was replaced.
+
+Marauder 1.21.0 `info` changes its scan state. End any preflight information query
+with an acknowledged `stopscan` before attempting a scan; an `info` response alone
+does not mean the scanner is idle. Console acknowledgment text is not authenticated
+and does not prove complete RF reception or a hardware-level stop.
+
+The isolated [AirHound diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic)
+uses fixed memory and device-local timing. It must pass build, UART-free load/exit,
+headroom and synthetic replay checks before a separately reviewed live test.
+This is a diagnostic application, not a full firmware rewrite or a demonstrated
+fix for the third-party companion crash.
+
+A simpler fallback is Momentum's built-in **GPIO → USB-UART Bridge**, configured
+for USART pins 13/14 at 115200 baud and **USB channel 1** so channel 0 can retain
+the CLI. Entry defaults to channel 0 and can disrupt the management connection;
+initial selection therefore requires the user's physical UI assistance. Do not
+switch USB modes blindly over RPC. This path has not been accepted with AirHound;
+its bounded RX queue may discard bytes without reporting every loss, so complete
+host framing is necessary and still cannot establish lossless RF capture.
 
 ## Using captures with AirHound
 

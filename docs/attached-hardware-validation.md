@@ -54,8 +54,8 @@ configuration; rediscover the current endpoint and select it explicitly.
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | 66-second durable serial run: 407 WiFi  + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; gpsd NMEA0183/9600 | 60-second CatSniffer session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Explicit GPSD session configuration implemented and live-tested in #276. gpsd 3.27.5/protocol 16.1 is host software, not receiver firmware. Receiver model/firmware remains unverified |
-| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | After the user reconnected USB, fresh `device_info` and idle-loader checks responded; subsequent companion metadata reads matched the same hardware identity | Earlier nonresponsive attempts remain failures. A later JavaScript binary-capture attempt lost USB and the device reappeared; reboot cause is unproven. Stop recovery and transport release were verified |
-| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Fresh GPIO `info` reported official Marauder 1.21.0, Dev Board Pro target; settings reported SavePCAP enabled | Binary-capture attempt produced an empty file, not usable reception evidence. Stop-only recovery received two firmware stop acknowledgments and a prompt. Genuine capture/import and live host bridge remain gaps |
+| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | After the user reconnected USB, fresh `device_info` and idle-loader checks responded; subsequent companion metadata reads matched the same hardware identity | Earlier nonresponsive attempts remain failures. Later screen snapshots reported an out-of-memory crash after the JavaScript attempt and a distinct NULL-pointer crash after a native companion attempt; exact native fault site remains unknown. Stop recovery and transport release were verified |
+| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Fresh GPIO `info` reported official Marauder 1.21.0, Dev Board Pro target; settings reported SavePCAP enabled | Binary-capture attempts produced empty files. A native console displayed beacon reception before a crash, but no complete binary capture survived. Final stop-only recovery received two firmware-text stop acknowledgments. Genuine capture/import and live host bridge remain gaps |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor | Recognized candidate only | No current AirHound live-source integration; product descriptor is not a queried firmware version |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
@@ -192,30 +192,57 @@ hardware recording.
 
 After USB reconnect, the Flipper's fresh identity and GPIO `info` exchange succeeded.
 A bounded settings-only binary transfer returned 681 bytes with a matching device
-hash. The following passive beacon capture lost USB connectivity; the endpoint
-reappeared, but its capture file was zero bytes. The first cleanup attempt lacked
-an acknowledgment and was not counted as success. A later stop-only recovery
-received two `Stopping WiFi tran/recv` responses, fresh Marauder information and
-a returned prompt. Its 372-byte result matched the device hash; USB was closed
-and no owner remained. No capture retry followed.
+hash. The following mJS passive beacon capture lost USB connectivity and produced
+a zero-byte file. Its first cleanup had no acknowledgment; a later stop recovery
+returned two stop acknowledgments, fresh Marauder information and a prompt. The
+372-byte recovery result matched the device hash. A subsequent read-only screen
+snapshot displayed **out of memory**. Pinned Momentum mJS retains `readBytes`
+ArrayBuffers in an arena until interpreter destruction, so this accumulating
+binary-capture approach was abandoned. The displayed reason is confirmed; it does
+not provide a stack trace or establish an exact allocation that failed.
 
-Static inspection of the pinned Momentum mJS implementation shows that repeated
-`readBytes` ArrayBuffers accumulate in an arena until interpreter destruction;
-ordinary garbage collection does not reclaim that arena. This is a concrete memory
-hazard for the attempted script, not proof of the device's reboot cause.
-
-Read-only inspection of the installed third-party companion found app version
-7.6 (embedded display version `v0.7.6`), API 87.1, and a 108,256-byte FAP with SHA-256
+The installed third-party companion is app version 7.6 (display `v0.7.6`), API87.1,
+108,256 bytes, SHA-256
 `fc9f2ae606722ac63866c120fe108e62a6e1c85df0e45a1708867a591376d680`.
-The downloaded FAP matched its device hash. Its Flipper-side save-PCAP and save-log
-settings were already enabled. No application was launched and no settings or
-firmware were changed during this inspection. The official
-[v0.7.6 source release](https://github.com/0xchocolate/flipperzero-wifi-marauder/releases/tag/v0.7.6)
-at `e77f2754b3ca97c14dcc27b5d8a19091b7bbfa62` has the native fixed-buffer
-capture-to-SD path and Back-to-stop behavior. The release publishes source archives,
-not a matching FAP asset, so byte equivalence to the installed binary has not been
-established. Further capture requires source/provenance and
-screen/control review; metadata recognition alone is not capture acceptance.
+Its downloaded backup matches the device hash and remains preserved; save-PCAP and
+save-log were enabled. Official v0.7.6 source at
+`e77f2754b3ca97c14dcc27b5d8a19091b7bbfa62` was audited, but matching version does
+**not** establish byte-equivalent source provenance for this installed artifact.
+
+Screen-verified navigation reached the actual **Sniff / beacon** selection before
+each of two native attempts. The first returned to the menu without rebooting but
+saved a zero-byte PCAP and a 62-byte log containing the command echo and stop
+acknowledgment, without the mandatory start message. Source inspection of official
+Marauder 1.21.0 (`d9197cf063cede379104ca8673c2d952d66575a3`) found that `info`
+leaves `SHOW_INFO` active (`CommandLine.cpp:1860`); `scanning()` treats it as active
+(`WiFiScan.cpp:2780`) and the sniff-command guard then declines to start
+(`CommandLine.cpp:844`). The earlier recovery ended in `info`. This is a supported
+causal explanation, not direct telemetry of that attempt's internal state.
+
+A corrected stop-only preflight ended in two observed stop acknowledgments and
+**no subsequent AWOK `info`**. The second native attempt displayed received beacon
+text, but the host stop path timed out and the companion disappeared. A subsequent
+screen showed **NULL pointer dereference**, a different crash from the mJS OOM.
+The planned three-second stop budget was not met; actual RF duration is unknown.
+Both new PCAP and log files were zero bytes and matched their device hashes.
+No attempt was repaired, trimmed or counted as successful capture/import.
+
+Final recovery (`stop-v4`) ran only after fresh identity and idle-loader checks.
+It sent two `stopscan` commands, retained a hash-verified 3,691-byte result with two
+firmware-text stop acknowledgments, ended with `stopscan`, and closed transport.
+The NULL fault screen was preserved. The native fault's precise instruction,
+thread and cause remain unknown: this Momentum build prints registers to the live
+log, retains the reason through reboot, and clears the register buffer at startup.
+A sequential 100,000-chunk ASan/UBSan replay of the matched-source text callback
+found no bounds failure; it does not emulate concurrent GUI/RX behavior or prove
+that the installed companion is safe.
+
+The next isolated implementation is the [AirHound UART diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic):
+fixed memory, one UART command owner, device-local stop timing, immutable UI text,
+and storage only after RX shutdown. It is **not yet hardware accepted**, is not a
+fix for the unknown native fault, and does not replace or flash either firmware.
+Its default launch is UART-free. Installation/load/exit, memory headroom, synthetic
+replay and separately reviewed passive acquisition remain distinct gates.
 
 ## Remaining acceptance
 
@@ -228,10 +255,11 @@ screen/control review; metadata recognition alone is not capture acceptance.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Validate the installed companion's bounded passive capture-to-Flipper-SD path,
-  then import a genuine resulting capture. Fresh Flipper identity and AWOK control
-  passed, but the empty-file attempt establishes neither reception nor import.
-  Keep the acknowledged-stop state until the next reviewed test is coordinated.
+- Validate the isolated diagnostic's UART-free load/exit and memory headroom,
+  then its bounded passive acquisition and a genuine complete capture/import.
+  Fresh identity/control and displayed beacon text do not replace a complete
+  binary capture. Preserve the acknowledged-stop state; do not retry the
+  crashing third-party acquisition path without a reviewed mitigation.
   A separate bounded BLE management discovery found no advertisement for the
   known Flipper identity; no BLE connection, authenticated read, pairing request
   or write occurred. The cached paired application name is not current firmware

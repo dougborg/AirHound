@@ -23,6 +23,7 @@ dependencies = [
  "flipperzero",
  "flipperzero-alloc",
  "flipperzero-rt",
+ "flipperzero-sys",
  "heapless 0.9.4",
  "serde",
  "serde-json-core",
