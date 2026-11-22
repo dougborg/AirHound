@@ -112,6 +112,9 @@ struct Args {
     #[arg(long, default_value_t = -90, allow_hyphen_values = true,
           value_parser = clap::value_parser!(i8).range(-128..=0))]
     rssi: i8,
+    /// Signature alert policy at session start (default: rules_and_watchlist).
+    #[arg(long)]
+    alert_policy: Option<airhound::evidence::AlertPolicy>,
     /// Disable BLE scanning
     #[arg(long, conflicts_with = "no_wifi")]
     #[cfg_attr(target_os = "linux", arg(requires = "wifi_source"))]
@@ -230,9 +233,26 @@ impl Args {
     fn filter_config(&self) -> FilterConfig {
         FilterConfig {
             min_rssi: self.rssi,
+            alert_policy: self.alert_policy.unwrap_or_default(),
             ble_enabled: !self.no_ble,
             wifi_enabled: !self.no_wifi,
         }
+    }
+    fn session_filter_config(
+        &self,
+        plan: &airhound_hostd::session::SessionConfig,
+    ) -> io::Result<FilterConfig> {
+        let mut filter = self.filter_config();
+        if let Some(policy) = plan.alert_policy {
+            if self.alert_policy.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Specify alert policy either in the session file or --alert-policy, not both",
+                ));
+            }
+            filter.alert_policy = policy;
+        }
+        Ok(filter)
     }
 }
 
@@ -303,11 +323,12 @@ async fn main() -> io::Result<()> {
     }
     if let Some(path) = args.session_config.as_ref() {
         let plan = session_runtime::load(path)?;
+        let filter = args.session_filter_config(&plan)?;
         let receivers = session_runtime::prepare(plan).await?;
         let writer = prepare_output(&args)?;
         return session_runtime::run(
             receivers,
-            args.filter_config(),
+            filter,
             writer,
             io::stdout(),
             args.gpsd.clone().map(|endpoint| gpsd::Options {
@@ -662,6 +683,15 @@ async fn stop_scanners(
     ble_forced || wifi_forced
 }
 
+/// Report selected policy without implying it overrides forced-silent import paths.
+fn configured_health(control: &ScanControl, config: &FilterConfig) -> serde_json::Value {
+    let mut health = control.health_message();
+    health["alert_policy"] = serde_json::json!(config.alert_policy);
+    health["alert_policy_scope"] = serde_json::json!("signature_evidence");
+    health["forced_silent_sources"] = serde_json::json!(["external_wifi", "marauder_import"]);
+    health
+}
+
 /// Export address-bearing observations to CSV, matches and peripheral identities to NDJSON.
 async fn filter_task<W: Write, O: Write>(
     mut rx: mpsc::Receiver<ScanEvent>,
@@ -679,7 +709,7 @@ async fn filter_task<W: Write, O: Write>(
 
     let mut last_health = None;
     loop {
-        let health = control.health_message();
+        let health = configured_health(&control, &config.lock().unwrap_or_else(|e| e.into_inner()));
         if last_health.as_ref() != Some(&health) {
             observation::write_json(&mut output, &health)?;
             last_health = Some(health);
@@ -688,7 +718,7 @@ async fn filter_task<W: Write, O: Write>(
             event = rx.recv() => match event {
                 Some(event) => event,
                 None => {
-                    let health = control.health_message();
+                    let health = configured_health(&control, &config.lock().unwrap_or_else(|e| e.into_inner()));
                     if last_health.as_ref() != Some(&health) { observation::write_json(&mut output, &health)?; }
                     break;
                 },
@@ -798,12 +828,9 @@ async fn filter_task<W: Write, O: Write>(
                 value["type"] = serde_json::json!("ble_packet_observation");
                 value["schema_version"] = serde_json::json!(1);
                 value["identity_scope"] = serde_json::json!("ble_air_address");
-                value["detection"] = serde_json::to_value(
-                    result
-                        .as_ref()
-                        .map(|r| r.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist)),
-                )
-                .map_err(io::Error::other)?;
+                value["detection"] =
+                    serde_json::to_value(result.as_ref().map(|r| r.detection(cfg.alert_policy)))
+                        .map_err(io::Error::other)?;
                 observation::write_json(&mut output, &value)?;
                 if packet.matchable()
                     && cfg.ble_enabled
@@ -923,14 +950,13 @@ async fn filter_task<W: Write, O: Write>(
                 });
                 // Linux consumers keep the legacy matched-record stream during migration.
                 if !cfg!(target_os = "macos") && address.is_some() && snapshot.rssi_available {
-                    emit_ble_match(event, &result, start_time, &mut output)?;
+                    emit_ble_match(event, &result, cfg.alert_policy, start_time, &mut output)?;
                 }
                 observation::write(
                     &mut output,
                     &observation::BleObservation {
                         kind: "ble_observation",
-                        detection: result
-                            .detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+                        detection: result.detection(cfg.alert_policy),
                         peripheral_id: id,
                         address: observed_mac.as_ref().map(|s| s.as_str()),
                         address_source: observed_mac.as_ref().map(|_| {
@@ -1016,8 +1042,7 @@ async fn filter_task<W: Write, O: Write>(
                     &mut output,
                     &observation::BleObservation {
                         kind: "ble_observation",
-                        detection: result
-                            .detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+                        detection: result.detection(cfg.alert_policy),
                         advertisement: None,
                         peripheral_id: id,
                         address: observed_mac.as_ref().map(|s| s.as_str()),
@@ -1099,12 +1124,13 @@ fn handle_ble_event(
     };
 
     let result = filter_ble_with_rules(&input, cfg, &defaults::DEFAULT_RULE_DB, mac_index);
-    emit_ble_match(event, &result, start_time, output)
+    emit_ble_match(event, &result, cfg.alert_policy, start_time, output)
 }
 
 fn emit_ble_match(
     event: &airhound::scanner::BleEvent,
     result: &airhound::filter::FilterResult,
+    policy: airhound::evidence::AlertPolicy,
     start_time: Instant,
     output: &mut impl Write,
 ) -> io::Result<()> {
@@ -1146,7 +1172,7 @@ fn emit_ble_match(
             id: mac_str.as_str(),
             scope: "ble_address",
             ts,
-            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+            detection: result.detection(policy),
         },
     )
 }
@@ -1180,7 +1206,7 @@ fn handle_wifi_event(
             "security":event.security.as_str(), "ts":ts,
             "frequency_mhz":event.frequency_mhz,
             "band":event.frequency_mhz.and_then(airhound::wifi_frequency::channel).map(|(band, _)| band.as_str()),
-            "detection":result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist)
+            "detection":result.detection(cfg.alert_policy)
         }),
     )?;
     if !result.matched {
@@ -1210,7 +1236,7 @@ fn handle_wifi_event(
             id: mac_str.as_str(),
             scope: "wifi_address",
             ts,
-            detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
+            detection: result.detection(cfg.alert_policy),
         },
     )
 }
@@ -1261,7 +1287,7 @@ async fn command_loop(
         scanning_state.store(scanning, Ordering::Relaxed);
         write_message(&mut output, &comm::command_response(cmd.as_ref(), result))?;
         if matches!(cmd, Some(HostCommand::GetStatus)) {
-            observation::write_json(&mut output, &scanning_state.health_message())?;
+            observation::write_json(&mut output, &configured_health(scanning_state, &cfg))?;
             write_message(
                 &mut output,
                 &DeviceMessage::Status {
@@ -1392,6 +1418,47 @@ mod tests {
         ] {
             assert!(super::Args::try_parse_from(std::iter::once("hostd").chain(flags)).is_err());
         }
+    }
+
+    #[test]
+    fn policy_configuration_is_explicit_and_validated_before_scanning() {
+        use airhound::evidence::AlertPolicy;
+        let mut plan: airhound_hostd::session::SessionConfig = serde_json::from_str(
+            r#"{"version":1,"receivers":[{"id":"ble","source":{"kind":"native_ble"}}]}"#,
+        )
+        .unwrap();
+        let defaults = Args::try_parse_from(["hostd"]).unwrap();
+        assert_eq!(
+            defaults.session_filter_config(&plan).unwrap().alert_policy,
+            AlertPolicy::RulesAndWatchlist
+        );
+        for policy in [
+            "rules_and_watchlist",
+            "watchlist_only",
+            "all_matches",
+            "silent",
+        ] {
+            let args = Args::try_parse_from(["hostd", "--alert-policy", policy]).unwrap();
+            let expected: AlertPolicy = policy.parse().unwrap();
+            assert_eq!(
+                args.session_filter_config(&plan).unwrap().alert_policy,
+                expected
+            );
+            plan.alert_policy = Some(expected);
+            assert_eq!(
+                defaults.session_filter_config(&plan).unwrap().alert_policy,
+                expected
+            );
+            assert!(args.session_filter_config(&plan).is_err());
+            plan.alert_policy = None;
+        }
+        assert!(Args::try_parse_from(["hostd", "--alert-policy", "loud"]).is_err());
+        assert!(
+            serde_json::from_str::<airhound_hostd::session::SessionConfig>(
+                r#"{"version":1,"alert_policy":"loud","receivers":[]}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1749,6 +1816,78 @@ mod tests {
             raw_ies: Default::default(),
             security: "[WPA2-PSK]".try_into().unwrap(),
         })
+    }
+
+    #[tokio::test]
+    async fn policies_apply_across_ble_wifi_without_changing_evidence_or_retention() {
+        use airhound::evidence::AlertPolicy;
+        let mut baseline = None;
+        for policy in [
+            AlertPolicy::RulesAndWatchlist,
+            AlertPolicy::WatchlistOnly,
+            AlertPolicy::AllMatches,
+            AlertPolicy::Silent,
+        ] {
+            let output = RecordingWriter::default();
+            let csv = RecordingWriter::default();
+            run_session(
+                SessionPolicy::native(),
+                FilterConfig {
+                    alert_policy: policy,
+                    ..FilterConfig::new()
+                },
+                WigleWriter::new(csv.clone()).unwrap(),
+                output.clone(),
+                Scanners {
+                    ble: |tx: mpsc::Sender<ScanEvent>, _| async move {
+                        tx.send(ble_match()).await.unwrap();
+                        Ok(())
+                    },
+                    wifi: |tx: mpsc::Sender<ScanEvent>, _| async move {
+                        tx.send(wifi_match()).await.unwrap();
+                        Ok(())
+                    },
+                },
+                |_, _, _| std::future::pending(),
+                std::future::pending(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(recorded(&csv).lines().count(), 4);
+            let rows: Vec<serde_json::Value> = recorded(&output)
+                .lines()
+                .map(|s| serde_json::from_str(s).unwrap())
+                .collect();
+            let health = rows.iter().find(|r| r["type"] == "scanner_health").unwrap();
+            assert_eq!(health["alert_policy"], serde_json::json!(policy));
+            assert_eq!(health["alert_policy_scope"], "signature_evidence");
+            let mut evidence: Vec<_> = rows
+                .iter()
+                .filter(|r| r["type"] == "detection")
+                .cloned()
+                .collect();
+            assert_eq!(evidence.len(), 2);
+            evidence.sort_by_key(|r| r["scope"].as_str().unwrap().to_owned());
+            for row in &mut evidence {
+                assert_eq!(row["detection"]["policy"], serde_json::json!(policy));
+                assert_eq!(
+                    row["detection"]["alert"],
+                    if policy == AlertPolicy::AllMatches {
+                        "match"
+                    } else {
+                        "suppressed"
+                    }
+                );
+                row.as_object_mut().unwrap().remove("ts");
+                row["detection"].as_object_mut().unwrap().remove("policy");
+                row["detection"].as_object_mut().unwrap().remove("alert");
+            }
+            if let Some(ref baseline) = baseline {
+                assert_eq!(&evidence, baseline);
+            } else {
+                baseline = Some(evidence);
+            }
+        }
     }
 
     #[test]
@@ -2498,7 +2637,10 @@ mod tests {
         control.store(true, Ordering::Relaxed);
         filter_task(
             rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(Mutex::new(FilterConfig {
+                alert_policy: airhound::evidence::AlertPolicy::AllMatches,
+                ..FilterConfig::new()
+            })),
             Arc::new(MacIndex::from_defaults()),
             Instant::now(),
             WigleWriter::new(csv.clone()).unwrap(),
@@ -2509,6 +2651,8 @@ mod tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&data_output(&output)).unwrap();
         assert_eq!(value["type"], "external_wifi_observation");
+        assert_eq!(value["detection"]["policy"], "silent");
+        assert_eq!(value["detection"]["alert"], "suppressed");
         assert!(value["rssi_dbm"].is_null());
         assert_eq!(value["estimated_rssi_dbm"], -121);
         assert_eq!(value["rssi_validated"], false);

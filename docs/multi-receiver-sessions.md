@@ -211,3 +211,39 @@ Saved Marauder capture import remains a separate tool. Consult the
 [Flipper prototype](../companions/flipper/README.md),
 [firmware streaming contract](firmware-streaming.md) and
 [Marauder importer](marauder-import.md) for their current boundaries.
+
+## Signature alert policy
+
+An optional top-level field configures signature decisions for every receiver in
+this session:
+
+```json
+{
+  "version": 1,
+  "alert_policy": "rules_and_watchlist",
+  "receivers": [{"id": "ble", "source": {"kind": "native_ble"}}]
+}
+```
+
+| Value | Signature alert decisions |
+| --- | --- |
+| `rules_and_watchlist` | Default: eligible rule evidence or explicit watchlist match |
+| `watchlist_only` | Explicit watchlist matches only |
+| `all_matches` | Every signature/watchlist match, including weak clues |
+| `silent` | Suppress signature alerts while preserving observations and evidence |
+
+The CLI `--alert-policy` offers the same values when the file omits the field.
+Setting both is rejected before any receiver starts. This choice applies at
+session start only; there is no live policy command or automatic persistence.
+Changing policy does not change evidence strength or confirm a device identity.
+Existing watchlist membership rules remain unchanged; this setting does not add
+watchlist entries. `silent` is not a global sound mute: firmware buzzers and the
+separate Remote ID sighting path are outside this desktop configuration.
+
+`session_started.alert_policy` and `scanner_health.alert_policy` report the
+selected signature policy. Health also reports `alert_policy_scope` as
+`signature_evidence` and `forced_silent_sources`. External MT7610U observations
+and Marauder imports remain forced silent; use each observation's
+`detection.policy`/`detection.alert` as the effective result rather than assuming
+the selected policy overrides those restrictions. No OS notification delivery is
+implemented by this setting.

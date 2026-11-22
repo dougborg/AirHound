@@ -196,6 +196,7 @@ where
     S: Future<Output = io::Result<()>>,
 {
     let control = ScanControl::new(true);
+    let alert_policy = config.alert_policy;
     let config = Arc::new(Mutex::new(config));
     let start = Instant::now();
     let session_id = format!(
@@ -208,7 +209,7 @@ where
     );
     observation::write_json(
         &mut output,
-        &serde_json::json!({"type":"session_started","schema_version":1,"session_id":session_id,"receiver_count":receivers.len()}),
+        &serde_json::json!({"type":"session_started","schema_version":1,"session_id":session_id,"receiver_count":receivers.len(),"alert_policy":alert_policy}),
     )?;
     let location_task = gps.map(|options| {
         let source = gpsd::Source::new(options.device.clone());
