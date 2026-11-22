@@ -1,0 +1,29 @@
+name: Native macOS app
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/macos/**', '.github/workflows/macos-app.yml']
+  pull_request:
+    paths: ['apps/macos/**', '.github/workflows/macos-app.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Test decoding and owned process lifecycle
+        working-directory: apps/macos
+        run: swift test --enable-code-coverage
+      - name: Build native app bundle
+        working-directory: apps/macos
+        run: sh bundle.sh
+      - name: Validate app bundle
+        run: |
+          plutil -lint apps/macos/dist/AirHound.app/Contents/Info.plist
+          codesign --verify --deep --strict apps/macos/dist/AirHound.app
+          test -n "$(find apps/macos/dist/AirHound.app -name example.ndjson -print -quit)"

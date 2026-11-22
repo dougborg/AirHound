@@ -16,6 +16,7 @@ Install the platform prerequisites from the linked component guide first.
 | no_std firmware | `src/main.rs`, hardware modules and root `Cargo.toml` binary; [firmware guide](firmware.md) | Root `esp` toolchain and `Cargo.lock` | `just build-xiao` or `just build-m5stickc`; container alternatives in `just --list` |
 | ESP-IDF firmware | [firmware-std/](../firmware-std/README.md) | Local `esp` toolchain, Cargo config, SDK config and `Cargo.lock` | Follow the board-specific build commands in the component README |
 | macOS/Linux desktop CLI | [hostd/](../hostd/README.md) | Local stable Rust; `hostd/Cargo.lock` | `just build-hostd`, `just test-hostd`, `just clippy-hostd` |
+| Native macOS GUI | [apps/macos/](../apps/macos/README.md) | Swift 5.9+, macOS 14+; no third-party Swift dependencies | In `apps/macos`: `swift test`, `sh bundle.sh` |
 | ALFA MT7610U userspace receiver | [drivers/mt7610u/](../drivers/mt7610u/README.md) | Independent stable Rust package/workspace and lockfile | In `drivers/mt7610u`: `cargo test --locked` |
 | Flipper companion prototype | [companions/flipper/](../companions/flipper/README.md) | Independent stable Rust package/lockfile; API87.1 FAP target | In `companions/flipper`: `cargo test --locked`; explicit ARM build in its guide |
 | Fuzz harnesses | `fuzz/`; [testing guide](testing.md) | Independent Cargo workspace/lockfile; explicitly select nightly for cargo-fuzz | `cargo +nightly fuzz run commands -- -max_total_time=30` |
