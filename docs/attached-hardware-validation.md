@@ -31,8 +31,13 @@ The host executable hash was
 
 Managed GPS acceptance used the session-owned, foreground `gpsd -N -b -n`
 lifecycle: this is a read-only host daemon, not firmware flashed onto the GPS.
-The individual RF tests predate the final shared-serial-lease hardening; the
-hardened assembled build still needs the final combined hardware run below.
+The earlier individual RF tests predate shared-serial-lease hardening. The later
+external combined acceptance below used clean assembled source `d7be542`, backend
+SHA-256 `97e144c1d98f84dda6cfc1913d6fc63193327f860c0cff80a4772ec1aac507bf`,
+and immutable helper bundle
+`63df7145713d571b77cd8e6de60f5b5124ae452eb3829f766b26ae40e2524189`.
+The bundle retains the ALFA executable above and the shared-lease Sniffle helper.
+This was a private external-only service, not the installed GUI or native radios.
 
 Raw observations, SQLite recordings, exact local endpoints, test plans, tool logs
 and permission screenshots remain private. This report contains aggregate counts
@@ -68,6 +73,8 @@ that opening the port is nondisruptive.
 | CatSniffer + GPSD, 60 seconds | 4,520 BLE packets, all 4,520 geotagged, finished; host drops/reconnects 0 | Explicit receiver-location association persisted; Sniffle 1.11.0/API 0 and gpsd 3.27.5/API 16.1 reported by their actual producers |
 | CatSniffer + GPSD provider loss, 30 seconds | 2,441 BLE packets, 842 geotagged; 1,476 packets retained after the one-second disconnect guard, none geotagged | Health changed fix → disconnected and daemon identity cleared; no stale coordinate association after the guard, no invalid associations, clean finish |
 | CatSniffer + managed GPSD, 20 seconds | 1,356 BLE packets; 1,346 had fresh receiver/rig location, ten startup packets correctly unlocated; finished | Setup save/load and owned daemon startup/finish passed. gpsd 3.27.5/protocol 16.1 and Sniffle 1.11.0/API 0 reported; daemon/private service exited and endpoints released. Native form remains to be checked in the actual final GUI |
+| Assembled M5 + CatSniffer + ALFA + managed GPS, 65.72 seconds | 6,191 observations: M5 467 WiFi + 26 BLE, Cat 2,693, ALFA 3,005; 6,062 fresh receiver-location associations | Pause/resume, M5 connection/boot continuity, one owned Cat helper failure and bounded recovery, and clean finish passed. All configured ALFA channels 1/6/11 received observations |
+| Same saved setup after backend restart, 30.09 seconds | 3,475 observations: M5 263 WiFi + 15 BLE, Cat 1,646, ALFA 1,551; 3,326 fresh receiver-location associations | Saved plan reloaded unchanged, actual producer identities verified again, all three ALFA channels received observations, clean finish |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
 
@@ -75,6 +82,34 @@ ALFA's combined assignment was channels 1/6/11 with 500 ms dwell. Its reported
 producer drops, host drops and reconnects were 0; Cat host drops/reconnects were 0.
 Those counters do not measure all missed RF traffic. Original source IDs and
 per-source ingress order are retained in each durable observation.
+
+The two assembled external runs retained 9,666 observations in total. Every
+observation had the expected configured receiver attribution; receiver-location
+associations had zero invalid source/device/freshness relationships. SQLite
+integrity checks passed. Startup observations without a fresh GPS fix remained
+unlocated instead of inheriting a guessed location.
+
+During the eight-second pause, no observations were stored after the two-second
+drain guard. M5 retained its connection and boot generation and counted 70
+intentionally discarded host-ingestion records. The device's radios continued.
+The deliberately terminated Cat helper recovered through one supervised reconnect;
+the other sources continued. Host-drop counters were zero for all three receivers;
+ALFA's reported producer-drop counter was zero. M5 reported 40 cumulative scan
+drops, unchanged across its three sampled producer reports; output drops and
+serialization errors were zero. This does not establish zero RF loss or exclude
+loss before the first producer report.
+
+Both recordings finished, both private service processes exited zero without
+forced cleanup, the GPS/helper children were gone, and all selected serial ports
+were released. Actual identities were AirHound 0.1.1 on M5StickC Plus2,
+Sniffle 1.11.0/API 0, ALFA helper `f292753`, and the reported gpsd host software.
+The ALFA supplied-versus-running-image distinction was checked in both runs.
+
+A preliminary 36-second attempt stopped on an overly strict harness expectation:
+ALFA uses the healthy availability value `running`, while BLE/serial use
+`available`. It finished and cleaned up normally. That failed-harness result is
+retained separately and excluded from the accepted totals above; the corrected
+check still requires every enabled scanner phase to be running.
 
 The CoreBluetooth failure and CoreWLAN redaction occurred under different
 permission identities. The user's permission panel showed the standalone test
@@ -93,7 +128,7 @@ physical receiver, installed preview or default recording was altered for them.
 | Managed helper installation | #280 `08f5a67` | Independent installer replay rejects unlisted Python files, symlinks, FIFOs and reuse of altered bundles. Clean bundle verifies. Dangling current pointer requires explicit replacement. Source review confirms manifest directory sync before atomic publication |
 | Managed GPS daemon ownership | `ea145e9` | Original fake-child test reproduced adoption of an unrelated replacement listener. Fixed service sends no WATCH to it, clears daemon identity/fix and reports endpoint busy; clean finish |
 | Shared serial ownership | #281 `77d01e3`, bounded test harness `46ec9b6` | One canonical endpoint/cu–tty alias namespace is shared by Rust and Python. Lease precedes upstream Sniffle construction, M5 UART open and managed GPS child spawn; stale lock files are retained safely rather than unlinked |
-| M5 ownership wiring | `98b56fb`, on M5 source `f61f8a1` | Actual private M5 source is denied by a Sniffle-held PTY lease before UART open; original Sniffle owner remains alive. Six reader regressions include pre-open denial and already-paused reconnect health. The macOS PTY does not support this driver's baud ioctl; successful M5 reception and M5-first lifecycle under the new guard await the final physical-device retest |
+| M5 ownership wiring | `98b56fb`, on M5 source `f61f8a1` | Actual private M5 source is denied by a Sniffle-held PTY lease before UART open; original Sniffle owner remains alive. Six reader regressions include pre-open denial and already-paused reconnect health. The macOS PTY does not support this driver's baud ioctl; the subsequent assembled physical-device runs above verify successful M5 reception, pause continuity and restart under the new guard |
 | GPS/Sniffle ownership wiring | `e8a972f` | Actual managed service tested both orders on a PTY. Sniffle-first prevents GPS child spawn. GPS-first denies Sniffle before its constructor writes, including a symlink alias. Finish reaps the GPS child, releases ownership and permits a subsequent identification query |
 | Native setup actions and identity | #277 `480449a` | Save/Delete intent survives background polling and retains submitted plan/ID; real private-backend persistence regression passes. Source identity must match the stored active run as well as receiver ID; disconnected cached identity is hidden |
 | GPS status presentation | `8f52ff8` | Disconnected cached status is explicitly historical and says current fix unknown; it cannot continue claiming a current fix |
@@ -111,8 +146,9 @@ ownership contract by itself.
   identity, including M5 and explicit GPS where compatible. At this checkpoint the
   default control socket is absent and the requested user click is still pending;
   private service tests do not establish that GUI path.
-- Complete assembled-backend restart/reconnect and combined capture/recovery.
-  Test physical disconnect/reconnect, helper failure and prolonged load. Synthetic
+- Extend the passed external combined/restart/helper-recovery checks to native
+  radios under the authorized app identity. Physical unplug/replug, sleep/wake
+  and prolonged load remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
 - Retry Flipper after the requested USB reconnect, then exercise the existing
