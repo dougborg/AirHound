@@ -2,15 +2,22 @@ name: Terminal client
 on:
   pull_request:
     paths: ['clients/tui/**', 'hostd/crates/**', '.github/workflows/tui.yml']
+  push:
+    branches: [main]
+    paths: ['clients/tui/**', 'hostd/crates/**', '.github/workflows/tui.yml']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: tui-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
+    timeout-minutes: 15
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6

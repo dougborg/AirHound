@@ -5,7 +5,6 @@ It uses `airhound-client` and `airhound-api` directly. Receiver discovery, sessi
 validation and policy remain in the backend; this component has no scanner,
 planner, USB, BLE or WiFi dependency. It never launches a backend or starts capture.
 
-The backend service and shared-client work must land before this client is usable.
 See the [shared API contract](../../docs/shared-backend-api.md) for service startup
 and socket ownership. This client requires an explicit existing Unix socket:
 
@@ -64,8 +63,8 @@ cargo +stable clippy --manifest-path clients/tui/Cargo.toml --locked --all-targe
 
 The first slice is inventory and validation only: no live observations, session
 start/stop, events subscription, history or export viewer. Windows transport is
-unsupported. macOS headless tests are verified; Linux CI and interactive terminal/
-assistive-technology acceptance remain separate. Ratatui was selected for its
+unsupported. Headless tests pass on macOS and Linux; interactive terminal/
+assistive-technology acceptance remains separate. Ratatui was selected for its
 maintained Rust implementation, terminal restoration support and headless backend;
 see its [initialization contract](https://docs.rs/ratatui/0.30.2/ratatui/fn.init.html)
 and [testing backend](https://docs.rs/ratatui/0.30.2/ratatui/backend/struct.TestBackend.html).

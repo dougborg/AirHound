@@ -97,3 +97,14 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/clients/tui"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
