@@ -397,8 +397,19 @@ transitions before acknowledgement. Those transitions describe requested scan
 state; per-receiver health remains the evidence for actual radio readiness.
 
 Schema migrations run in transactions and verify immutable migration checksums.
-Unknown databases and newer schema versions are rejected. There is no downgrade
-or live backup command yet. Do not copy only the database file while recording:
+Unknown databases and newer schema versions are rejected. There is no automatic downgrade. Export a consistent standalone snapshot through
+the backend, including while a writer is active:
+
+```sh
+airhound-hostd client --socket "$PWD/private/control.sock" export --output "$PWD/snapshot.sqlite"
+```
+
+The destination must be absolute and absent. Export is limited to 512 MiB with a
+ten-second copy/verification budget, checks integrity, and publishes without
+overwriting an existing file. Snapshots use DELETE journaling and need no WAL
+sidecars. Run states reflect the snapshot instant; exporting does not pause or
+finish the source. A client timeout may leave an export completing; inspect the
+destination before retrying. Do not copy only the live database file:
 SQLite WAL sidecars may contain committed data. This implementation has offline
 single- and dual-source replay coverage; live receiver and sustained-throughput
 acceptance remain outstanding.

@@ -26,6 +26,14 @@ const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
 pub type BackendResult = Pin<Box<dyn Future<Output = Result<Value, ApiError>> + Send>>;
 pub trait Backend: Send + Sync + 'static {
+    fn export_recordings(&self, _destination: String) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "recording history is not configured",
+            ))
+        })
+    }
     fn capture_enabled(&self) -> bool {
         false
     }
@@ -257,6 +265,9 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS}),
             ),
             Command::Capture { action } => bounded(backend.capture(action)).await,
+            Command::RecordingExport { destination } => {
+                bounded(backend.export_recordings(destination)).await
+            }
             Command::DevicesList { all } => bounded(backend.devices(all)).await,
             Command::RecordingsList { before, limit } => {
                 bounded(backend.recordings(before, limit)).await

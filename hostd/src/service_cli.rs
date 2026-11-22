@@ -13,6 +13,11 @@ use std::{
 
 #[derive(clap::Subcommand)]
 pub(crate) enum ClientCommand {
+    /// Export a consistent standalone SQLite snapshot on the backend host
+    Export {
+        #[arg(long)]
+        output: String,
+    },
     /// Start a durable session on a service launched with --capture
     Start {
         /// Stable id for retries of this start request; use a new id for a new run
@@ -101,6 +106,9 @@ impl LocalBackend {
     }
 }
 impl Backend for LocalBackend {
+    fn export_recordings(&self, destination: String) -> BackendResult {
+        self.history(move |reader| reader.export(Path::new(&destination)))
+    }
     fn capture_enabled(&self) -> bool {
         self.capture.is_some()
     }
@@ -248,6 +256,7 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         .await
         .map_err(io::Error::other)?;
     let result = match command {
+        ClientCommand::Export { output } => client.export_recordings(output).await,
         ClientCommand::Start {
             session_config,
             request_id,

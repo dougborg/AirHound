@@ -37,7 +37,11 @@ Python SQLite 3.54.0 when WAL sidecars were absent: `mode=ro` failed, while
 `mode=ro&immutable=1` and `mode=rw` worked. This isolates the external-reader
 compatibility condition independently of AirHound capture. Do not use immutable
 mode against an active database, or copy only the main file while recording.
-A supported consistent snapshot/export command remains future work.
+The shared backend now provides a bounded consistent snapshot export using
+SQLite's backup API and DELETE journaling. Tests verify export while a writer
+remains active, historical snapshot counts, non-overwrite publication, symlink
+rejection and retained source state. External tools should use such a snapshot
+instead of copying the main file from an active recording.
 
 ## Concurrent ALFA and CatSniffer acceptance
 
