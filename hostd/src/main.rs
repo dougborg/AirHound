@@ -212,6 +212,19 @@ enum DiscoveryCommand {
         #[command(subcommand)]
         command: DeviceCommand,
     },
+    /// Validate a receiver plan without starting scans or helper processes
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+}
+#[derive(clap::Subcommand)]
+enum SessionCommand {
+    /// Emit a JSON validation result and resolved requested assignments
+    Validate {
+        #[arg(long)]
+        config: PathBuf,
+    },
 }
 #[derive(clap::Subcommand)]
 enum DeviceCommand {
@@ -263,6 +276,12 @@ impl Args {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+    if let Some(DiscoveryCommand::Session {
+        command: SessionCommand::Validate { ref config },
+    }) = args.command
+    {
+        return session_runtime::write_preview(config, &mut io::stdout()).await;
+    }
     if let Some(DiscoveryCommand::Devices {
         command:
             DeviceCommand::List {
