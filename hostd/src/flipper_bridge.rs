@@ -92,12 +92,14 @@ impl Session {
                 matches!(self.state, Some(State::Ready | State::Paused))
                     && !matches!(self.lifecycle, Some((_, Command::StartBeacon)))
             }
-            Command::Pause => matches!(self.state, Some(State::Preflight | State::Capturing)),
+            Command::Pause => {
+                matches!(self.state, Some(State::Preflight | State::Capturing))
+                    && !matches!(self.lifecycle, Some((_, Command::Pause | Command::Stop)))
+            }
             Command::Stop => {
                 self.state.is_some()
                     && !matches!(self.state, Some(State::Stopped | State::Failed))
-                    && !(self.state == Some(State::Stopping)
-                        && matches!(self.lifecycle, Some((_, Command::Stop))))
+                    && !matches!(self.lifecycle, Some((_, Command::Stop)))
             }
             Command::Heartbeat => {
                 self.state.is_some() && !matches!(self.state, Some(State::Stopped | State::Failed))
@@ -608,6 +610,21 @@ mod tests {
         );
         assert_eq!(peer.session.last_reported_status().unwrap().evidence, 0);
         assert!(peer.session.command(Command::StartBeacon).is_err());
+    }
+
+    #[test]
+    fn accepted_pause_and_stop_are_not_resubmitted_before_first_status() {
+        let mut peer = Peer::new();
+        let start = peer.start();
+        peer.status(start, State::Preflight, 0, 1, 1).unwrap();
+        peer.status(start, State::Capturing, 0, 3, 1).unwrap();
+        let pause = peer.command(Command::Pause);
+        peer.ack(pause, Command::Pause);
+        assert!(peer.session.command(Command::Pause).is_err());
+        let stop = peer.command(Command::Stop);
+        peer.ack(stop, Command::Stop);
+        assert!(peer.session.command(Command::Stop).is_err());
+        assert!(peer.session.command(Command::Pause).is_err());
     }
 
     #[test]
