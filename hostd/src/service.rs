@@ -26,6 +26,17 @@ const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
 pub type BackendResult = Pin<Box<dyn Future<Output = Result<Value, ApiError>> + Send>>;
 pub trait Backend: Send + Sync + 'static {
+    fn capture_enabled(&self) -> bool {
+        false
+    }
+    fn capture(&self, _action: airhound_api::CaptureAction) -> BackendResult {
+        Box::pin(async {
+            Err(ApiError::new(
+                ErrorCode::UnsupportedMethod,
+                "capture control is not enabled",
+            ))
+        })
+    }
     fn devices(&self, all: bool) -> BackendResult;
     fn validate(&self, config: Value) -> BackendResult;
     fn recordings(&self, _before: Option<String>, _limit: u16) -> BackendResult {
@@ -128,7 +139,12 @@ pub async fn serve(
         build_version: env!("CARGO_PKG_VERSION").into(),
         max_frame_bytes: MAX_FRAME_BYTES,
         methods: METHODS.iter().map(|s| (*s).into()).collect(),
-        mode: "passive_control".into(),
+        mode: if backend.capture_enabled() {
+            "capture_control"
+        } else {
+            "passive_control"
+        }
+        .into(),
     });
     tokio::pin!(shutdown);
     let mut clients = JoinSet::new();
@@ -238,8 +254,9 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 "send hello before other commands",
             )),
             Command::Status {} => Ok(
-                json!({"instance_id": hello.instance_id, "mode":"passive_control", "capture_control":false, "methods": METHODS}),
+                json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS}),
             ),
+            Command::Capture { action } => bounded(backend.capture(action)).await,
             Command::DevicesList { all } => bounded(backend.devices(all)).await,
             Command::RecordingsList { before, limit } => {
                 bounded(backend.recordings(before, limit)).await

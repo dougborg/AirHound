@@ -113,6 +113,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     pub async fn status(&mut self) -> Result<Value, ClientError> {
         self.call(Command::Status {}).await
     }
+    pub async fn capture(
+        &mut self,
+        action: airhound_api::CaptureAction,
+    ) -> Result<Value, ClientError> {
+        self.call(Command::Capture { action }).await
+    }
     pub async fn recordings(
         &mut self,
         before: Option<String>,

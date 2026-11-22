@@ -340,7 +340,7 @@ Hardware/driver compatibility and RF loss still need live validation.
 
 The source-built `serve --socket PATH` and `client --socket PATH` commands expose
 passive device inventory, status and session validation through a shared Rust
-client. They do not start scans. See the [control API guide](../docs/shared-backend-api.md)
+client. By default they do not start scans. See the [control API guide](../docs/shared-backend-api.md)
 for private socket setup, framing, bounds and planned multi-client capture control.
 
 ## Durable recording
@@ -358,8 +358,27 @@ airhound-hostd client --socket "$PWD/private/control.sock" records --run-id RUN_
 The service exposes read-only history from its configured database. Use the
 returned `next_before` with `recordings --before` and `next_after` with
 `records --after` to continue while `has_more` is true. It does not recover or
-change a running recording. Capture start/pause/resume through the service is
-not implemented yet.
+change a running recording.
+
+Launch the service with `--capture --database PATH` to enable explicit capture
+requests through the same client. The service owns one active run at a time;
+disconnecting a client leaves it running. Capture records go to SQLite, with
+history accessible through the commands above; this service path does not also
+create a CSV file or print the live observation stream.
+
+```sh
+airhound-hostd serve --capture --socket "$PWD/private/control.sock" --database "$PWD/captures.sqlite"
+airhound-hostd client --socket "$PWD/private/control.sock" start --session-config session.json
+airhound-hostd client --socket "$PWD/private/control.sock" capture-status
+airhound-hostd client --socket "$PWD/private/control.sock" pause --run-id RUN_ID
+airhound-hostd client --socket "$PWD/private/control.sock" resume --run-id RUN_ID
+airhound-hostd client --socket "$PWD/private/control.sock" finish --run-id RUN_ID
+```
+
+Finish stops receivers and drains their accepted output before its recording
+commit barrier. Inspect the returned `state`: a failed run is reported explicitly.
+Service-owned replay and cross-connection finish are tested; live service
+pause/resume, retry behavior and hardware cleanup still need acceptance checks.
 
 One writer owns a database at a time. Records include original source tags,
 capture timestamps, replay markers and detection evidence; missing identities

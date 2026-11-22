@@ -157,3 +157,85 @@ mod passive_cli {
         );
     }
 }
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn service_owns_replay_and_commits_before_finish_reply() {
+    use serde_json::{json, Value};
+    use std::process::{Command, Stdio};
+    let root = std::env::temp_dir().join(format!("ah-capture-service-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let socket = root.join("private/control.sock");
+    let database = root.join("recording.sqlite");
+    // An empty classic radiotap capture tests EOF cleanup without RF activity.
+    let mut bytes = vec![0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    bytes.extend(65536u32.to_le_bytes());
+    bytes.extend(127u32.to_le_bytes());
+    let pcap = root.join("empty.pcap");
+    std::fs::write(&pcap, bytes).unwrap();
+    let plan = root.join("plan.json");
+    std::fs::write(&plan, serde_json::to_vec(&json!({"version":1,"receivers":[{"id":"replay","source":{"kind":"wifi_pcap","path":pcap}}]})).unwrap()).unwrap();
+    let binary = env!("CARGO_BIN_EXE_airhound-hostd");
+    let mut server = Command::new(binary)
+        .args(["serve", "--capture", "--socket"])
+        .arg(&socket)
+        .arg("--database")
+        .arg(&database)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    struct Cleanup(std::process::Child, std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !socket.exists() {
+        assert!(server.try_wait().unwrap().is_none());
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let mut cleanup = Cleanup(server, root);
+    let client = |args: &[&str]| {
+        let output = Command::new(binary)
+            .args(["client", "--socket"])
+            .arg(&socket)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    assert_eq!(client(&["status"])["capture_control"], true);
+    let started = client(&["start", "--session-config", plan.to_str().unwrap()]);
+    let id = started["run_id"].as_str().unwrap();
+    // The start client has exited. A new connection finishes the service-owned run.
+    let finished = client(&["finish", "--run-id", id]);
+    assert_eq!(finished["state"], "finished");
+    assert_eq!(finished["active"], false);
+    let reader = airhound_hostd::storage::Reader::open(&database).unwrap();
+    let runs = reader.runs(1).unwrap();
+    assert_eq!(runs[0].id, id);
+    assert_eq!(runs[0].state, "finished");
+    assert!(runs[0].record_count > 0);
+    assert_eq!(client(&["finish", "--run-id", id])["state"], "finished");
+    assert_eq!(client(&["capture-status"])["active"], false);
+    // SAFETY: this is the owned, live child process.
+    assert_eq!(
+        unsafe { libc::kill(cleanup.0.id() as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    while cleanup.0.try_wait().unwrap().is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    drop(reader);
+}
