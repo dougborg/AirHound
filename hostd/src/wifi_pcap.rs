@@ -197,19 +197,20 @@ pub async fn scan(
 ) -> io::Result<()> {
     let mut stats = Stats::default();
     let result = async {
-        if !tokio::fs::metadata(&path).await?.is_file() {
+        let mut options = tokio::fs::OpenOptions::new();
+        options.read(true);
+        // Open first, without waiting for a FIFO writer, then validate that exact
+        // handle. A path-level metadata check is vulnerable to replacement races.
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NONBLOCK);
+        let file = options.open(path).await?;
+        if !file.metadata().await?.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "WiFi replay requires a regular saved PCAP file",
             ));
         }
-        consume(
-            tokio::fs::File::open(path).await?,
-            &tx,
-            &control,
-            &mut stats,
-        )
-        .await
+        consume(file, &tx, &control, &mut stats).await
     }
     .await;
     let (state, reason) = match &result {
