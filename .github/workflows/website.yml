@@ -8,6 +8,12 @@ on:
     paths: ['website/**', 'docs/**', '**/README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'drivers/mt7610u/TESTING.md', 'signatures/builtin.v2.json', '.github/workflows/website.yml']
   workflow_dispatch:
 
+# Supersede only older validation runs for the same pull request. Main, manual,
+# scheduled and reusable release runs keep independent groups.
+concurrency:
+  group: website-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
