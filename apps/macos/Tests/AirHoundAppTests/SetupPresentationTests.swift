@@ -91,6 +91,17 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
   }
 
+  func testDisconnectedServiceDoesNotPresentCachedGPSFixAsCurrent() {
+    let cached = JSONValue.object([
+      "state": .string("fix"), "daemon": .object(["version": .string("3.27.5")]),
+    ])
+    XCTAssertEqual(
+      LocationProviderStatus(status: cached, connected: true).stateLabel, "Fix available")
+    XCTAssertEqual(
+      LocationProviderStatus(status: cached, connected: false).stateLabel,
+      "Service disconnected; current fix unknown")
+  }
+
   func testManagedGPSDeviceSelectionPreservesHelperAndOtherPlanFields() throws {
     let suite = "gps-edit-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
