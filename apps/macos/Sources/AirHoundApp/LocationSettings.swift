@@ -78,12 +78,7 @@ struct LocationSettings: View {
         Text("This backend does not advertise GPSD support.").font(.caption).foregroundStyle(
           .secondary)
       }
-      if let status = session.capture?["receiver_health"]?["location"] {
-        Text(
-          "GPS: \(status["state"]?.string?.replacingOccurrences(of: "_", with: " ") ?? "unknown")"
-        )
-        .font(.caption).foregroundStyle(.secondary)
-      }
+
     }
   }
 }
