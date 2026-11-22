@@ -112,3 +112,8 @@ are not prerequisites for this native preview. CatSniffer reception and real-ser
 replay, idempotent retry, history/export, and app-model service reconnection have
 been exercised locally. Do not treat those narrower checks as full hardware or
 UI acceptance.
+
+When no recording is open, switching to Observations selects the service’s active
+run or most recently completed run. Active runs enable Follow Live; an explicitly
+opened recording or example is preserved. Missing helper paths are setup errors,
+not evidence that the service has disconnected.

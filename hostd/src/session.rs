@@ -72,6 +72,37 @@ fn serial_resource(path: &std::path::Path) -> String {
 }
 
 impl SessionConfig {
+    /// Explain incomplete discovery hints before typed deserialization obscures the field.
+    pub fn from_json(value: serde_json::Value) -> io::Result<Self> {
+        if let Some(receivers) = value.get("receivers").and_then(|v| v.as_array()) {
+            for (index, receiver) in receivers.iter().enumerate() {
+                let source = &receiver["source"];
+                let fields: &[&str] = match source["kind"].as_str() {
+                    Some("sniffle") => &["port", "python", "helper"],
+                    Some("external_wifi") => &["executable", "firmware"],
+                    Some("wifi_pcap" | "ble_pcap") => &["path"],
+                    _ => &[],
+                };
+                let missing: Vec<_> = fields
+                    .iter()
+                    .filter(|field| {
+                        source.get(**field).is_none_or(|v| {
+                            v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty())
+                        })
+                    })
+                    .copied()
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(invalid(&format!(
+                        "Receiver {} ({}) setup incomplete: configure {} before validating or starting capture.",
+                        index + 1, source["kind"].as_str().unwrap_or("unknown"), missing.join(", ")
+                    )));
+                }
+            }
+        }
+        serde_json::from_value(value).map_err(io::Error::other)
+    }
+
     /// Validate the entire plan before any radio starts. Unpinned Sniffle sources
     /// use the least-loaded primary advertising channel (37 first on ties),
     /// counting all pinned receivers before assigning automatic ones in list order.
@@ -652,5 +683,22 @@ mod tests {
         .resolve();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+}
+
+#[cfg(test)]
+mod incomplete_setup_tests {
+    use super::*;
+    #[test]
+    fn incomplete_sniffle_hint_names_missing_fields() {
+        let value = serde_json::json!({"version":1,"receivers":[{"id":"sniffer","source":{"kind":"sniffle","port":"/dev/test","python":null,"helper":null,"module_path":null}}]});
+        let error = SessionConfig::from_json(value).unwrap_err().to_string();
+        assert!(error.contains("Receiver 1 (sniffle) setup incomplete"));
+        assert!(error.contains("python, helper"));
+    }
+    #[test]
+    fn optional_sniffle_module_path_remains_optional() {
+        let value = serde_json::json!({"version":1,"receivers":[{"id":"sniffer","source":{"kind":"sniffle","port":"/dev/test","python":"python3","helper":"helper.py","module_path":null}}]});
+        assert!(SessionConfig::from_json(value).is_ok());
     }
 }

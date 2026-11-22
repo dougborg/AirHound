@@ -34,11 +34,10 @@ struct ServiceConnectionView: View {
     }
   }
   private var connectionStatus: String {
-    if session.error != nil { return "Service error" }
     return session.connected ? "Service connected" : "Service disconnected"
   }
   private var connectionColor: Color {
-    session.error != nil || !session.connected ? .red : .green
+    session.connected ? .green : .red
   }
   private var serviceConfiguration: some View {
     VStack(alignment: .leading, spacing: 12) {

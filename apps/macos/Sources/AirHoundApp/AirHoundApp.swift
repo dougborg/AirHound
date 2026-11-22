@@ -131,6 +131,18 @@ struct AirHoundApp: App {
         MainView(model: model).tabItem { Label("Observations", systemImage: "list.bullet") }.tag(
           "observations")
       }
+      .onChange(of: model.selectedTab) { _, tab in
+        if tab == "observations" { model.session.showCurrentRecordingIfNeeded(app: model) }
+      }
+      .onReceive(model.session.$busy) { busy in
+        if !busy {
+          Task { @MainActor in
+            if model.selectedTab == "observations" {
+              model.session.showCurrentRecordingIfNeeded(app: model)
+            }
+          }
+        }
+      }
       .safeAreaInset(edge: .bottom, spacing: 0) {
         ServiceConnectionView(session: model.session, app: model)
       }

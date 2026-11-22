@@ -193,7 +193,7 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
     {
         return Err(invalid("session config exceeds 64 KiB"));
     }
-    let plan: SessionConfig = serde_json::from_value(config.clone()).map_err(io::Error::other)?;
+    let plan: SessionConfig = SessionConfig::from_json(config.clone())?;
     let request = (request_id, config);
     let plan = plan.resolve()?;
     let mut filter = FilterConfig::new();
