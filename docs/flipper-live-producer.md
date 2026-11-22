@@ -1,9 +1,9 @@
 # Flipper live producer (development)
 
 This separate `airhound-live-bridge` target implements the device side of the
-[AHFB protocol](flipper-bridge-protocol.md). Revision `f457474` passed a bounded
-UART-free RPC load/Hello/Stop/exit check on the attached Flipper. Live UART
-streaming is not yet accepted. The diagnostic application's successful 85-packet
+[AHFB protocol](flipper-bridge-protocol.md). Revision `f457474` passed bounded
+UART-free RPC load/Hello/Stop/exit checks through Python and the production Rust
+transport engine on the attached Flipper. Live UART streaming is not yet accepted. The diagnostic application's successful 85-packet
 file acquisition is separate evidence for its UART/parser foundation.
 
 Launch is RPC-only. Default/standalone launch and Hello do not open UART. An
@@ -64,10 +64,9 @@ target/audit-env/bin/python scripts/test-diagnostic-artifacts.py target/live-bri
 The outputs retain DWARF, matching code/data and debuglink CRC, exact source/SDK
 hashes and an explicit `hardware_tested: false`; acceptance evidence remains
 separate from immutable build metadata. Independent source/artifact review and the
-UART-free device check below passed. Remaining gates include production Rust-host
-UART-free acceptance, paired fault tests, and separately reviewed passive
-streaming/watchdog/stop tests. The diagnostic and original Marauder companion
-remain preserved.
+UART-free device checks below passed. Remaining gates include full service
+recording, paired fault tests, and separately reviewed passive streaming/watchdog/
+stop tests. The diagnostic and original Marauder companion remain preserved.
 
 ## UART-free device evidence (2026-11-22)
 
@@ -91,3 +90,13 @@ companion hash was unchanged, and USB ownership was released. Free heap was
 The initial sandbox-denied USB-open invocation is retained separately and made
 no device change. This proves the tested device protocol/lifetime path, not the
 production host source or live concurrent capture.
+
+A separate bounded wrapper around the production Rust transport engine at
+`dbda889` subsequently passed the same no-UART lifecycle in 0.935 seconds. A
+test-only outbound guard rejected any Start command before USB transmission;
+actual controls were app launch, Hello, Stop and SessionClose. The clean backend
+build and exact companion version/revision were verified, all checked UART/loss
+counters remained zero, and post-run CLI/idle-loader/original and bridge hashes
+passed. The default service and its capture state were unchanged. This confirms
+the production transport engine; the full service recording and RF streaming
+paths remain unaccepted.
