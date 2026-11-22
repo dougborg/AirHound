@@ -329,6 +329,7 @@ mod tests {
     async fn firmware_identity_uses_bounded_valid_messages_and_clears_on_generation_change() {
         let c = ScanControl::new(true);
         c.set_receiver(crate::receiver::Receiver {
+            producer_identity: None,
             backend: "sniffle",
             adapter_id: "sniffle:/dev/test".into(),
             adapter_info: "unidentified".into(),

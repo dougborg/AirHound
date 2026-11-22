@@ -49,10 +49,30 @@ impl Record {
     }
 
     pub fn output(&self, config: &FilterConfig, index: &MacIndex) -> Value {
-        let mut value = self.value.clone();
+        // Only validated protocol fields may enter normalized records. Retain
+        // arbitrary producer extensions exclusively inside producer_record.
+        let keys: &[&str] = match self.kind {
+            Kind::Wifi { .. } => &["mac", "ssid", "rssi", "ch", "frame", "ts"],
+            Kind::Ble { .. } => &["mac", "name", "rssi", "mfr", "uuid", "ts"],
+            Kind::Status { .. } => &["board", "version", "uptime", "scanning", "heap_free"],
+            Kind::Stats => &[
+                "scan_drops",
+                "output_drops",
+                "ble_output_drops",
+                "serialize_errors",
+            ],
+            Kind::Evidence => &["id", "scope", "ts"],
+        };
+        let mut value = json!({});
+        for key in keys {
+            if let Some(field) = self.value.get(*key) {
+                value[*key] = field.clone();
+            }
+        }
         value["producer_record"] = self.value.clone();
         value["connection_generation"] = json!(self.connection_generation);
         value["boot_generation"] = json!(self.boot_generation);
+        value["boot_generation_basis"] = json!("connection_and_sampled_status_uptime");
         value["transport"] = json!("airhound_serial");
         value["timestamp_basis"] = json!("device_uptime_ms_not_utc");
         value["wigle_exported"] = json!(false);
@@ -120,6 +140,7 @@ impl Record {
             Kind::Evidence => {
                 value["type"] = json!("airhound_device_detection");
                 value["association"] = json!("unassociated_producer_evidence");
+                value["producer_evidence"] = self.value["detection"].clone();
             }
         }
         value
@@ -282,6 +303,47 @@ mod tests {
         assert!(parse(br#"{"type":"wifi","mac":"invalid"}"#).is_err());
         assert!(parse(br#"{"type":"future","x":1}"#).unwrap().is_none());
     }
+    #[test]
+    fn producer_extensions_cannot_inject_host_metadata() {
+        let mut input = json!({"type":"wifi","mac":"02:00:00:00:00:01","ssid":"fixture","rssi":-50,"ch":1,"frame":"beacon","ts":1});
+        for key in [
+            "session_source",
+            "source",
+            "receiver",
+            "received_at_us",
+            "timestamp",
+            "location",
+            "evidence",
+            "detection",
+            "frequency_mhz",
+            "security",
+            "connection_generation",
+            "boot_generation",
+        ] {
+            input[key] = json!({"injected":true});
+        }
+        let record = parse(serde_json::to_string(&input).unwrap().as_bytes())
+            .unwrap()
+            .unwrap();
+        let output = record.output(&FilterConfig::default(), &MacIndex::from_defaults());
+        assert_eq!(output["producer_record"], input);
+        for key in [
+            "session_source",
+            "source",
+            "receiver",
+            "received_at_us",
+            "timestamp",
+            "location",
+            "evidence",
+        ] {
+            assert!(output.get(key).is_none(), "{key}");
+        }
+        assert_eq!(output["connection_generation"], 0);
+        assert_eq!(output["boot_generation"], 0);
+        assert!(output["frequency_mhz"].is_null());
+        assert!(output["detection"].get("injected").is_none());
+    }
+
     #[test]
     fn producer_evidence_is_not_attached_by_address_and_uptime() {
         let r=parse(br#"{"type":"detection","id":"02:00:00:00:00:01","scope":"ble_address","ts":1,"detection":{"sig":[1]}}"#).unwrap().unwrap();
