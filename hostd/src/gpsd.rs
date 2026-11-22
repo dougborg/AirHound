@@ -236,12 +236,15 @@ fn parse_fix(value: &serde_json::Value, now: DateTime<Utc>, received: Instant) -
 }
 
 async fn session(options: &Options, source: &Source) -> io::Result<()> {
-    let mut socket = tokio::time::timeout(
+    let socket = tokio::time::timeout(
         Duration::from_secs(3),
         tokio::net::TcpStream::connect(&options.endpoint),
     )
     .await
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gpsd connection timeout"))??;
+    consume_socket(socket, source).await
+}
+async fn consume_socket(mut socket: tokio::net::TcpStream, source: &Source) -> io::Result<()> {
     // Device filtering is local, avoiding request length/escaping ambiguity.
     socket
         .write_all(b"?WATCH={\"enable\":true,\"json\":true};\n")
