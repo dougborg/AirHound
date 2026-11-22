@@ -264,3 +264,17 @@ fn preflight_only_retains_receive_evidence_but_can_never_start() {
         assert!(!run.preflight_ready(0, 0, 1));
     }
 }
+
+#[test]
+fn preflight_ack_followed_by_incomplete_frame_never_starts_or_claims_complete() {
+    for mut run in [Run::new(0), Run::preflight(0)] {
+        run.feed(1, b"Stopping WiFi tran/recv\r\n[BUF/BE");
+        assert_eq!(run.poll(100, false, false), None);
+        assert_eq!(run.phase, Phase::Preflight);
+        assert_eq!(run.poll(1500, false, false), None);
+        assert_eq!(run.phase, Phase::Done);
+        assert!(run.evidence.preflight_stop_text_ack);
+        assert!(!run.evidence.start_sent);
+        assert!(!run.preflight_ready(0, 0, 0));
+    }
+}
