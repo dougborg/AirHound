@@ -91,6 +91,107 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertNil(session.currentReceiverIdentity(id: "same-id"))
   }
 
+  func testSelectedBackendProfilesPreserveM5GPSPlanWithoutStartingCapture() async throws {
+    guard let backend = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
+      throw XCTSkip("Set AIRHOUND_TEST_BACKEND for combined setup lifecycle tests.")
+    }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ah-plan-" + UUID().uuidString.prefix(8))
+    try LocalFiles.privateDirectory(root)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pcap = root.appendingPathComponent("empty.pcap")
+    try Data([
+      0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 127, 0, 0, 0,
+    ]).write(to: pcap)
+    let database = root.appendingPathComponent("recordings.sqlite")
+    let replay = Process()
+    replay.executableURL = URL(fileURLWithPath: backend)
+    replay.arguments = [
+      "--wifi-pcap", pcap.path, "--database", database.path,
+      "--output", root.appendingPathComponent("empty.csv").path,
+    ]
+    replay.standardOutput = FileHandle.nullDevice
+    replay.standardError = FileHandle.nullDevice
+    try replay.run()
+    replay.waitUntilExit()
+    XCTAssertEqual(replay.terminationStatus, 0)
+    let socket = root.appendingPathComponent("control.sock")
+    let server = Process()
+    server.executableURL = URL(fileURLWithPath: backend)
+    server.arguments = ["serve", "--socket", socket.path, "--database", database.path]
+    server.standardOutput = FileHandle.nullDevice
+    server.standardError = FileHandle.nullDevice
+    try server.run()
+    defer {
+      if server.isRunning {
+        server.terminate()
+        server.waitUntilExit()
+      }
+    }
+    for _ in 0..<100 {
+      if FileManager.default.fileExists(atPath: socket.path) { break }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    let wrapper = root.appendingPathComponent("selected-backend.sh")
+    let log = root.appendingPathComponent("client-arguments")
+    func quote(_ value: String) -> String {
+      "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    let script = """
+      #!/bin/sh
+      printf '%s\\n' "$@" >> \(quote(log.path))
+      exec \(quote(backend)) "$@"
+      """
+    try Data(script.utf8).write(to: wrapper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+    let suite = "AirHound-setup-route-" + UUID().uuidString
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let session = SessionModel(preferences: preferences)
+    session.socketPath = socket.path
+    session.connect(executable: wrapper)
+    defer { session.disconnect() }
+    func idle() async throws {
+      for _ in 0..<100 {
+        if !session.busy { return }
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      XCTFail("Setup operation did not finish")
+    }
+    try await idle()
+    XCTAssertTrue(session.connected, session.error ?? session.message)
+    XCTAssertFalse(session.captureEnabled, "This test service must never allow radio capture")
+    XCTAssertTrue(session.setupsAvailable)
+    XCTAssertEqual(session.locationProviders, ["gpsd"])
+    let plan =
+      #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947","device":"/dev/cu.fixture-gps"},"receivers":[{"id":"custom-m5","source":{"kind":"airhound_serial","port":"/dev/cu.fixture-m5","baud":460800}}]}"#
+    session.configText = plan
+    session.saveSetup(name: "M5 and GPS")
+    try await idle()
+    XCTAssertNil(session.error)
+    XCTAssertEqual(session.setups.count, 1)
+    session.configText = #"{"version":1,"receivers":[]}"#
+    session.reviewSetup()
+    try await idle()
+    let review = try XCTUnwrap(session.setupReview)
+    XCTAssertEqual(session.plannedReceivers.count, 0, "Review must not apply automatically")
+    session.applySetup(review)
+    XCTAssertEqual(
+      try JSONDecoder().decode(JSONValue.self, from: Data(session.configText.utf8)),
+      try JSONDecoder().decode(JSONValue.self, from: Data(plan.utf8)))
+    XCTAssertFalse(session.isActive)
+    session.deleteSelectedSetup()
+    try await idle()
+    XCTAssertTrue(session.setups.isEmpty)
+    XCTAssertEqual(session.plannedReceivers.map(\.id), ["custom-m5"])
+    let arguments = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(
+      String.init)
+    XCTAssertTrue(arguments.contains("profiles"))
+    for command in ["list", "save", "load", "delete"] { XCTAssertTrue(arguments.contains(command)) }
+    XCTAssertFalse(arguments.contains("start"))
+    XCTAssertFalse(arguments.contains("finish"))
+  }
+
   /// Optional bounded screenshot fixture. Never connects to a service or opens radios.
   func testNativeSetupPresentationSnapshot() throws {
     guard let destination = ProcessInfo.processInfo.environment["AIRHOUND_UI_SNAPSHOT_DIR"] else {
