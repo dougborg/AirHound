@@ -22,6 +22,15 @@ final class CoreTests: XCTestCase {
     XCTAssertEqual(value.diagnostics[0].message, "Partial inventory")
     XCTAssertEqual(value.devices[0].identityScope, "attachment_topology")
   }
+  func testInventoryAcceptsOnlyKnownPassiveModes() throws {
+    let active = inventory.replacingOccurrences(
+      of: "\"mode\":\"passive\"", with: "\"mode\":\"passive_with_active_metadata\"")
+    XCTAssertEqual(try Inventory.decode(Data(active.utf8)).mode, "passive_with_active_metadata")
+    let unsupported = inventory.replacingOccurrences(
+      of: "\"mode\":\"passive\"", with: "\"mode\":\"active_probe\"")
+    XCTAssertThrowsError(try Inventory.decode(Data(unsupported.utf8)))
+  }
+
   func testInventoryRejectsIncompatibleAndMalformedOutput() {
     for value in [
       inventory.replacingOccurrences(of: "\"schema_version\":1", with: "\"schema_version\":2"),

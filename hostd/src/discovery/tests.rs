@@ -306,3 +306,68 @@ fn active_firmware_metadata_is_endpoint_scoped_and_never_cached_across_discovery
     assert!(replaced.devices[0].candidates[0].identification.is_none());
     assert_eq!(replaced.mode, "passive");
 }
+
+#[test]
+fn airhound_identity_requires_current_serial_owner_and_actual_status() {
+    let mut device = raw(0x1a86, 0x55d4);
+    device.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/cu.sensor".into(),
+    });
+    let status = json!({"active":true,"run_id":"run", "receiver_health":{"receivers":[{
+        "id":"m5","requested_assignment":{"baud":460800},
+        "receiver":{"backend":"airhound_serial","adapter_id":"/dev/tty.sensor","availability":"available",
+            "producer_identity":{"application":"AirHound","version":"0.1.1","board":"m5stickc_plus2","evidence":"device_status","connection_generation":1,"boot_generation":1}}
+    }]}});
+    let inventory_for = |status: &Value| {
+        let mut inventory = assemble(vec![device.clone()], vec![], "macos", &Options::default());
+        inventory.reuse_active_metadata(status);
+        inventory
+    };
+    let inventory = inventory_for(&status);
+    let candidate = &inventory.devices[0].candidates[0];
+    assert_eq!(candidate.kind, "airhound_serial");
+    assert_eq!(candidate.role, "capture_receiver");
+    assert_eq!(candidate.capabilities["media"], json!(["wifi", "ble"]));
+    assert_eq!(
+        candidate.configuration_hint.as_ref().unwrap()["baud"],
+        460800
+    );
+    let identity = candidate.identification.as_ref().unwrap();
+    assert_eq!(identity.application, Some("AirHound"));
+    assert_eq!(identity.firmware_version.as_deref(), Some("0.1.1"));
+    assert_eq!(identity.board.as_deref(), Some("m5stickc_plus2"));
+    assert_eq!(identity.provenance, "active_capture_owner");
+    assert_eq!(identity.reception, "not_tested");
+    assert!(identity.protocol_api.is_none());
+    assert!(identity.compatible.is_none());
+    for state in ["reconnecting", "unavailable", "stopped"] {
+        let mut lost = status.clone();
+        lost["receiver_health"]["receivers"][0]["receiver"]["availability"] = json!(state);
+        assert_eq!(
+            inventory_for(&lost).devices[0].candidates[0].kind,
+            "serial_unknown"
+        );
+    }
+    let mut paused = status.clone();
+    paused["receiver_health"]["receivers"][0]["receiver"]["availability"] = json!("paused");
+    assert_eq!(
+        inventory_for(&paused).devices[0].candidates[0].kind,
+        "airhound_serial"
+    );
+    for (key, value) in [
+        ("producer_identity", Value::Null),
+        ("backend", json!("sniffle")),
+        ("adapter_id", json!("/dev/cu.other")),
+    ] {
+        let mut mismatch = status.clone();
+        mismatch["receiver_health"]["receivers"][0]["receiver"][key] = value;
+        let fresh = inventory_for(&mismatch);
+        assert_eq!(fresh.devices[0].candidates[0].kind, "serial_unknown");
+        assert!(fresh.devices[0].candidates[0].identification.is_none());
+        assert_eq!(fresh.mode, "passive");
+    }
+    let ended = inventory_for(&json!({"active":false,"last":status}));
+    assert_eq!(ended.devices[0].candidates[0].kind, "serial_unknown");
+    assert!(ended.devices[0].candidates[0].configuration_hint.is_none());
+}
