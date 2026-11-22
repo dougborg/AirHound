@@ -56,6 +56,15 @@ jobs:
           name: flipper-uart-diagnostic-api87-unverified
           path: companions/flipper/target/diagnostic/
           retention-days: 14
+      - name: Build live bridge with matching symbols (no hardware acceptance)
+        run: |
+          python scripts/build-diagnostic.py target/momentum-api.csv --binary airhound-live-bridge
+          python scripts/test-diagnostic-artifacts.py target/live-bridge airhound-live-bridge
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: flipper-live-bridge-api87-unverified
+          path: companions/flipper/target/live-bridge/
+          retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: flipper-synthetic-demo-api87
