@@ -282,7 +282,7 @@ async fn connection(mut stream: UnixStream, backend: Arc<dyn Backend>, hello: Ar
                 "send hello before other commands",
             )),
             Command::Status {} => Ok(
-                json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS, "build":crate::build_info::current(), "managed_helpers":crate::managed_helpers::default_status()}),
+                json!({"instance_id": hello.instance_id, "mode":if backend.capture_enabled() { "capture_control" } else { "passive_control" }, "capture_control":backend.capture_enabled(), "methods": METHODS, "build":crate::build_info::current(), "location_providers":["gpsd"], "managed_helpers":crate::managed_helpers::default_status()}),
             ),
             Command::Capture { action } => bounded(backend.capture(action)).await,
             command @ (Command::ProfilesList {}

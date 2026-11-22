@@ -17,6 +17,15 @@ pub struct Options {
     pub endpoint: String,
     pub device: Option<String>,
 }
+impl From<&airhound_hostd::session::LocationConfig> for Options {
+    fn from(value: &airhound_hostd::session::LocationConfig) -> Self {
+        let airhound_hostd::session::LocationConfig::Gpsd { endpoint, device } = value;
+        Self {
+            endpoint: endpoint.clone(),
+            device: device.clone(),
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Source(Arc<Mutex<Tracker>>);
 struct Fix {
@@ -30,6 +39,7 @@ struct Tracker {
     last_time: Option<DateTime<Utc>>,
     reason: &'static str,
     protocol_ok: bool,
+    daemon: Option<serde_json::Value>,
 }
 impl Source {
     pub fn new(device: Option<String>) -> Self {
@@ -39,6 +49,7 @@ impl Source {
             last_time: None,
             reason: "connecting",
             protocol_ok: false,
+            daemon: None,
         })))
     }
     pub fn location(&self) -> Option<crate::wigle::Location> {
@@ -63,16 +74,38 @@ impl Source {
             _ => state.reason,
         };
         serde_json::json!({"source":"gpsd", "state":reason, "device":state.device,
+            "daemon":state.daemon,
             "max_age_seconds":MAX_AGE.as_secs(),
             "fix_time":state.fix.as_ref().map(|fix| fix.time.to_rfc3339()),
             "altitude_datum":"mean_sea_level",
             "accuracy_source":"gpsd_eph_meters_confidence_unspecified", "association":"processing_time"})
+    }
+    /// One fresh snapshot, associated when the host processes the observation.
+    /// Serial buffering and unsynchronized producer clocks prevent a capture-time claim.
+    pub fn evidence(&self) -> Option<serde_json::Value> {
+        let now = Utc::now();
+        let received = Instant::now();
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let fix = state.fix.as_ref().filter(|fix| fresh(fix, now, received))?;
+        Some(serde_json::json!({
+            "schema_version":1,"source":"gpsd","device":state.device,
+            "position_of":"receiver_rig","association":"host_processing_time",
+            "associated_at":now.to_rfc3339(),"fix_time":fix.time.to_rfc3339(),
+            "fix_age_ms":now.signed_duration_since(fix.time).num_milliseconds(),
+            "host_fix_age_ms":received.saturating_duration_since(fix.received).as_millis(),
+            "max_age_ms":MAX_AGE.as_millis(),"capture_time_synchronized":false,
+            "latitude":fix.location.latitude,"longitude":fix.location.longitude,
+            "horizontal_datum":"WGS84","coordinate_units":"degrees",
+            "altitude_msl_m":fix.location.altitude,"horizontal_accuracy_m":fix.location.accuracy,
+            "accuracy_source":"gpsd_eph_meters_confidence_unspecified",
+        }))
     }
     fn disconnected(&self, reason: &'static str) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         state.fix = None;
         state.reason = reason;
         state.protocol_ok = false;
+        state.daemon = None;
         // Keep device binding and last fix time across reconnect: never switch
         // sources or refresh a replayed cached fix just because TCP restarted.
     }
@@ -89,6 +122,9 @@ impl Source {
                         "unsupported gpsd protocol",
                     ));
                 }
+                state.daemon = Some(
+                    serde_json::json!({"application":"gpsd","version":value["release"].as_str().filter(|version| version.len() <= 128 && !version.chars().any(char::is_control)),"protocol_major":value["proto_major"].as_u64(),"protocol_minor":value["proto_minor"].as_u64(),"evidence":"gpsd_version_message","receiver_firmware_version":null}),
+                );
                 state.reason = "waiting_for_fix";
             }
             Some("TPV") if state.protocol_ok => {
@@ -260,6 +296,31 @@ pub async fn run(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[test]
+    fn evidence_identifies_rig_processing_time_and_expires_with_the_fix() {
+        let source = ready();
+        feed(
+            &source,
+            serde_json::json!({"class":"VERSION","proto_major":16,"proto_minor":1,"release":"3.27.5"}),
+        );
+        feed(&source, tpv(Utc::now()));
+        let evidence = source.evidence().unwrap();
+        assert_eq!(evidence["position_of"], "receiver_rig");
+        assert_eq!(evidence["association"], "host_processing_time");
+        assert_eq!(evidence["capture_time_synchronized"], false);
+        assert_eq!(evidence["latitude"], 10.);
+        assert_eq!(evidence["altitude_msl_m"], 15.);
+        assert_eq!(evidence["horizontal_accuracy_m"], 2.);
+        assert!(evidence["fix_time"].is_string());
+        assert_eq!(source.health()["daemon"]["version"], "3.27.5");
+        assert!(source.health()["daemon"]["receiver_firmware_version"].is_null());
+        source.0.lock().unwrap().fix.as_mut().unwrap().received =
+            Instant::now() - Duration::from_secs(6);
+        assert!(source.evidence().is_none());
+        source.disconnected("disconnected");
+        assert!(source.evidence().is_none());
+        assert!(source.health()["daemon"].is_null());
+    }
     fn ready() -> Source {
         let source = Source::new(None);
         feed(

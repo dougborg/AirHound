@@ -58,6 +58,9 @@ pub struct Candidate {
     pub identification: Option<identify::Identification>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration_hint: Option<Value>,
+    /// A location provider belongs in SessionConfig.location, not receivers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location_configuration_hint: Option<Value>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Device {
@@ -327,6 +330,7 @@ fn candidate(
         },
         identification: None,
         configuration_hint: None,
+        location_configuration_hint: None,
     }
 }
 fn prerequisite(name: &str, path: Option<&Path>, directory: bool) -> Requirement {
@@ -444,7 +448,12 @@ fn classify(raw: &RawDevice, platform: &str, options: &Options) -> Vec<Candidate
             if c.state == "unverified" { c.state = "needs_identification"; }
             c.configuration_hint = Some(json!({"kind":"sniffle","port":selected_serial.map(|e| &e.path),"python":options.sniffle_python,"helper":options.sniffle_helper,"module_path":options.sniffle_module_path,"channel":37,"coded":false})); result.push(c);
         }
-        (Some(0x1546), Some(0x01a8)) => result.push(candidate("gps", "u-blox GNSS candidate", "available", "needs_configuration", "u-blox GNSS USB ID; use an explicitly configured gpsd server; direct protocol/fix not probed")),
+        (Some(0x1546), Some(0x01a8)) => {
+            let mut c = candidate("gps", "u-blox GNSS candidate", "available", "needs_configuration", "u-blox GNSS USB ID; use an explicitly configured gpsd server; direct protocol/fix not probed");
+            c.location_configuration_hint = Some(json!({"kind":"gpsd","endpoint":"127.0.0.1:2947","device":selected_serial.map(|e| &e.path)}));
+            c.requirements.push(Requirement {name:"gpsd_server".into(),state:"unknown",detail:"Start gpsd separately in read-only mode and confirm its endpoint and device path. Discovery does not open the serial port or connect to gpsd.".into()});
+            result.push(c);
+        },
         (Some(0x1915), Some(0x522a)) => result.push(candidate("nrf_sniffer", "Nordic BLE sniffer candidate", "research", "unsupported", "Recognized USB identity; no live Nordic source adapter in AirHound sessions")),
         (Some(0x0a12), Some(0x0001)) => {
             if !result.iter().any(|c| c.kind == "native_ble") {
