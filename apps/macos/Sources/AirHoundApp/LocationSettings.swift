@@ -21,7 +21,35 @@ struct LocationSettings: View {
             && !session.locationProviders.contains("gpsd")
       )
       if let location = session.planLocation, location != .null {
-        if location["kind"]?.string == "gpsd" {
+        if ["gpsd", "managed_gpsd"].contains(location["kind"]?.string ?? "") {
+          let managed = location["kind"]?.string == "managed_gpsd"
+          Toggle(
+            "Start GPSD with this recording",
+            isOn: Binding(
+              get: { managed }, set: { session.setManagedLocation($0) })
+          )
+          .disabled(
+            !session.canEditPlan
+              || (!managed && !session.locationProviders.contains("managed_gpsd")))
+          if managed {
+            HStack {
+              TextField(
+                "GPSD executable",
+                text: Binding(
+                  get: { location["executable"]?.string ?? "" },
+                  set: { session.setLocationField("executable", value: .string($0)) }))
+              Button("Choose…") {
+                let panel = NSOpenPanel()
+                panel.title = "Choose installed gpsd executable"
+                panel.canChooseDirectories = false
+                panel.canChooseFiles = true
+                panel.directoryURL = URL(fileURLWithPath: "/opt/homebrew/sbin")
+                if panel.runModal() == .OK, let url = panel.url {
+                  session.setLocationField("executable", value: .string(url.path))
+                }
+              }
+            }.disabled(!session.canEditPlan)
+          }
           TextField(
             "GPSD server (IP address:port)",
             text: Binding(
@@ -30,14 +58,16 @@ struct LocationSettings: View {
           )
           .disabled(!session.canEditPlan)
           TextField(
-            "Device path (optional)",
+            managed ? "GPS device path" : "Device path (optional)",
             text: Binding(
               get: { location["device"]?.string ?? "" },
               set: { session.setLocationField("device", value: $0.isEmpty ? .null : .string($0)) })
           )
           .disabled(!session.canEditPlan)
           Text(
-            "Connect to an existing gpsd server. Choose a GPS under Available devices to fill its device path."
+            managed
+              ? "AirHound starts the selected gpsd in read-only mode when recording begins and stops it when recording finishes. The local port must be unused."
+              : "Connect to an existing gpsd server. Choose a GPS under Available devices to fill its device path."
           )
           .font(.caption).foregroundStyle(.secondary)
         } else {

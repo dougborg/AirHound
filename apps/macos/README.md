@@ -198,3 +198,9 @@ layout and display steps in an off-screen window. A local optimized run took
 views after the traversal. This reproduces the row-hosting/layout cost seen in
 the running app's main-thread profile. It includes run-loop waits, is not an FPS
 measurement, and does not replace checking trackpad scrolling in the real app.
+
+GPS setups can optionally start an installed gpsd for each recording. Select the
+GPS under Available devices, enable **Start GPSD with this recording**, choose
+its executable, and save the setup. The Rust service owns the read-only helper
+and stops it on Finish; the external-server mode remains available. See the
+[GPS lifecycle and ownership details](../../docs/gnss-wardriving.md).

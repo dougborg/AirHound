@@ -39,7 +39,7 @@ struct AvailableReceivers: View {
               Link("Track device support", destination: issue)
             }
             if let location = candidate.locationConfigurationHint {
-              Button("Use for Location") { session.setLocation(location) }
+              Button("Use for Location") { session.selectLocationDevice(location) }
                 .disabled(!session.canEditPlan || !session.locationProviders.contains("gpsd"))
             }
             if let source = candidate.configurationHint {
