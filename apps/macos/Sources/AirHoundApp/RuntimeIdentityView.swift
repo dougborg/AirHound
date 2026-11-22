@@ -4,21 +4,25 @@ import SwiftUI
 /// Presentation of the current owner's reports. No discovery guesses or freshness timers.
 struct LocationProviderStatus: View {
   let status: JSONValue
+  let connected: Bool
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      Text("GPS location").font(.headline)
+      Text(connected ? "GPS location" : "Last reported GPS location").font(.headline)
       Text(stateLabel)
       if let device = status["device"]?.string {
         Text(device).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       }
       if let daemon = status["daemon"], let version = daemon["version"]?.string {
-        Text("gpsd \(version) · host software").font(.caption).textSelection(.enabled)
+        Text("\(connected ? "gpsd" : "Last reported gpsd") \(version) · host software").font(
+          .caption
+        ).textSelection(.enabled)
       }
       Text("Receiver/rig position · GNSS receiver firmware unreported")
         .font(.caption).foregroundStyle(.secondary)
     }
   }
-  private var stateLabel: String {
+  var stateLabel: String {
+    guard connected else { return "Service disconnected; current fix unknown" }
     switch status["state"]?.string {
     case "fix": return "Fix available"
     case "connecting": return "Connecting to GPSD"

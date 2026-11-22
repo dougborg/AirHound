@@ -117,7 +117,7 @@ struct SessionView: View {
           }
         }
         if let location = session.capture?["receiver_health"]?["location"], location != .null {
-          LocationProviderStatus(status: location)
+          LocationProviderStatus(status: location, connected: session.connected)
         }
         if session.healthCatchingUp {
           Text("Catching up on receiver metrics; counters may be behind capture.").font(.caption)
