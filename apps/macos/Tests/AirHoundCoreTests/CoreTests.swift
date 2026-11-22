@@ -228,6 +228,81 @@ final class CoreTests: XCTestCase {
     XCTAssertEqual(window.cursor, 1005)
   }
 
+  func testCachedWindowPreservesEvidenceIgnoredRecordsAndRejectsPartialPage() throws {
+    func page(_ records: [[String: Any]], after: Int) throws -> RecordPage {
+      try JSONDecoder().decode(
+        RecordPage.self,
+        from: JSONSerialization.data(withJSONObject: [
+          "records": records, "next_after": after, "has_more": false,
+        ]))
+    }
+    func record(_ cursor: Int, _ payload: [String: Any]) -> [String: Any] {
+      [
+        "cursor": cursor, "source_id": "test", "kind": payload["type"] ?? "invalid",
+        "received_at_us": 1, "payload": payload,
+      ]
+    }
+    var window = RecordWindow()
+    try window.append(
+      page(
+        [
+          record(10, ["type": "scanner_health"]),
+          record(
+            20,
+            [
+              "type": "ble_packet_observation", "address": "02:00:00:00:00:01",
+              "detection": ["sig": [42], "alert": "silent"],
+            ]),
+        ], after: 20))
+    let first = try window.observations()
+    XCTAssertEqual(first.ignoredRecords, 1)
+    XCTAssertEqual(first.observations.map(\.id), [20])
+    XCTAssertTrue(first.observations[0].raw.contains("42"))
+    XCTAssertFalse(first.observations[0].evidence.isEmpty)
+    try window.append(page([], after: 20))
+    XCTAssertEqual(try window.observations().observations[0].raw, first.observations[0].raw)
+    // Decoding the second record must fail without committing the first record.
+    XCTAssertThrowsError(
+      try window.append(
+        page(
+          [
+            record(30, ["type": "wifi_observation", "ssid": "new"]),
+            record(40, ["missing_type": true]),
+          ], after: 40)))
+    XCTAssertEqual(window.cursor, 20)
+    XCTAssertEqual(window.records.count, 2)
+    XCTAssertEqual(try window.observations().observations.map(\.id), [20])
+    XCTAssertThrowsError(
+      try window.append(page([record(20, ["type": "scanner_health"])], after: 20)))
+    XCTAssertEqual(window.cursor, 20)
+  }
+
+  func testCachedWindowEvictsRowsAtByteLimit() throws {
+    let records: [[String: Any]] = (1...24).map { cursor in
+      [
+        "cursor": cursor, "source_id": "test", "kind": "wifi_observation", "received_at_us": 1,
+        "payload": [
+          "type": "wifi_observation", "ssid": "test",
+          "future_data": String(repeating: "x", count: 200_000),
+        ],
+      ]
+    }
+    let page = try JSONDecoder().decode(
+      RecordPage.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "records": records, "next_after": 24, "has_more": false,
+      ]))
+    var window = RecordWindow()
+    try window.append(page)
+    XCTAssertLessThan(window.records.count, 24)
+    XCTAssertEqual(window.omitted + window.records.count, 24)
+    XCTAssertEqual(
+      try window.observations().observations.map(\.id), window.records.map { Int($0.cursor) })
+    XCTAssertLessThanOrEqual(
+      try window.records.reduce(0) { try $0 + $1.payload.data().count + 1 }, 4 * 1024 * 1024)
+    XCTAssertEqual(try window.observations().ignoredRecords, 0)
+  }
+
   func testPlanReadRejectsNonregularAndOversizedFiles() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try LocalFiles.privateDirectory(directory)

@@ -116,3 +116,27 @@ When no recording is open, switching to Observations selects the service’s act
 run or most recently completed run. Active runs enable Follow Live; an explicitly
 opened recording or example is preserved. Missing helper paths are setup errors,
 not evidence that the service has disconnected.
+
+## Observation performance
+
+The native table caches its filtered/sorted rows until the recording or query
+changes. Scrolling, selection and inspector visibility do not rerun the query.
+Live pages decode off the main actor; retained rows keep their database cursor
+IDs and are decoded once. Empty polls do not publish a replacement table. The
+presentation window remains limited to 1,000 records / 4 MiB of source JSON;
+the Rust database retains the complete recording.
+
+Run the synthetic presentation microbenchmark without touching radios:
+
+```sh
+sh apps/macos/benchmark-observations.sh
+```
+
+On the development Apple Silicon Mac, reading a representative 1,000-record
+window previously serialized, decoded and formatted the entire window in about
+48 ms. Cached reads took about 0.001 ms after the change. New-page parsing still
+has a cost and now runs off the UI thread. Five redundant filter/sort passes
+measured about 9.7 ms; rendering no longer performs those passes. These are
+optimized-build CPU measurements, not a claim of a measured scrolling frame rate.
+The script reports the uncached sort baseline as a comparison and does not gate
+CI on machine-dependent timing.

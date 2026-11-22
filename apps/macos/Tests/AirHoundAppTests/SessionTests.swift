@@ -161,6 +161,20 @@ final class SessionTests: XCTestCase {
     let finishedRuns = try await client.recordings()
     XCTAssertEqual(finishedRuns.runs.first?.id, activeRun)
     XCTAssertEqual(finishedRuns.runs.first?.state, "finished")
+    let unchangedRevision = try XCTUnwrap(completedPresentation.recording?.revision)
+    replacement.loadMoreRecords()
+    try await waitIdle(replacement)
+    XCTAssertEqual(
+      completedPresentation.recording?.revision, unchangedRevision,
+      "An empty page must not publish a new observation table")
+    replacement.rewindRecords()
+    replacement.leaveRecording()
+    try await waitIdle(replacement)
+    XCTAssertNil(replacement.browsingRun)
+    XCTAssertEqual(
+      completedPresentation.recording?.revision, unchangedRevision,
+      "A late page must not replace a recording after leaving it")
+
   }
   private func waitIdle(_ model: SessionModel) async throws {
     for _ in 0..<200 {
