@@ -70,3 +70,50 @@ validate binary capture/import. See [setup and test status](flipper-marauder.md)
 reconnect/session handling and real capture fixtures remain in
 [#181](https://github.com/dougborg/AirHound/issues/181) and
 [#175](https://github.com/dougborg/AirHound/issues/175).
+
+
+## Durable desktop replay
+
+A saved capture can be imported as a session source, retained in SQLite, queried
+through the shared client, and displayed in Observations. It does not establish
+live Flipper/AWOK support. This path has fixture acceptance; a genuine capture
+from the attached hardware still needs acceptance testing.
+
+```json
+{
+  "version": 1,
+  "receivers": [{
+    "id": "awok-file",
+    "source": {
+      "kind": "marauder_capture",
+      "path": "/absolute/path/to/saved-capture.bin",
+      "format": "serial"
+    }
+  }]
+}
+```
+
+Use `format: "pcap"` for bare DLT105 PCAP, or `"serial"` for saved binary
+`[BUF/BEGIN]` / `[BUF/CLOSE]` output. The format is mandatory. The backend reads a
+regular saved file (64 MiB / 100,000 packets maximum), validates the complete
+capture before emitting packets, and supports pause/resume/finish with bounded
+queues. Corrupt or partial captures fail the recording; they are not silently
+accepted as partial imports. Saving or loading a profile only checks file metadata.
+
+With a capture-enabled service connected, use the shared client:
+
+```sh
+airhound-hostd client start --request-id awok-import-1 --session-config saved-plan.json
+airhound-hostd client recordings
+airhound-hostd client records --run-id RUN_ID
+```
+
+Use a new request ID for another import. The source completes at EOF; the finished
+recording remains available after backend restart. `wifi_packet_observation`
+records contain the original frame bytes, decoder profile and device boot-relative
+`timestamp_micros32`. SQLite receipt time is the import time, not capture time.
+A wrapping/resetting device clock is never converted to UTC. Supported management
+frames add shared identity/matching results; other frames remain raw observations.
+No receive RSSI, tuned channel, current host GPS, or verified firmware version is
+invented. A live location provider cannot be assigned to a replay-only session;
+in mixed sessions, replay observations still receive no present-day location.

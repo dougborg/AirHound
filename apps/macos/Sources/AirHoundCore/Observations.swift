@@ -47,7 +47,7 @@ public struct Recording: Sendable {
       guard
         [
           "wifi_observation", "ble_observation", "external_wifi_observation",
-          "ble_packet_observation",
+          "ble_packet_observation", "wifi_packet_observation",
         ].contains(type)
       else {
         ignored += 1

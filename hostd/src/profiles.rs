@@ -386,7 +386,7 @@ pub fn check_bindings(profile: &Profile, inventory: &Inventory) -> Value {
     let checks: Vec<_> = bindings(&profile.config, inventory).into_iter().map(|current| {
         let previous = profile.bindings.iter().find(|b| b.receiver_id == current.receiver_id);
         let state = match current.source_kind.as_str() {
-            "ble_pcap" | "wifi_pcap" => "not_a_device",
+            "ble_pcap" | "wifi_pcap" | "marauder_capture" => "not_a_device",
             "external_wifi" => "selector_requires_review",
             "native_ble" if current.selector.is_some() => "selector_requires_review",
             _ if current.device_ids.is_empty() => "missing",
@@ -412,7 +412,7 @@ pub fn check_resources(config: &Value) -> Value {
                 ("module_path", "optional_directory"),
             ],
             Some("external_wifi") => &[("executable", "executable"), ("firmware", "file")],
-            Some("ble_pcap" | "wifi_pcap") => &[("path", "file")],
+            Some("ble_pcap" | "wifi_pcap" | "marauder_capture") => &[("path", "file")],
             _ => &[],
         };
         for (field, expected) in fields {

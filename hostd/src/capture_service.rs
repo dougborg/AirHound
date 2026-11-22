@@ -230,7 +230,7 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
     let replay = plan.receivers.iter().all(|receiver| {
         matches!(
             receiver.source,
-            Source::BlePcap { .. } | Source::WifiPcap { .. }
+            Source::BlePcap { .. } | Source::WifiPcap { .. } | Source::MarauderCapture { .. }
         )
     });
     let mut sources: Vec<_> = plan
@@ -357,6 +357,80 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn marauder_replay_reaches_durable_records_with_boot_clock_and_unknown_radio_fields() {
+        for format in ["pcap", "serial"] {
+            let fixture = Fixture::new();
+            let path = fixture.0.join("marauder.capture");
+            let bytes = crate::marauder_replay::tests::fixture_bytes();
+            std::fs::write(
+                &path,
+                if format == "serial" {
+                    [b"[BUF/BEGIN]".as_slice(), &bytes, b"[BUF/CLOSE]"].concat()
+                } else {
+                    bytes
+                },
+            )
+            .unwrap();
+            let (handle, actor) = spawn(fixture.path());
+            let config = json!({"version":1,"receivers":[{"id":"awok-file","source":{"kind":"marauder_capture","path":path,"format":format}}]});
+            let started = handle
+                .request(Action::Start {
+                    request_id: format.into(),
+                    config,
+                })
+                .await
+                .unwrap();
+            let id = started["run_id"].as_str().unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let status = handle.request(Action::Status).await.unwrap();
+                    if status["active"] == false {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            handle.request(Action::Shutdown).await.unwrap();
+            actor.await.unwrap().unwrap();
+            let reader = storage::Reader::open(&fixture.path()).unwrap();
+            let records = reader.records(id, 0, 100).unwrap().records;
+            let packets: Vec<_> = records
+                .iter()
+                .filter(|r| r.kind == "wifi_packet_observation")
+                .collect();
+            assert_eq!(packets.len(), 2);
+            let value = &packets[0].payload;
+            assert_eq!(value["mac"], "02:01:02:03:04:05");
+            assert_eq!(value["ssid"], "fixture");
+            assert_eq!(value["timestamp_micros32"], u32::MAX);
+            assert_eq!(
+                value["timestamp_clock"],
+                "device_boot_micros32_wrap_or_reset_unknown"
+            );
+            assert_eq!(value["session_source"]["receiver_id"], "awok-file");
+            assert_eq!(value["replay"], true);
+            assert_eq!(value["firmware_version_verified"], false);
+            for key in [
+                "rssi",
+                "rssi_dbm",
+                "receive_channel",
+                "channel",
+                "gps",
+                "receiver_location",
+                "capture",
+            ] {
+                assert!(value[key].is_null(), "unexpected {key}");
+            }
+            assert!(value["detection"].is_object());
+            assert_eq!(packets[1].payload["timestamp_micros32"], 7);
+            assert!(packets[1].payload["mac"].is_null());
+            assert!(packets[1].payload["detection"].is_null());
         }
     }
 
