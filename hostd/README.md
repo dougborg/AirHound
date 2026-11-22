@@ -368,6 +368,9 @@ The bounded queue fails explicitly on overflow; an enqueue is not a durable
 commit. A successful capture exit waits for accepted records to commit before
 marking the run finished. Failed capture preserves committed records with a
 failed state; reopening a writer marks unclosed runs interrupted.
+Stdin `stop`/`start` commands retain their replies and commit pause/resume
+transitions before acknowledgement. Those transitions describe requested scan
+state; per-receiver health remains the evidence for actual radio readiness.
 
 Schema migrations run in transactions and verify immutable migration checksums.
 Unknown databases and newer schema versions are rejected. There is no downgrade

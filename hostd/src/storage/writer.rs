@@ -15,6 +15,10 @@ use std::{
 const QUEUE_RECORDS: usize = 128;
 enum Command {
     Record(RecordInput),
+    Transition {
+        paused: bool,
+        ack: mpsc::SyncSender<io::Result<()>>,
+    },
     Finish(bool),
 }
 type Failure = Arc<Mutex<Option<String>>>;
@@ -27,6 +31,29 @@ pub struct Writer {
 }
 
 impl Writer {
+    /// Queue a lifecycle barrier without blocking ingestion. The returned
+    /// acknowledgement is sent only after the transition transaction commits.
+    pub fn transition(&self, paused: bool) -> io::Result<mpsc::Receiver<io::Result<()>>> {
+        check(&self.failure)?;
+        let (ack, received) = mpsc::sync_channel(1);
+        let result = self
+            .sender
+            .as_ref()
+            .expect("live writer")
+            .try_send(Command::Transition { paused, ack })
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "recording queue full during transition",
+                ),
+                mpsc::TrySendError::Disconnected(_) => io::Error::other("recording writer stopped"),
+            });
+        if let Err(error) = &result {
+            self.fail(&error.to_string());
+        }
+        result?;
+        Ok(received)
+    }
     pub(crate) fn fail(&self, message: &str) {
         remember(&self.failure, message.to_owned());
     }
@@ -197,6 +224,23 @@ fn consume(
                 };
                 store.transition(run, state, "capture stopped; accepted records committed")?;
                 return healthy;
+            }
+            Some(Command::Transition { paused, ack }) => {
+                let result = store.transition(
+                    run,
+                    if paused { "paused" } else { "recording" },
+                    if paused {
+                        "pause requested; receiver stop acknowledgement is separate"
+                    } else {
+                        "resume requested; receiver readiness is separate"
+                    },
+                );
+                let reply = result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| io::Error::new(error.kind(), error.to_string()));
+                let _ = ack.send(reply);
+                result?;
             }
             None => return Ok(()),
         }
