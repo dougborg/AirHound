@@ -99,11 +99,14 @@ struct MainView: View {
           } label: {
             Label("Open recording", systemImage: "folder")
           }
+          .disabled(model.loadingRecording)
           Button {
             model.loadExample()
           } label: {
             Label("Example", systemImage: "doc.text")
           }
+          .disabled(model.loadingRecording)
+          if model.loadingRecording { ProgressView("Loading recording…").controlSize(.small) }
           Button {
             showInspector.toggle()
           } label: {
@@ -156,7 +159,7 @@ struct InspectorView: View {
             field("Protocol", row.medium)
             field("Receiver", row.receiver)
             field("Address / ID", row.address)
-            field("Signal", row.signal + " dBm")
+            field("Signal", row.signalDescription)
             field("Channel", row.channel)
             field("Frequency", row.frequency)
             field("Band", row.band)

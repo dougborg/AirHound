@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct Observation: Identifiable {
@@ -8,6 +9,7 @@ public struct Observation: Identifiable {
   public let address: String
   public let rssi: Int?
   public var signal: String { rssi.map(String.init) ?? "Unknown" }
+  public var signalDescription: String { rssi.map { "\($0) dBm" } ?? "Unknown" }
   public let channel: String
   public let frequency: String
   public let band: String
@@ -60,6 +62,8 @@ public struct Recording {
       let evidence: [Any] = detection.isEmpty ? [] : [detection]
       let matched =
         detection["matched"] as? Bool == true || !(detection["sig"] as? [Any] ?? []).isEmpty
+        || ["suppressed", "watchlist", "rule", "match"].contains(
+          detection["alert"] as? String ?? "")
         || !(detection["rules"] as? [Any] ?? []).isEmpty
         || !(object["match"] as? [Any] ?? []).isEmpty
       let advertisement = object["advertisement"] as? [String: Any] ?? [:]
@@ -73,6 +77,13 @@ public struct Recording {
       }
       let pretty = try JSONSerialization.data(
         withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+      // Native WiFi ch=0 means unavailable; BLE data channel 0 is valid.
+      let channelNumber: Int?
+      if let nativeChannel = object["ch"] as? Int {
+        channelNumber = nativeChannel == 0 ? nil : nativeChannel
+      } else {
+        channelNumber = object["receive_channel"] as? Int ?? object["channel"] as? Int
+      }
       rows.append(
         Observation(
           id: lineNumber,
@@ -82,8 +93,7 @@ public struct Recording {
             ?? "Not reported",
           address: object["mac"] as? String ?? object["address"] as? String ?? object["bssid"]
             as? String ?? object["peripheral_id"] as? String ?? "Not reported", rssi: signal,
-          channel: (object["ch"] as? Int ?? object["receive_channel"] as? Int ?? object["channel"]
-            as? Int).map(String.init) ?? "Not reported",
+          channel: channelNumber.map(String.init) ?? "Not reported",
           frequency: (object["frequency_mhz"] as? Int).map { "\($0) MHz" } ?? "Not reported",
           band: object["band"] as? String ?? "Not reported",
           phy: object["phy"] as? String ?? "Not reported",
@@ -100,8 +110,19 @@ public struct Recording {
   }
 
   public static func load(_ url: URL) throws -> Self {
-    let handle = try FileHandle(forReadingFrom: url)
+    // Check the opened descriptor, not a pathname that could change before open.
+    let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+    guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     defer { try? handle.close() }
+    var metadata = stat()
+    guard fstat(descriptor, &metadata) == 0 else {
+      throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    guard metadata.st_mode & S_IFMT == S_IFREG else {
+      throw ModelError.invalid("Choose a regular NDJSON file, not a directory, pipe or device")
+    }
+    guard metadata.st_size <= byteLimit else { throw ModelError.invalid("Recording exceeds 8 MiB") }
     let bytes = try handle.read(upToCount: byteLimit + 1) ?? Data()
     return try decode(bytes)
   }

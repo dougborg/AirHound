@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class AppModel: ObservableObject {
   @Published var recording: Recording?
+  @Published var loadingRecording = false
   @Published var recordingLabel = "No recording open"
   @Published var isExample = false
   @Published var recordingRevision = UUID()
@@ -58,6 +59,7 @@ final class AppModel: ObservableObject {
   }
 
   func loadExample() {
+    guard !loadingRecording else { return }
     do {
       guard
         let url = Bundle.main.url(forResource: "example", withExtension: "ndjson")
@@ -72,6 +74,7 @@ final class AppModel: ObservableObject {
     } catch { self.error = error.localizedDescription }
   }
   func openRecording() {
+    guard !loadingRecording else { return }
     let panel = NSOpenPanel()
     panel.title = "Open hostd recording"
     panel.message =
@@ -79,13 +82,18 @@ final class AppModel: ObservableObject {
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    do {
-      let loaded = try Recording.load(url)
-      recording = loaded
-      recordingLabel = "Recording: " + url.lastPathComponent
-      isExample = false
-      recordingRevision = UUID()
-    } catch { self.error = error.localizedDescription }
+    loadingRecording = true
+    Task {
+      defer { loadingRecording = false }
+      do {
+        let loaded = try await Task.detached(priority: .userInitiated) { try Recording.load(url) }
+          .value
+        recording = loaded
+        recordingLabel = "Recording: " + url.lastPathComponent
+        isExample = false
+        recordingRevision = UUID()
+      } catch { self.error = error.localizedDescription }
+    }
   }
 }
 
@@ -115,7 +123,9 @@ struct AirHoundApp: App {
     .commands {
       CommandGroup(replacing: .newItem) {
         Button("Open Recording…") { model.openRecording() }.keyboardShortcut("o")
+          .disabled(model.loadingRecording)
         Button("Open Example Recording") { model.loadExample() }
+          .disabled(model.loadingRecording)
         Divider()
         Button("Devices…") { model.showDevices = true }.keyboardShortcut(
           "d", modifiers: [.command, .shift])
