@@ -72,6 +72,8 @@ pub struct Receiver {
     pub capability_query: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub producer_identity: Option<ProducerIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_identity: Option<airhound_hostd::external_identity::Identity>,
 }
 
 pub fn backend() -> &'static str {
@@ -130,6 +132,7 @@ fn descriptor(
     };
     Ok(Receiver {
         producer_identity: None,
+        external_identity: None,
         backend: platform,
         adapter_id,
         adapter_info: info,

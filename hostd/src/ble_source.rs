@@ -169,6 +169,7 @@ pub async fn scan(
     };
     control.set_receiver(crate::receiver::Receiver {
         producer_identity: None,
+        external_identity: None,
         backend,
         adapter_id: id,
         adapter_info: info,
@@ -330,6 +331,7 @@ mod tests {
         let c = ScanControl::new(true);
         c.set_receiver(crate::receiver::Receiver {
             producer_identity: None,
+            external_identity: None,
             backend: "sniffle",
             adapter_id: "sniffle:/dev/test".into(),
             adapter_info: "unidentified".into(),

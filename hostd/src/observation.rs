@@ -42,6 +42,7 @@ pub enum ScanEvent {
         generation: u64,
     },
     ExternalStatus {
+        identity: airhound_hostd::external_identity::Identity,
         usb_selector: Option<String>,
         state: String,
         dropped: u64,

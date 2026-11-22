@@ -303,3 +303,27 @@ the original hardware. No serial-number authentication is claimed.
 Selection/reconnect behavior and independent channel plans are covered by fake
 USB/companion tests. Simultaneous capture with two physical ALFAs remains a
 separate hardware acceptance check; a single attached adapter cannot validate it.
+
+## Helper and firmware identity
+
+`mt7610u-lab build-info` reports the executable's package version and compiled
+source revision/tag/modified state without opening USB or reading firmware.
+A package version alone is not a release claim; source archives without Git
+metadata explicitly report the revision/state as unknown. This build information
+also appears in the stream's `hello.helper_build` object.
+
+Stream status includes `firmware.supplied_image` with the parsed image header
+`version`, `build_version`, `build_time` and SHA-256. These are raw header values,
+not a fabricated semantic version. Supplying a file does not identify the MCU's
+running firmware: the existing loader can reuse an already-ready MCU.
+`load_state: uploaded_this_initialization` and `uploaded_image` are emitted only
+after this initialization uploaded that file and receiver preparation succeeded.
+A reused MCU reports `running_image_unverified`; shutdown/recovery clears the
+uploaded-image claim. The helper does not read back or attest MCU firmware bytes.
+
+AirHound retains this independently reported metadata in current receiver health
+and durable companion status events. Older helpers that omit it remain supported
+with identity unreported. No helper is executed merely to display passive device
+inventory, and OS inventory IDs are not guessed to be libusb selectors. Active
+metadata may enrich an inventory row only when an exact selector mapping already
+exists; otherwise inspect the configured receiver's current status.
