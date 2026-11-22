@@ -58,7 +58,8 @@ retrying. The receiver never searches for a substitute endpoint. If a symlink
 resolves to a different endpoint after reconnection, the plan needs explicit review.
 
 Pause terminates and reaps the owned capture helper, keeps the serial lease, and
-suspends the outage budget. Resume starts a fresh budget. Finish cancels pending
+suspends the outage budget. This pauses host capture; it does not prove that the
+radio firmware stopped sampling. Resume starts a fresh budget. Finish cancels pending
 reads or backoff and releases ownership only after the helper is reaped. A separate
 supervisor also retains the lease during cleanup if the async receiver is aborted.
 These are cooperative AirHound locks, not protection against unrelated tools.
