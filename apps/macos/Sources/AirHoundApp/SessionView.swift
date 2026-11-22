@@ -16,6 +16,9 @@ struct SessionView: View {
               if let identity = session.currentReceiverIdentity(id: receiver.id) {
                 Text(identity["adapter_info"]?.string ?? "Identity unreported").font(.caption)
                   .foregroundStyle(.secondary)
+                if let companion = identity["external_identity"], companion != .null {
+                  CompanionIdentityDetails(identity: companion)
+                }
                 if let producer = identity["producer_identity"] {
                   Text(
                     "\(producer["application"]?.string ?? "Firmware") \(producer["version"]?.string ?? "version unreported") · \(producer["board"]?.string ?? "board unreported")"
@@ -112,6 +115,9 @@ struct SessionView: View {
             )
             .font(.caption).monospacedDigit()
           }
+        }
+        if let location = session.capture?["receiver_health"]?["location"], location != .null {
+          LocationProviderStatus(status: location)
         }
         if session.healthCatchingUp {
           Text("Catching up on receiver metrics; counters may be behind capture.").font(.caption)
