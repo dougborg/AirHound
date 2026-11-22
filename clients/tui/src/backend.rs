@@ -4,8 +4,8 @@ use serde_json::Value;
 use std::{io, path::Path, time::Duration};
 use tokio::io::AsyncReadExt;
 
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-pub const OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+pub const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const CONFIG_LIMIT: u64 = airhound_api::MAX_CONFIG_BYTES as u64;
 
 pub struct Snapshot {

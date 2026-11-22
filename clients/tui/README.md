@@ -38,9 +38,9 @@ working-radio claims. Failed refreshes keep the prior inventory labeled stale;
 selection follows stable device ID across reordered refreshes. Validation results
 are separate from inventory and never imply a live session.
 
-One request operation runs at a time. The shared client enforces a five-second
+One request operation runs at a time. The shared client enforces a twenty-second
 request deadline and 1 MiB framing bound; complete refresh/validation operations
-have a fifteen-second bound. Session files are limited to the shared API's 64 KiB
+have a thirty-second bound. Session files are limited to the shared API's 64 KiB
 limit and opened nonblocking before validating the handle's regular-file type.
 Terminal control characters are removed from plain backend labels/errors; raw
 JSON escapes them. Closing the client cancels outstanding requests and detaches;

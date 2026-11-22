@@ -15,6 +15,7 @@ name = "airhound-client"
 version = "0.1.0"
 dependencies = [
  "airhound-api",
+ "libc",
  "serde",
  "serde_json",
  "tokio",
