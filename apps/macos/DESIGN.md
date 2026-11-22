@@ -58,3 +58,6 @@ receiver and GPS settings cannot hide Start, Pause/Resume or Finish. Background
 status polling does not flash controls disabled or display a recording-operation
 spinner. Completed-run health is labeled historical while the live service state
 reads Idle; replaying stored health must not imply that a receiver is still running.
+The health pane scrolls independently above the recordings list in a native
+vertical split, leaving a usable recordings area even with several receivers
+and a GPS provider at the minimum window height.
