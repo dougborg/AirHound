@@ -93,6 +93,18 @@ class SniffleOwnershipTests(unittest.TestCase):
             with patch.object(helper, 'LEASE_ROOT', directory):
                 with helper.port_lease(port): pass
 
+    def test_invalid_borrowed_fd_is_terminal_before_device_access(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / 'locks'
+            directory.mkdir(mode=0o700)
+            with patch.object(helper, 'LEASE_ROOT', directory):
+                for fd in (-1, 0, 999999):
+                    with self.assertRaises(helper.HelperError) as raised:
+                        with helper.borrowed_port_lease('/dev/missing-fixture', fd):
+                            self.fail('invalid inherited FD accepted')
+                    self.assertEqual(raised.exception.code, 'invalid_borrowed_lease')
+                    self.assertFalse(raised.exception.retryable)
+
     def _check_two_processes(self, first_identify):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)

@@ -137,9 +137,11 @@ impl Child {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     #[tokio::test]
     async fn cancelled_caller_keeps_ownership_until_child_exit_and_reap() {
+        let _test = TEST_LOCK.lock().await;
         let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
         let mut command = Command::new("python3");
         command.args([
@@ -180,5 +182,58 @@ mod tests {
         assert!(Child::spawn(command, lease.clone(), true).await.is_err());
         drop(lease);
         assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_ok());
+    }
+    #[tokio::test]
+    async fn cancellation_during_pending_exec_reaps_before_releasing_lease() {
+        use std::os::{
+            fd::AsRawFd,
+            unix::{net::UnixStream, process::CommandExt},
+        };
+        let _test = TEST_LOCK.lock().await;
+        let (parent, gate) = UnixStream::pair().unwrap();
+        parent.set_nonblocking(true).unwrap();
+        let mut parent = tokio::net::UnixStream::from_std(parent).unwrap();
+        let gate_fd = gate.as_raw_fd();
+        let lease = Arc::new(airhound_hostd::serial_lease::acquire("/dev/null").unwrap());
+        let mut command = Command::new("python3");
+        command.args(["-c", "import time;time.sleep(30)"]);
+        // The startup handshake cannot complete until this controlled pre-exec
+        // gate opens. Only async-signal-safe libc calls run in the forked child.
+        unsafe {
+            command.pre_exec(move || {
+                let pid = libc::getpid().to_ne_bytes();
+                if libc::write(gate_fd, pid.as_ptr().cast(), pid.len()) != pid.len() as isize {
+                    return Err(io::Error::from_raw_os_error(libc::EIO));
+                }
+                let mut release = [0u8];
+                if libc::read(gate_fd, release.as_mut_ptr().cast(), 1) != 1 {
+                    return Err(io::Error::from_raw_os_error(libc::ECANCELED));
+                }
+                Ok(())
+            });
+        }
+        let child = Child::start(command, lease.clone(), true).unwrap();
+        let mut bytes = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(2), parent.read_exact(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        let pid = i32::from_ne_bytes(bytes);
+        drop(child); // Cancel while Command::spawn is still waiting for exec.
+        drop(lease);
+        assert!(airhound_hostd::serial_lease::acquire("/dev/null").is_err());
+        parent.write_all(b"x").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(guard) = airhound_hostd::serial_lease::acquire("/dev/null") {
+                    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+                    drop(guard);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

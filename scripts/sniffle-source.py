@@ -85,21 +85,24 @@ def borrowed_port_lease(port, fd):
     open UART. Re-locking the inherited descriptor proves it is not blocked by
     another owner; unlike a separate open, this preserves the parent's flock.
     """
-    if fd < 3:
-        raise HelperError('invalid_borrowed_lease', False)
-    metadata = LEASE_ROOT.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise HelperError('invalid_borrowed_lease', False)
-    name = hashlib.sha256(port_identity(port).encode()).hexdigest() + '.lock'
-    expected = (LEASE_ROOT / name).lstat()
-    actual = os.fstat(fd)
-    if (not stat.S_ISREG(expected.st_mode) or not stat.S_ISREG(actual.st_mode)
-            or expected.st_uid != os.geteuid() or actual.st_uid != os.geteuid()
-            or stat.S_IMODE(expected.st_mode) != 0o600 or stat.S_IMODE(actual.st_mode) != 0o600
-            or (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino)):
-        raise HelperError('invalid_borrowed_lease', False)
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    os.set_inheritable(fd, False)
+    try:
+        if fd < 3:
+            raise HelperError('invalid_borrowed_lease', False)
+        metadata = LEASE_ROOT.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise HelperError('invalid_borrowed_lease', False)
+        name = hashlib.sha256(port_identity(port).encode()).hexdigest() + '.lock'
+        expected = (LEASE_ROOT / name).lstat()
+        actual = os.fstat(fd)
+        if (not stat.S_ISREG(expected.st_mode) or not stat.S_ISREG(actual.st_mode)
+                or expected.st_uid != os.geteuid() or actual.st_uid != os.geteuid()
+                or stat.S_IMODE(expected.st_mode) != 0o600 or stat.S_IMODE(actual.st_mode) != 0o600
+                or (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino)):
+            raise HelperError('invalid_borrowed_lease', False)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.set_inheritable(fd, False)
+    except (OSError, ValueError) as error:
+        raise HelperError('invalid_borrowed_lease', False) from error
     try:
         yield
     finally:
