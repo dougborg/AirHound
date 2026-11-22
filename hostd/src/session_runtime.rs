@@ -31,10 +31,22 @@ pub(crate) struct EventSource {
 
 pub(crate) fn load(path: &std::path::Path) -> io::Result<SessionConfig> {
     use std::io::Read;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session configuration must be a regular file",
+        ));
+    }
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(65_537)
-        .read_to_end(&mut bytes)?;
+    file.take(65_537).read_to_end(&mut bytes)?;
     if bytes.len() > 65_536 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -44,6 +56,53 @@ pub(crate) fn load(path: &std::path::Path) -> io::Result<SessionConfig> {
     serde_json::from_slice::<SessionConfig>(&bytes)
         .map_err(io::Error::other)?
         .resolve()
+}
+
+/// The same load/prepare preflight used by a real session, without invoking any
+/// source future. File/USB permissions, firmware and RF capabilities are unverified.
+pub(crate) async fn write_preview(
+    path: &std::path::Path,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    let result = async {
+        let plan = load(path)?;
+        let tasks = prepare(plan.clone()).await?;
+        let assignments: Vec<_> = tasks
+            .iter()
+            .map(|task| {
+                serde_json::json!({
+                    "receiver_id": task.id,
+                    "requested_assignment": task.assignment,
+                    "shutdown_budget_ms": task.shutdown_budget.as_millis(),
+                })
+            })
+            .collect();
+        Ok::<_, io::Error>((plan, assignments))
+    }
+    .await;
+    match result {
+        Ok((plan, assignments)) => observation::write_json(
+            output,
+            &serde_json::json!({
+                "type": "session_validation", "schema_version": 1, "valid": true,
+                "validation_scope": "configuration_and_local_resource_metadata",
+                "readiness": "unverified", "resolved_config": plan,
+                "receivers": assignments,
+            }),
+        ),
+        Err(error) => {
+            observation::write_json(
+                output,
+                &serde_json::json!({
+                    "type": "session_validation", "schema_version": 1, "valid": false,
+                    "validation_scope": "configuration_and_local_resource_metadata",
+                    "readiness": "unverified",
+                    "error": {"code": "invalid_session", "message": error.to_string()},
+                }),
+            )?;
+            Err(error)
+        }
+    }
 }
 
 pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>> {

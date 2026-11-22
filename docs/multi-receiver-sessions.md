@@ -248,3 +248,31 @@ and Marauder imports remain forced silent; use each observation's
 `detection.policy`/`detection.alert` as the effective result rather than assuming
 the selected policy overrides those restrictions. No OS notification delivery is
 implemented by this setting.
+
+## Preview a session without scanning
+
+Use the backend's preflight before starting a session from a CLI or frontend:
+
+```sh
+airhound-hostd session validate --config session.json
+```
+
+This emits one `session_validation` JSON record with `schema_version: 1`.
+Successful validation exits zero and includes `resolved_config` plus per-receiver
+`requested_assignment` and shutdown budgets. It runs the same plan resolution,
+platform checks and local resource metadata checks as session startup, including
+automatic Sniffle primary-channel allocation. It does not initialize radios,
+execute helpers, request scanner permissions or create capture files.
+
+`valid: true` means the configuration passed these checks; `readiness` remains
+`unverified`. Hardware, firmware, helper executability and permissions can still
+fail at startup. The preview is not a reservation: validate again when starting.
+Invalid configuration emits `valid: false` and a structured `error` with code
+`invalid_session`, then exits nonzero. Invalid CLI syntax uses the usual CLI
+usage error. The input must be a regular file of at most 64 KiB.
+
+This command is an initial shared-backend interface for SwiftUI, the planned TUI
+and MCP adapter. It does not attach to a running backend; persistent service and
+client ownership semantics are tracked in
+[#238](https://github.com/dougborg/AirHound/issues/238).
+
