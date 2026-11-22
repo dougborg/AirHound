@@ -50,6 +50,12 @@ struct SessionView: View {
             .foregroundStyle(.secondary)
           }
           AvailableReceivers(session: session)
+          if session.connected && session.sessionSources.contains("marauder_capture") {
+            Menu("Add Saved Marauder Capture") {
+              Button("PCAP…") { addMarauderCapture(format: "pcap") }
+              Button("Serial capture…") { addMarauderCapture(format: "serial") }
+            }.disabled(!session.canAddMarauderCapture)
+          }
         }
         LocationSettings(session: session)
         Section("Scan plan") {
@@ -179,6 +185,16 @@ struct SessionView: View {
     } message: {
       Text(session.error ?? "")
     }
+  }
+  private func addMarauderCapture(format: String) {
+    let panel = NSOpenPanel()
+    panel.title = format == "pcap" ? "Choose Marauder PCAP" : "Choose saved Marauder serial capture"
+    panel.message = "Adds a saved capture to the plan. No device connection or recording starts."
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    session.addMarauderCapture(url: url, format: format)
   }
   private func importPlan() {
     let panel = NSOpenPanel()

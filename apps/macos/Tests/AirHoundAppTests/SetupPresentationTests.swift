@@ -26,6 +26,47 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertEqual(session.configText, unchanged)
   }
 
+  func testMarauderCaptureRequiresCapabilityAndPreservesPlan() throws {
+    let suite = "marauder-plan-" + UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let session = SessionModel(preferences: defaults)
+    session.configText =
+      #"{"version":1,"alert_policy":"silent","location":{"kind":"gpsd","endpoint":"127.0.0.1:2947"},"receivers":[{"id":"sensor","source":{"kind":"native_ble"}}]}"#
+    let original = session.configText
+    let file = URL(fileURLWithPath: "/tmp/saved Marauder.pcap")
+    session.connected = true
+    session.addMarauderCapture(url: file, format: "pcap")
+    XCTAssertEqual(
+      session.configText, original, "An older backend cannot add an unsupported source")
+    session.sessionSources = ["marauder_capture"]
+    session.error = nil
+    session.beginBackgroundRefresh()
+    session.addMarauderCapture(url: file, format: "pcap")
+    session.finishBackgroundRefresh()
+    XCTAssertNil(session.error)
+    XCTAssertEqual(session.plannedReceivers.count, 2)
+    let added = try XCTUnwrap(session.plannedReceivers.last)
+    XCTAssertEqual(added.title, "Saved Marauder capture")
+    XCTAssertEqual(added.source["format"], .string("pcap"))
+    XCTAssertEqual(added.source["path"], .string(file.path))
+    let config = try JSONDecoder().decode(JSONValue.self, from: Data(session.configText.utf8))
+    XCTAssertEqual(config["alert_policy"], .string("silent"))
+    XCTAssertEqual(config["location"]?["kind"], .string("gpsd"))
+    XCTAssertFalse(session.isActive, "Adding a file never starts a recording")
+    let valid = session.configText
+    session.addMarauderCapture(url: file, format: "guess")
+    XCTAssertEqual(session.configText, valid)
+    session.connected = false
+    session.addMarauderCapture(url: file, format: "serial")
+    XCTAssertEqual(
+      session.configText, valid, "Cached capabilities cannot authorize a disconnected backend")
+    session.connected = true
+    session.capture = .object(["active": .bool(true)])
+    session.addMarauderCapture(url: file, format: "serial")
+    XCTAssertEqual(session.configText, valid, "The active plan cannot be edited")
+  }
+
   func testSetupIntentWaitsForPollingAndRunsOnce() async throws {
     let session = SessionModel()
     session.connected = true
