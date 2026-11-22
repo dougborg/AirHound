@@ -4,6 +4,7 @@
 use heapless::{String, Vec};
 use serde::Deserialize;
 
+pub mod bridge;
 pub mod diagnostic;
 mod syntax;
 
