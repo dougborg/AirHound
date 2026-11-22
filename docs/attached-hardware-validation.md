@@ -188,6 +188,77 @@ Start rejection and stale Finish confirmation targets; user retry of the install
 GUI controls remains pending. These tests do not replace an actual GUI-driven
 hardware recording.
 
+## Installed recovery update
+
+[#292](https://github.com/dougborg/AirHound/pull/292) and
+[#294](https://github.com/dougborg/AirHound/pull/294) are merged. The installed
+application now combines GUI source `41f704a` (including the reviewed capture
+controls) with backend source `33a5e93`. These are the actual component builds,
+not a claim that an earlier artifact was rebuilt from the merge commit. The final
+merged tree differs from this composition only in a test-only GPS fixture fix.
+The installed signed backend SHA-256 is
+`20cf48cfb1930b7c3e7b889dd7d2091c257420b08f6699d9fa1d2e7bdb5e4365`;
+its unsigned input was separately recorded. All 14 file-backed Mach-O sections
+matched before and after signing. Strict signatures and private LaunchServices
+startup checks passed independently.
+
+The compatible immutable helper bundle is
+`848dad314647df61667eff49b4e4e613f97442fcb16231a08fd8edfcc6689925`.
+Its Sniffle helper advertises the supervised borrowed-lease contract. A real,
+private CatSniffer-only run using these exact artifacts lasted 21.34 seconds and
+persisted 1,069 channel-37 BLE packets with Sniffle 1.11.0/API 0 identity and zero
+reported host drops. This used actual 921600-baud serial transport, without the
+PTY baud shim used by the earlier synthetic test. Pause reaped the owned helper,
+cleared its firmware identity and retained the serial lease; no observations
+were stored during the settled pause. Resume used a new helper/generation and received
+more packets. Finish released the port and lease, and the private service exited
+zero. SQLite integrity and per-source attribution passed independent checks.
+There was **no physical unplug/replug** in this test.
+
+Installation occurred only after verifying that the default service was idle.
+The complete previous signed application, helper pointer, original profiles and a
+consistent recording database backup were preserved. A private restoration
+rehearsal verified the old signed application and original pointer bytes; no live
+downgrade was performed. The initial installer invocation refused to replace an
+existing pointer; the transition stopped before launching the new service. The
+explicitly reviewed helper-only replacement then activated the new pointer while
+retaining both immutable bundles. No profile replacement option was used.
+
+Independent before/after checks found exact equality across all six recording
+database tables: 38,813 records, eight runs and their source/receipt/transition
+rows were preserved. The original **Attached receiver rig** setup remained
+unchanged. A create-only sibling, **Attached receiver rig (USB recovery)**,
+changes only CatSniffer's Python, helper and module paths. Loading it validates
+configuration and local resources without applying it or starting capture. The
+M5 endpoint is currently missing; CatSniffer endpoint and ALFA topology checks
+still require identity review. Earlier successful M5 reception does not prove
+that it is attached now. The updated GUI was reopened with the service idle.
+
+A separate, receipt-owned 20-second native WiFi/BLE check on the updated service
+then produced zero observations and ended in a **failed** terminal state. The
+screen was locked. OS diagnostics recorded a Bluetooth prompt for
+`tools.airhound.desktop`, requested by the installed `tools.airhound.service`,
+and a Location prompt for that same nested service. Location remained
+`NotDetermined`; WiFi reported redacted addresses and Bluetooth initialization
+failed. Only the test run was finished; the service stayed running and all prior
+recordings/profiles were preserved. No privacy setting was reset and no prompt
+was approved automatically. This is pending user authorization, not native-radio
+acceptance for the new binary. Unlock the Mac and approve **AirHound** Bluetooth
+and **AirHound Service** Location before repeating the bounded check with the
+same installed service.
+
+At the reviewed #294 head, all 19 required checks and the relevant native,
+packaging, performance, website and CodeQL workflows passed. Desktop line
+coverage was 84.54% on macOS and 84.38% on Linux; function coverage was 81.98% and
+81.95%, respectively. Test bodies were excluded and no physical hardware was
+exercised by coverage. Linux region coverage was 79.98%, so these results do not
+mean every coverage metric exceeds 80%.
+
+Physical CatSniffer reconnect remains tracked in
+[#290](https://github.com/dougborg/AirHound/issues/290). The full hardware milestone
+[#269](https://github.com/dougborg/AirHound/issues/269), native GUI Start/Finish
+acceptance, reattached M5 verification and native permission retry remain open.
+
 ## Flipper and AWOK follow-up
 
 After USB reconnect, the Flipper's fresh identity and GPIO `info` exchange succeeded.
@@ -219,7 +290,10 @@ screen/control review; metadata recognition alone is not capture acceptance.
 
 ## Remaining acceptance
 
-- Exercise **Attached receiver rig** through the native Load, Start Recording
+- Approve the updated installed application's pending Bluetooth and Location
+  prompts, then repeat native reception without rebuilding or resetting privacy
+  settings. Reconnect and verify the M5 before claiming the complete rig is ready.
+- Exercise **Attached receiver rig (USB recovery)** through the native Load, Start Recording
   and Finish Recording controls. Actual GUI service launch and native observation
   presentation passed; the combined capture above used CLI controls against that
   GUI-launched service. A GUI-control observer timed out without starting a run
