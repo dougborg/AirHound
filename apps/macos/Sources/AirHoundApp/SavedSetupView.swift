@@ -63,6 +63,12 @@ struct SavedSetupView: View {
       VStack(alignment: .leading, spacing: 16) {
         Text(review.name).font(.title2)
         Text("Review this setup before applying it to the plan.").foregroundStyle(.secondary)
+        if let origin = review.raw["origin_check"]?["state"]?.string {
+          Text(
+            "Saved setup origin: \(origin.replacingOccurrences(of: "_", with: " ")). Physical device identity is not verified."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+        }
         ScrollView {
           VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(review.checks.enumerated()), id: \.offset) { _, check in
