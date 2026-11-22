@@ -14,23 +14,7 @@ struct SessionView: View {
             ForEach(inventory.receiverChoices) { choice in
               let candidate = choice.candidate
               let key = choice.id
-              Toggle(
-                isOn: Binding(
-                  get: { session.selected.contains(key) },
-                  set: {
-                    if $0 { session.selected.insert(key) } else { session.selected.remove(key) }
-                    session.useSelectedReceivers()
-                  })
-              ) {
-                VStack(alignment: .leading) {
-                  Text(candidate.label)
-                  Text(
-                    "\(choice.deviceName) · \(candidate.statusDescription)"
-                  )
-                  .font(.caption).foregroundStyle(.secondary)
-                }
-              }.disabled(candidate.configurationHint == nil || session.isActive || session.busy)
-              DisclosureGroup("Identification details") {
+              DisclosureGroup {
                 Text(candidate.evidence.joined(separator: "\n"))
                   .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 if !candidate.requirements.isEmpty {
@@ -40,14 +24,31 @@ struct SessionView: View {
                   )
                   .font(.caption).textSelection(.enabled)
                 }
-              }
-              if session.selected.contains(key), let source = candidate.configurationHint,
-                ["sniffle", "external_wifi"].contains(candidate.kind)
-              {
-                ReceiverSettings(
-                  session: session, key: key, kind: candidate.kind, source: source
-                )
-                .disabled(session.isActive || session.busy)
+                if session.selected.contains(key), let source = candidate.configurationHint,
+                  ["sniffle", "external_wifi"].contains(candidate.kind)
+                {
+                  ReceiverSettings(
+                    session: session, key: key, kind: candidate.kind, source: source
+                  )
+                  .disabled(session.isActive || session.busy)
+                }
+              } label: {
+                Toggle(
+                  isOn: Binding(
+                    get: { session.selected.contains(key) },
+                    set: {
+                      if $0 { session.selected.insert(key) } else { session.selected.remove(key) }
+                      session.useSelectedReceivers()
+                    })
+                ) {
+                  VStack(alignment: .leading) {
+                    Text(candidate.label)
+                    Text(
+                      "\(choice.deviceName) · \(candidate.statusDescription)"
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                  }
+                }.disabled(candidate.configurationHint == nil || session.isActive || session.busy)
               }
             }
             ForEach(Array(inventory.diagnostics.enumerated()), id: \.offset) { _, diagnostic in

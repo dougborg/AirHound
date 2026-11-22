@@ -6,7 +6,7 @@ The preview is under acceptance, not a signed-off production release.
 | Requirement | Evidence | Status |
 | --- | --- | --- |
 | Shared Rust capture/control boundary | Swift uses the shared Rust CLI client; no Swift scan/policy/database implementation | Implemented |
-| Discover/select/default setup | Native candidate controls and native Wi-Fi/BLE defaults; app-model service test | Automated model check passes; visual check pending |
+| Discover/select/default setup | Native candidate controls and native Wi-Fi/BLE defaults; app-model service test | Automated model check passes; user confirmed connection and expandable receiver details on 2026-11-22 |
 | Advanced receiver/channel setup | ALFA/CatSniffer fields plus backend-validated JSON/import | Compiles; native interaction check pending |
 | Durable history/evidence/export | Real-service synthetic replay, retry, page decoding and SQLite export tests | Automated checks pass |
 | Client disconnect/reconnect | App-model starts a real service, disconnects, reconnects a new model | Automated model check passes |

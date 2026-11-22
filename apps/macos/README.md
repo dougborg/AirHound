@@ -33,7 +33,8 @@ and deployment target. See the packaged backend's platform requirements.
 2. Click **Start Local Service**, or **Connect** if a service already exists.
 3. Select receivers. System Wi-Fi and Bluetooth form the initial suggested plan;
    selection does not start scanning or prove permission/readiness.
-4. Configure external receivers using **Receiver settings**. ALFA needs its
+4. Expand a receiver row to inspect identification evidence, requirements and
+   **Receiver settings**. ALFA needs its
    scanner executable, firmware and exact USB selector. CatSniffer needs compatible
    Sniffle firmware, its serial port, Python runtime and helper/module paths.
 5. **Validate Plan**, then **Start Recording**. Advanced settings also accept a
