@@ -343,9 +343,9 @@ fn main(args: Option<&CStr>) -> i32 {
         }
         let passed = d::synthetic_self_test();
         flipperzero::dialogs::alert(if passed {
-            "SYNTHETIC self-test passed\nNo UART or radio opened.\nCapture requires explicit mode."
+            "Synthetic test: PASS\nUART was not opened.\nCapture is explicit."
         } else {
-            "Self-test failed. No UART opened."
+            "Synthetic test: FAIL\nUART was not opened."
         });
         return i32::from(!passed);
     }
