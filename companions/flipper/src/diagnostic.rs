@@ -226,6 +226,7 @@ impl Run {
             && dropped == 0
             && errors == 0
             && unread == 0
+            && self.witness.outside()
     }
     pub fn feed(&mut self, now: u32, bytes: &[u8]) {
         self.last_rx = now;
@@ -261,13 +262,17 @@ impl Run {
         self.evidence.malformed |= self.witness.malformed;
         match self.phase {
             Phase::Preflight => {
+                self.evidence.preflight_stop_text_ack |= self.witness.stops > 0;
                 if cancel
                     || overflow
                     || self.witness.malformed
                     || now.wrapping_sub(self.since) >= 1500
                 {
                     self.phase = Phase::Done;
-                } else if self.witness.stops > 0 && now.wrapping_sub(self.last_rx) >= 50 {
+                } else if self.witness.stops > 0
+                    && self.witness.outside()
+                    && now.wrapping_sub(self.last_rx) >= 50
+                {
                     self.evidence.preflight_stop_text_ack = true;
                     if !self.allow_start {
                         self.phase = Phase::Done;
