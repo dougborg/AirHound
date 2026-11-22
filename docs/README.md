@@ -62,3 +62,8 @@ These do not claim production integration or validated support for every listed 
 - [Contribution process](../CONTRIBUTING.md)
 - [Priorities, issue inventory and release gates](roadmap.md)
 - [Change history](../CHANGELOG.md)
+
+## Native macOS interface
+
+The [SwiftUI app](../apps/macos/README.md) browses hostd recordings and lists passive
+device candidates. Capture control remains in the CLI for now.

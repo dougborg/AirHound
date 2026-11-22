@@ -23,7 +23,10 @@ against the current branch; a local build or short capture is not a release.
 - `schemas/`: signature, firmware message, command and desktop BLE contracts.
 - `scripts/` and `.github/`: validation, packaging, benchmarking and CI workflows.
 
-The desktop exists today; Kismet integration and a native GUI remain planned.
+The desktop CLI exists today; `apps/macos/` adds a native SwiftUI recording browser
+and passive inventory UI. Its live capture control and Kismet integration remain
+planned. Rust owns shared session, detection and control logic; frontends present
+backend state.
 The macOS `.app` supplies permission identity, not a graphical interface. Hostd
 cannot yet ingest an embedded detector's serial/BLE stream. Its stdin is for
 commands, not observations.

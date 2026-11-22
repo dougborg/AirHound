@@ -19,6 +19,7 @@ same physical device.
 | --- | --- | --- |
 | Run a portable detector | [ESP32 firmware](docs/firmware.md) | M5StickC Plus2 and XIAO ESP32-S3; [M5 controls](docs/m5-controls.md) |
 | Scan from macOS or Linux | [Desktop CLI](hostd/README.md) | Native BLE/WiFi, WiGLE CSV, NDJSON and optional gpsd location |
+| Browse recordings and inventory devices on macOS | [Native macOS app](apps/macos/README.md) | Source-built SwiftUI app; live capture control pending |
 | Use an external receiver | [Receivers and drivers](drivers/README.md) | CatSniffer/Sniffle BLE capture and experimental ALFA MT7610U integration |
 | Use Flipper with AWOK Marauder | [Setup and verified test status](docs/flipper-marauder.md) | Stock firmware/GPIO control tested; AirHound live capture integration pending |
 | Develop the Flipper companion | [Flipper prototype](companions/flipper/README.md) | Host-tested receiver and synthetic API87.1 FAP; no live UART yet |
@@ -31,8 +32,9 @@ same physical device.
 The [documentation index](docs/README.md) groups the detailed guides by task.
 The [repository map](docs/repository-layout.md) explains component build roots,
 toolchains, generated files and licensing boundaries.
-There is no desktop GUI yet: the macOS `.app` supplies permission identity for the
-CLI. `hostd` does not yet ingest M5/XIAO serial or BLE GATT streams. A separate
+The [native macOS app](apps/macos/README.md) can browse recordings and passively
+inventory devices; live capture control is pending. The separate `hostd` macOS
+`.app` supplies permission identity for the CLI. `hostd` does not yet ingest M5/XIAO serial or BLE GATT streams. A separate
 consumer can use the [firmware streaming contract](docs/firmware-streaming.md).
 
 <a id="desktop-scanner-configuration"></a>
