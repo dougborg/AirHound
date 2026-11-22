@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,12 @@ class TestRunnerTests(unittest.TestCase):
             self.assertTrue((root / "owned-processes.json").exists())
 
     def test_timeout_cleans_descendant_in_its_own_process_group(self):
+        self.check_cross_group_cleanup()
+
+    def test_diagnostic_io_and_later_snapshot_failure_do_not_skip_known_cleanup(self):
+        self.check_cross_group_cleanup(diagnostics_failure=True)
+
+    def check_cross_group_cleanup(self, diagnostics_failure=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             pidfile = root / "pids"
@@ -53,11 +60,26 @@ class TestRunnerTests(unittest.TestCase):
                 f"pathlib.Path({str(pidfile)!r}).write_text(json.dumps([os.getpid(),child.pid]))",
                 "time.sleep(30)",
             ])
-            self.assertEqual(runner.run([sys.executable, "-c", code], .5, root), 124)
+            destination = root
+            original_snapshot = runner.snapshot
+            calls = []
+            def fail_second_snapshot(pid):
+                calls.append(pid)
+                if len(calls) > 1:
+                    raise OSError("controlled later snapshot failure")
+                return original_snapshot(pid)
+            if diagnostics_failure:
+                destination = root / "not-a-directory"
+                destination.write_text("diagnostic writes must fail")
+            context = (patch.object(runner, "snapshot", side_effect=fail_second_snapshot)
+                       if diagnostics_failure else nullcontext())
+            with context:
+                self.assertEqual(runner.run([sys.executable, "-c", code], .5, destination), 124)
             pids = json.loads(pidfile.read_text())
-            rows = json.loads((root / "owned-processes.json").read_text())
-            self.assertEqual({row["pid"] for row in rows}, set(pids))
-            self.assertEqual(len({row["group"] for row in rows}), 2)
+            if not diagnostics_failure:
+                rows = json.loads((root / "owned-processes.json").read_text())
+                self.assertEqual({row["pid"] for row in rows}, set(pids))
+                self.assertEqual(len({row["group"] for row in rows}), 2)
             for pid in pids:
                 with self.assertRaises(ProcessLookupError):
                     os.kill(pid, 0)

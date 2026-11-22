@@ -85,11 +85,19 @@ def signal_owned(row, action):
         return False
 
 
+def report(path, text):
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    except OSError as error:
+        print(f"Cannot save native test diagnostic: {error}", file=sys.stderr, flush=True)
+
+
 def diagnose(process, destination):
-    destination.mkdir(parents=True, exist_ok=True)
+    rows = []
     try:
         rows = snapshot(process.pid)
-        (destination / "owned-processes.json").write_text(json.dumps(rows, indent=2))
+        report(destination / "owned-processes.json", json.dumps(rows, indent=2))
         # Sample only verified descendants, including Swift/Foundation children
         # that create their own process groups.
         # A bounded count keeps diagnostics inside the existing job deadline.
@@ -103,10 +111,11 @@ def diagnose(process, destination):
                  str(destination / f"sample-{row['pid']}.txt")],
                 capture_output=True, text=True, timeout=8,
             )
-            (destination / f"sample-{row['pid']}-result.txt").write_text(
+            report(destination / f"sample-{row['pid']}-result.txt",
                 f"exit={result.returncode}\n" + result.stdout[-8192:] + result.stderr[-8192:])
     except (OSError, subprocess.SubprocessError) as error:
-        (destination / "diagnostic-error.txt").write_text(str(error))
+        report(destination / "diagnostic-error.txt", str(error))
+    return rows
 
 
 def run(command, timeout, destination):
@@ -117,12 +126,19 @@ def run(command, timeout, destination):
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         print(f"Native tests exceeded {timeout:g}s; collecting owned-process diagnostics", flush=True)
+        rows = []
         try:
-            diagnose(process, destination)
+            rows = diagnose(process, destination)
         finally:
             try:
-                rows = snapshot(process.pid)
-                (destination / "cleanup-processes.json").write_text(json.dumps(rows, indent=2))
+                try:
+                    known = {(row["pid"], tuple(row["birth"])): row for row in rows}
+                    for row in snapshot(process.pid):
+                        known[(row["pid"], tuple(row["birth"]))] = row
+                    rows = list(known.values())
+                except (OSError, subprocess.SubprocessError) as error:
+                    report(destination / "cleanup-snapshot-error.txt", str(error))
+                report(destination / "cleanup-processes.json", json.dumps(rows, indent=2))
                 for row in reversed(rows):
                     signal_owned(row, signal.SIGTERM)
                 time.sleep(2)
