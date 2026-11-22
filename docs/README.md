@@ -43,6 +43,8 @@ are labeled separately.
 
 - [Discover attached receivers and location devices](device-discovery.md)
 - [Save and revalidate receiver setups](device-profiles.md)
+- [AirHound firmware serial receiver](airhound-serial-source.md)
+- [Attached hardware validation matrix](attached-hardware-validation.md)
 
 - [Flipper Zero and AWOK Marauder setup, firmware and test status](flipper-marauder.md)
 

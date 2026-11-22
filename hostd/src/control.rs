@@ -146,6 +146,11 @@ impl ScanControl {
             .as_ref()
             .map(|r| r.adapter_id.clone())
     }
+    pub fn clear_producer_identity(&self) {
+        if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            receiver.producer_identity = None;
+        }
+    }
     pub fn set_receiver_availability(&self, availability: &'static str) {
         if let Some(receiver) = self.2.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             receiver.availability = availability;

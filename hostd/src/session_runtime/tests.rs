@@ -31,6 +31,7 @@ where
         scanner: Scanner::Ble,
         assignment: serde_json::json!({"mode":"test"}),
         shutdown_budget: Duration::from_millis(50),
+        needs_macos_location: false,
         start: Box::new(move |tx, control| Box::pin(start(tx, control))),
     }
 }

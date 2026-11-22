@@ -168,6 +168,7 @@ pub async fn scan(
         ),
     };
     control.set_receiver(crate::receiver::Receiver {
+        producer_identity: None,
         backend,
         adapter_id: id,
         adapter_info: info,
