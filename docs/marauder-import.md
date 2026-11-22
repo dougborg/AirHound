@@ -64,8 +64,9 @@ version provenance.
 
 Synthetic fixtures cover marker collisions, mixed console data, timestamp wraps,
 invalid headers/lengths, truncation and evidence metadata. **Hardware acceptance
-is pending.** The user's original AWOK Dual Touch was observed running v1.10.2;
-that is not validated by a v1.21.0 source-profile test. Live serial support,
+is pending.** Both processors of the tested original AWOK Dual Touch now run
+official v1.21.0 and a bounded GPIO command/beacon scan passed; that does not
+validate binary capture/import. See [setup and test status](flipper-marauder.md). Live serial support,
 reconnect/session handling and real capture fixtures remain in
 [#181](https://github.com/dougborg/AirHound/issues/181) and
 [#175](https://github.com/dougborg/AirHound/issues/175).

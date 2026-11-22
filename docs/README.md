@@ -37,6 +37,8 @@ are labeled separately.
 
 ## Hardware setup and validation
 
+- [Flipper Zero and AWOK Marauder setup, firmware and test status](flipper-marauder.md)
+
 - [M5 backup, flashing and bring-up](m5stickc-bringup.md), [buttons and sound](m5-controls.md), [streaming experiments](m5-stream-performance.md)
 - [Desktop scanner health](desktop-scanner-health.md) and [BLE receiver capabilities](ble-receivers.md)
 - [GNSS setup and wardriving](gnss-wardriving.md)

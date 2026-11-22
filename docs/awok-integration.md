@@ -1,6 +1,6 @@
 # AWOK original Dual ESP32 v3.0: AirHound integration assessment
 
-Research date: 2026-11-20. Documentation/source research only; no hardware access, firmware changes, or RF activity. Tracking: [#181](https://github.com/dougborg/AirHound/issues/181).
+Original research: 2026-11-20. The historical assessment below predates hands-on testing. As of 2026-11-21, the unit is identified as an original Dual Touch v3; both processors run official Marauder v1.21.0 and a bounded Flipper GPIO beacon scan passed. See [current setup and test limits](flipper-marauder.md). Pin/peripheral and full integration validation remain incomplete. Tracking: [#181](https://github.com/dougborg/AirHound/issues/181).
 
 ## Identify the actual board first
 
