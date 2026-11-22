@@ -220,3 +220,17 @@ GPS under Available devices, enable **Start GPSD with this recording**, choose
 its executable, and save the setup. The Rust service owns the read-only helper
 and stops it on Finish; the external-server mode remains available. See the
 [GPS lifecycle and ownership details](../../docs/gnss-wardriving.md).
+
+### Flipper / AWOK prototype presentation
+
+When the selected service advertises `flipper_marauder`, Capture offers **Add
+Flipper / AWOK…** with an explicit USB serial port and the required AirHound Live
+Bridge installation path. Discovered choices are Flipper candidates; their USB
+descriptors do not verify an attached AWOK radio. The current bridge requires
+Flipper firmware API 87.1. Adding or editing this source changes only the plan;
+Rust remains responsible for validation, ownership, handshake and recording.
+
+An active matching receiver can report Flipper firmware and the AirHound bridge
+build separately. The bridge launch token is not a boot identity, and the bridge
+version does not establish AWOK radio firmware. This UI slice does not claim live
+hardware acceptance or install the FAP automatically.

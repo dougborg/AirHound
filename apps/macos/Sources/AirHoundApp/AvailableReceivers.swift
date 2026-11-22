@@ -44,7 +44,11 @@ struct AvailableReceivers: View {
             }
             if let source = candidate.configurationHint {
               Button("Add Receiver") { session.addReceiver(source: source) }
-                .disabled(!session.canEditPlan)
+                .disabled(
+                  !session.canEditPlan
+                    || (source["kind"] == .string("flipper_marauder")
+                      && !session.canAddFlipperBridge)
+                )
             } else if candidate.kind == "serial_unknown" {
               let ports = device.endpoints.filter { $0.kind == "serial" }.map(\.path)
               if !ports.isEmpty {

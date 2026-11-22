@@ -43,6 +43,9 @@ struct ReceiverSettings: View {
         "Opening the port may reset the board. Pause affects host ingestion; the device keeps scanning."
       )
       .font(.caption).foregroundStyle(.secondary)
+    case "flipper_marauder":
+      field("Flipper USB serial port", "port")
+      FlipperBridgeRequirements()
     case "marauder_capture":
       field("Saved capture", "path", file: true)
       Picker(
