@@ -10,22 +10,24 @@ pub enum StartError<E> {
     DuplicateFilter(E),
 }
 
-/// Retain the scan session while disabling the controller's duplicate filter.
+/// Retain the successfully started scan session while disabling the controller's duplicate filter.
 ///
 /// trouble-host 0.6 legacy scanning enables filtering by default. Bluetooth Core
 /// Vol 4, Part E, 7.8.11 permits changing it while scanning remains enabled. Use
 /// the existing stack command owner; do not stop/restart scanning or change its
 /// active/passive mode, interval, or window. The caller must await this result
-/// before enabling the rest of capture. Failure/cancellation drops the session,
+/// before enabling the rest of capture. Accept the completed scan result rather
+/// than its future so the embedded task can reuse that future's storage while
+/// awaiting the controller command. Failure/cancellation drops the session,
 /// allowing its normal RAII cancellation to disable scanning.
 pub async fn start_continuous_scan<S, E, F>(
-    scan: impl Future<Output = Result<S, E>>,
+    scan: Result<S, E>,
     command: impl FnOnce(LeSetScanEnable) -> F,
 ) -> Result<S, StartError<E>>
 where
     F: Future<Output = Result<(), E>>,
 {
-    let session = scan.await.map_err(StartError::Scan)?;
+    let session = scan.map_err(StartError::Scan)?;
     command(LeSetScanEnable::new(true, false))
         .await
         .map_err(StartError::DuplicateFilter)?;
@@ -66,21 +68,24 @@ mod tests {
                 Poll::Pending
             }
         });
-        let operation = start_continuous_scan(scan, |command| {
-            commands.set(commands.get() + 1);
-            // Actual bt-hci wire encoding: LE Set Scan Enable opcode 0x200c,
-            // length 2, scanning enabled, duplicate filtering disabled.
-            let mut wire = [0xff; 5];
-            command.write_hci(&mut wire[..]).unwrap();
-            assert_eq!(wire, [0x0c, 0x20, 0x02, 0x01, 0x00]);
-            poll_fn(|_| {
-                if ack_ready.get() {
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
+        let operation = async {
+            start_continuous_scan(scan.await, |command| {
+                commands.set(commands.get() + 1);
+                // Actual bt-hci wire encoding: LE Set Scan Enable opcode 0x200c,
+                // length 2, scanning enabled, duplicate filtering disabled.
+                let mut wire = [0xff; 5];
+                command.write_hci(&mut wire[..]).unwrap();
+                assert_eq!(wire, [0x0c, 0x20, 0x02, 0x01, 0x00]);
+                poll_fn(|_| {
+                    if ack_ready.get() {
+                        Poll::Ready(Ok(()))
+                    } else {
+                        Poll::Pending
+                    }
+                })
             })
-        });
+            .await
+        };
         let mut operation = pin!(operation);
         let mut cx = Context::from_waker(Waker::noop());
         assert!(operation.as_mut().poll(&mut cx).is_pending());
@@ -101,7 +106,7 @@ mod tests {
 
     #[test]
     fn scan_failure_sends_no_enable_command() {
-        let operation = start_continuous_scan(async { Err::<Session, _>("scan rejected") }, |_| {
+        let operation = start_continuous_scan(Err::<Session, _>("scan rejected"), |_| {
             panic!("must not configure a scan that never started");
             #[allow(unreachable_code)]
             async {
@@ -120,7 +125,7 @@ mod tests {
     fn rejected_filter_command_drops_session_without_readiness_or_retry() {
         let drops = Rc::new(Cell::new(0));
         let commands = Cell::new(0);
-        let operation = start_continuous_scan(async { Ok(Session(drops.clone())) }, |_| {
+        let operation = start_continuous_scan(Ok(Session(drops.clone())), |_| {
             commands.set(commands.get() + 1);
             async { Err("command rejected") }
         });
@@ -138,10 +143,9 @@ mod tests {
     fn cancellation_while_waiting_for_ack_drops_session() {
         let drops = Rc::new(Cell::new(0));
         {
-            let operation =
-                start_continuous_scan(async { Ok::<_, ()>(Session(drops.clone())) }, |_| {
-                    core::future::pending()
-                });
+            let operation = start_continuous_scan(Ok::<_, ()>(Session(drops.clone())), |_| {
+                core::future::pending()
+            });
             let mut operation = pin!(operation);
             let mut cx = Context::from_waker(Waker::noop());
             assert!(operation.as_mut().poll(&mut cx).is_pending());
