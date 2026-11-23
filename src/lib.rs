@@ -18,6 +18,8 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod ble_data;
+#[cfg(any(feature = "firmware", test))]
+pub mod ble_scan_control;
 pub mod board;
 pub mod buttons;
 pub mod comm;

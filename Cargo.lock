@@ -6,6 +6,7 @@ version = 4
 name = "airhound"
 version = "0.2.0"
 dependencies = [
+ "bt-hci",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
