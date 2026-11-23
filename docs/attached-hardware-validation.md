@@ -15,8 +15,10 @@ Start/Finish controls.
 
 A separate, private Flipper live-source build passed one capture/Pause/Finish
 run with 65 packets. The next attempt retained 63 packets but failed during its
-first Pause; Resume was never dispatched. A reviewed stop-drain correction and
-more precise failure telemetry are staged, with hardware acceptance still pending.
+first Pause; Resume was never dispatched. The reviewed stop-drain correction was
+then installed on the Flipper and passed UART-free startup. Its bounded capture
+retained 65 packets but failed when UART input arrived just after Paused; quiet
+Pause/Resume acceptance remains open.
 The Flipper UI in [#297](https://github.com/dougborg/AirHound/pull/297) is merged,
 but the installed GUI/backend have not been replaced with these live-source builds.
 
@@ -75,8 +77,8 @@ configuration; rediscover the current endpoint and select it explicitly.
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; gpsd NMEA0183/9600 | 60-second CatSniffer session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Explicit GPSD session configuration implemented and live-tested in #276. gpsd 3.27.5/protocol 16.1 is host software, not receiver firmware. Receiver model/firmware remains unverified |
-| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Fresh identity/control, UART-free production transport acceptance, and one private live-source capture/Pause/Finish passed | Live FAP build identity is separate from Flipper firmware and AWOK identity. A later first-Pause failure prevented Resume; reviewed replacement artifacts await hardware acceptance. Earlier crashes belong to distinct acquisition paths |
-| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; later diagnostic acquisition/import retained 85 packets and the private live receiver retained 65 packets | The next live attempt retained 63 packets but failed stopping. No successful Resume or concurrent live-source claim. The bridge Hello does not itself establish downstream firmware, assigned channel, RSSI or RF loss |
+| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Fresh identity/control, UART-free production transport acceptance, and one private live-source capture/Pause/Finish passed | Live FAP build identity is separate from Flipper firmware and AWOK identity. The latest FAP passes UART-free startup but its capture failed on input just after Paused. No successful Resume. Earlier crashes belong to distinct acquisition paths |
+| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; diagnostic acquisition/import retained 85 packets; the first private live receiver run retained 65 packets and finished | Subsequent attempts retained 63 and 65 packets but failed before Resume. No concurrent live-source claim. The bridge Hello does not itself establish downstream firmware, assigned channel, RSSI or RF loss |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor | Recognized candidate only | No current AirHound live-source integration; product descriptor is not a queried firmware version |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
@@ -422,8 +424,31 @@ that ceiling. Host diagnostics retain the failed report's app uptime/counters an
 specific stop-failure reason without promoting it to an accepted lifecycle state.
 Producer `1a5ce78` and host composition `c7f890d` passed independent source review
 and eight paired tests, including a finite approximately 16 KiB tail beyond the
-old one-second deadline. New artifacts are staged, not yet hardware accepted;
-the 65-packet success belongs only to the earlier artifacts above.
+old one-second deadline. The new FAP was installed with its previous image parked
+and hash-verified; the original third-party companion remained unchanged. The
+actual Rust engine then passed UART-free Hello/Ready/Stop in 0.915901 seconds,
+with generation zero, all UART counters zero and independent CLI/idle-loader,
+hash and lease cleanup checks.
+
+The new FAP SHA-256 is
+`3e0143e50f302e784919b3e6dffaac79b8acb631a2f37af939d4149c0a170d68`;
+the private `c7f890d` backend SHA-256 is
+`522d95560e13ab90bec41679f6eb3cb22953c65ec56efa0d4be06c038de9ada0`.
+One bounded test of these artifacts retained 65 packets in 183 records and ended
+failed after 4.211190 seconds. Pause was requested 2.000815 seconds after observed
+Capturing. The producer observed the fresh stop acknowledgment at app uptime
+3,036 ms and reached Paused at 3,486 ms with 33,053 UART bytes and evidence 7.
+Six milliseconds later it received 30 more bytes and emitted failure-related
+Stopping status with cause 6, evidence 3 and 33,083 UART bytes. The host retained
+that exact diagnostic clock/counters without accepting the transition. The bytes
+are not identified by this telemetry; malformed framing is not established.
+The queued tail drained, but quiet Pause was not sustained and **Resume was never
+dispatched**. All reported UART/RPC/host loss counters were zero; RF loss and final
+radio-stop completion remained unknown. The private process exited 1; after the
+bounded 6.2-second failure-settle interval, CLI/idle-loader, hashes, port/lease
+release and unchanged default-service state were verified. No automatic retry
+occurred. The earlier 65-packet finished run remains a separate result on the old
+artifacts, not successful Resume evidence for this replacement.
 
 PR #295 also corrects helper-supervisor cleanup ordering: completion is published
 only after child reaping and lease release. That fix is newer than the installed
