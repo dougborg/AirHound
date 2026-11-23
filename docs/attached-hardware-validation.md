@@ -7,7 +7,7 @@ The remaining integration work is tracked in [#269](https://github.com/dougborg/
 
 ## Current acceptance status
 
-The installed `33a5e93` backend now receives native WiFi and Bluetooth after the
+The prior installed `33a5e93` backend received native WiFi and Bluetooth after the
 user approved permissions: the unchanged service finished a 20.196328-second run
 with 483 WiFi and 1,233 BLE observations. Existing recordings and saved setups
 were preserved. This verifies backend-controlled reception, not native GUI
@@ -21,14 +21,38 @@ CatSniffer/ALFA/Flipper session with managed GPS finished with 3,106 observation
 and 2,957 fresh receiver-location associations. Its original harness rejected a
 valid Cat packet classification; independent saved-evidence revalidation passed
 without recapturing. Earlier acquisition, drain and watchdog failures remain below.
-The Flipper UI in [#297](https://github.com/dougborg/AirHound/pull/297) is merged,
-but the installed GUI/backend have not been replaced with these live-source builds.
+The Flipper UI and live-source builds are now delivered in the installed `aa472a0`
+preview described below. The earlier native reception result does not establish
+permission or reception acceptance for this newly signed application.
 
 The M5 remains absent from the latest passive inventory. Physical CatSniffer
 unplug/replug, active-capture transport loss, actual GUI capture controls and
 longer-duration recovery checks remain open. The matrices below
 retain earlier successes and failures with their build and test scope; they do
 not imply that every tested device is currently attached or enabled.
+
+## Current preview delivery
+
+The reviewed desktop preview is built from clean merged source `aa472a0` and
+includes the host integration in
+[#299](https://github.com/dougborg/AirHound/pull/299), compatible with the separately
+installed companion from [#298](https://github.com/dougborg/AirHound/pull/298).
+The acceptance ledger in [#305](https://github.com/dougborg/AirHound/pull/305) is
+also merged. [#306](https://github.com/dougborg/AirHound/pull/306) subsequently added
+private backend/Swift setup tests: at delivery, main `308596d` differed from the
+preview source only by 185 lines in that test file. No production rebuild was
+needed for that test-only change.
+
+The preview rollout preserved existing recordings, saved setups and settings.
+Reviewed checks covered signed application startup, saved-data compatibility and
+restoration preparation. These checks establish delivery and preservation, not
+new hardware reception or a live downgrade. The rollout did not flash device
+firmware or start capture.
+
+Actual GUI Validate/Start/Pause/Resume/Finish controls, observations presentation
+and native permissions under the new signed identity remain separate acceptance
+checks. Earlier `33a5e93` native reception and private Flipper/combined results
+below retain their original artifact scope.
 
 ## Provenance and privacy
 
@@ -73,8 +97,8 @@ configuration; rediscover the current endpoint and select it explicitly.
 
 | Device / role | Observed identity and endpoint | Recorded evidence | Limit / next check |
 | --- | --- | --- | --- |
-| Native Bluetooth | CoreBluetooth, OS-managed | Latest installed-backend permission retry: 1,233 observations alongside WiFi, clean finish | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
-| Native WiFi | CoreWLAN, OS interface | Latest unchanged installed backend received 483 observations alongside BLE after user permission approval | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
+| Native Bluetooth | CoreBluetooth, OS-managed | Prior `33a5e93` installed-backend permission retry: 1,233 observations alongside WiFi, clean finish | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
+| Native WiFi | CoreWLAN, OS interface | Prior unchanged `33a5e93` installed backend received 483 observations alongside BLE after user permission approval | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
@@ -217,15 +241,15 @@ Start rejection and stale Finish confirmation targets; user retry of the install
 GUI controls remains pending. These tests do not replace an actual GUI-driven
 hardware recording.
 
-## Installed recovery update
+## Earlier installed recovery update
 
 [#292](https://github.com/dougborg/AirHound/pull/292) and
-[#294](https://github.com/dougborg/AirHound/pull/294) are merged. The installed
-application now combines GUI source `41f704a` (including the reviewed capture
+[#294](https://github.com/dougborg/AirHound/pull/294) are merged. That earlier installed
+application combined GUI source `41f704a` (including the reviewed capture
 controls) with backend source `33a5e93`. These are the actual component builds,
 not a claim that an earlier artifact was rebuilt from the merge commit. The #294
 merged tree differs from this composition only in a test-only GPS fixture fix.
-The installed signed backend SHA-256 is
+That signed backend SHA-256 was
 `20cf48cfb1930b7c3e7b889dd7d2091c257420b08f6699d9fa1d2e7bdb5e4365`;
 its unsigned input was separately recorded. All 14 file-backed Mach-O sections
 matched before and after signing. Strict signatures and private LaunchServices
@@ -529,16 +553,17 @@ This is external-only acceptance; native radios, missing M5 and actual GUI captu
 controls were not exercised by this run.
 
 PR #295 also corrects helper-supervisor cleanup ordering: completion is published
-only after child reaping and lease release. That fix is newer than the installed
-`33a5e93` backend and awaits the next preview rollout; the installed app/service
-were not replaced during these tests. The accompanying GPS fixture interpreter
-changes affect tests only. Earlier CI interpreter startup stalls remain
+only after child reaping and lease release. That fix was newer than the
+then-installed `33a5e93` backend; the app/service were not replaced during those
+tests. It is now included in the delivered `aa472a0` preview above. The accompanying
+GPS fixture interpreter changes affect tests only. Earlier CI interpreter startup stalls remain
 internally unexplained; production readiness timeouts are unchanged.
 
 ## Remaining acceptance
 
 - Reconnect and verify the M5 before claiming the complete rig is ready. Native
-  permission/reception acceptance now passes for the unchanged installed backend.
+  permission/reception passed for the prior `33a5e93` backend; verify the newly
+  installed signed identity independently.
 - Exercise **Attached receiver rig (USB recovery)** through the native Load, Start Recording
   and Finish Recording controls. Actual GUI service launch and native observation
   presentation passed; the earlier native/M5 combined capture used CLI controls
@@ -552,10 +577,10 @@ internally unexplained; production readiness timeouts are unchanged.
 - Extend Flipper fault acceptance beyond the passed paused-host watchdog case to
   active-capture transport loss and physical USB removal/re-enumeration. The
   accepted external concurrent session does not establish the full native/M5 rig
-  or endurance. The native setup UI is merged in
-  #297 but remains uninstalled; do not infer installed support from repository
-  capability. Preserve prior failure evidence and do not retry the crashing
-  third-party acquisition path without a reviewed mitigation.
+  or endurance. The native setup UI from #297 is installed in `aa472a0`,
+  but its actual capture controls remain unaccepted. Preserve prior failure
+  evidence and do not retry the crashing third-party acquisition path without a
+  reviewed mitigation.
   A separate bounded BLE management discovery found no advertisement for the
   known Flipper identity; no BLE connection, authenticated read, pairing request
   or write occurred. The cached paired application name is not current firmware
