@@ -30,3 +30,13 @@ Validation: host tests cover contact bounce, long holds, boot-held buttons,
 short pulses and simultaneous buttons. Firmware compilation and the startup
 stack gate check resource constraints. Physical press and screen appearance
 validation require the connected device; host tests cannot establish these.
+
+On 2026-11-23, the user confirmed both buttons working and a quiet buzzer during
+the ten-minute observation of installed `96b19ae` / `0.2.0`, then confirmed both
+buttons still working after the reader closed without reset or unplug. This is
+bounded physical-control evidence, not proof of audible detection alerts or
+current host capture lifecycle. The observation's strict acceptance still failed
+for missing health reports, reported output loss and varying internal-memory
+samples. Earlier post-close button failures remain preserved in the
+[hardware ledger](attached-hardware-validation.md#current-m5-uart-correction--2026-11-23-utc)
+and [#175](https://github.com/dougborg/AirHound/issues/175).

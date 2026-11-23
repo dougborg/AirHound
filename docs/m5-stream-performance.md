@@ -1,5 +1,21 @@
 # M5 observation-stream throughput
 
+## Current hardware evidence — 2026-11-23
+
+The installed `96b19ae` / `0.2.0` image (`d7e383a0`) completed ten minutes
+without a printed panic or assertion and retained late Wi-Fi/BLE continuity.
+Strict acceptance still failed for missing health reports, reported output loss
+and varying internal memory; see the
+[hardware ledger](attached-hardware-validation.md#current-m5-uart-correction--2026-11-23-utc).
+Diagnostic records now share the output queue: their four sampled `log_drops`
+are included in the 30 `output_drops`, not additional losses. The independently
+reviewed `3fbc1a0` follow-up in [#321](https://github.com/dougborg/AirHound/pull/321)
+yields between remaining health-report enqueues; target CI and hardware acceptance
+are pending and it is not installed. The sections below retain earlier design
+and experiments; their stack/heap measurements do not describe the current image.
+
+## Earlier throughput design
+
 The no_std M5StickC Plus2 stream uses 460800-baud UART, a 20-slot parsed-event
 queue and a four-slot serialized-output queue. Both processing and output tasks
 yield before acquiring the next record. Yielding after acquisition can retain
