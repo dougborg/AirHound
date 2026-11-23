@@ -43,6 +43,19 @@ pub enum Unavailable {
     Closed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BleAdmission {
+    Enqueued,
+    Full,
+    NoClient,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    Queued,
+    Full,
+    UartClosed(BleAdmission),
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
     pub occupied: u16,
@@ -175,6 +188,52 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
     pub fn rejected(&self, kind: Kind, reason: Reason) {
         self.state
             .lock(|s| s.borrow_mut().stats.loss(kind, reason, false));
+    }
+    /// Task-only JSON adapter. Ordinary saturation never bypasses admission.
+    /// Once UART is permanently closed, the existing independent BLE channel
+    /// can still receive newly produced JSON. No UART callback is available.
+    pub fn publish_message(
+        &self,
+        message: &crate::protocol::DeviceMessage<'_>,
+        kind: Kind,
+        now_us: impl FnOnce() -> u64,
+        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+    ) -> Result<Delivery, core::fmt::Error> {
+        match self.reserve(kind) {
+            Ok(slot) => slot.publish_message(message, now_us, closed_ble),
+            Err(Unavailable::Full) => {
+                self.rejected(kind, Reason::Admission);
+                Ok(Delivery::Full)
+            }
+            Err(Unavailable::Closed) => self.closed_message(message, kind, true, closed_ble),
+        }
+    }
+    fn closed_message(
+        &self,
+        message: &crate::protocol::DeviceMessage<'_>,
+        kind: Kind,
+        count_loss: bool,
+        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+    ) -> Result<Delivery, core::fmt::Error> {
+        // Synchronous call: no 512-byte value survives an await and no PSRAM
+        // payload is acquired. Only DeviceMessage JSON can enter this path.
+        let mut line = crate::protocol::MsgBuffer::new();
+        line.resize_default(SLOT_BYTES)
+            .map_err(|_| core::fmt::Error)?;
+        let length = crate::comm::serialize_message(message, &mut line).ok_or(core::fmt::Error)?;
+        line.truncate(length);
+        let outcome = closed_ble(&line);
+        self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+            if count_loss {
+                s.stats
+                    .loss(kind, Reason::Closed, outcome == BleAdmission::Enqueued);
+            } else if outcome == BleAdmission::Enqueued {
+                let stats = &mut s.stats;
+                increment(&mut stats.uart_lost_after_ble_enqueue, &mut stats.saturated);
+            }
+        });
+        Ok(Delivery::UartClosed(outcome))
     }
     pub fn reserve(&self, kind: Kind) -> Result<Reservation<'_, M, N, R>, Unavailable> {
         let index = self.state.lock(|s| {
@@ -319,6 +378,26 @@ pub struct Reservation<'a, M: RawMutex, const N: usize, const R: usize> {
     task_only: PhantomData<*mut ()>,
 }
 impl<M: RawMutex, const N: usize, const R: usize> Reservation<'_, M, N, R> {
+    pub fn publish_message(
+        mut self,
+        message: &crate::protocol::DeviceMessage<'_>,
+        now_us: impl FnOnce() -> u64,
+        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+    ) -> Result<Delivery, core::fmt::Error> {
+        let Some(length) = crate::comm::serialize_message(message, self.buffer()) else {
+            self.discard_unpublished();
+            return Err(core::fmt::Error);
+        };
+        let pool = self.pool;
+        let kind = pool.state.lock(|s| s.borrow().kinds[self.index]);
+        match self.commit(length, now_us()) {
+            Ok(()) => Ok(Delivery::Queued),
+            // Commit already attributed this record's UART loss. Do not
+            // increment it twice if closure raced serialization.
+            Err(Unavailable::Closed) => pool.closed_message(message, kind, false, closed_ble),
+            Err(Unavailable::Full) => unreachable!(),
+        }
+    }
     pub fn buffer(&mut self) -> &mut [u8] {
         // Unique reservation owns this slot until consuming commit/drop. No
         // queued or draining reference can coexist with this mutable borrow.
@@ -659,5 +738,174 @@ mod tests {
         assert_eq!(line.iter().filter(|&&c| c == b'\n').count(), 1);
         assert!(!crate::serial_output::is_observation(&line));
         assert!(!line.contains(&b'{'));
+    }
+
+    fn status(uptime: u32) -> crate::protocol::DeviceMessage<'static> {
+        crate::protocol::DeviceMessage::Status {
+            scanning: true,
+            uptime,
+            heap_free: 3448,
+            ble_clients: 1,
+            board: "m5stickc_plus2",
+            version: "0.2.0",
+        }
+    }
+
+    #[test]
+    fn uart_failure_preserves_bounded_new_ble_json_and_command_replies_without_uart_retry() {
+        use crate::{
+            protocol::{DeviceMessage, MsgBuffer},
+            serial_output::{drain_cooperative, LineError, Step},
+        };
+        use core::cell::{Cell, RefCell};
+        use embassy_sync::channel::Channel;
+        let pool = pool::<8, 2>();
+        let ble = Channel::<NoopRawMutex, MsgBuffer, 4>::new();
+        let ble_drops = Cell::new(0);
+        let connected = Cell::new(true);
+        let admit = |bytes: &[u8]| {
+            if !connected.get() {
+                return BleAdmission::NoClient;
+            }
+            let mut line = MsgBuffer::new();
+            line.extend_from_slice(bytes).unwrap();
+            if ble.try_send(line).is_ok() {
+                BleAdmission::Enqueued
+            } else {
+                ble_drops.set(ble_drops.get() + 1);
+                BleAdmission::Full
+            }
+        };
+        let owner = pool.writer_owner().unwrap();
+        for n in [1, 2] {
+            assert_eq!(
+                pool.publish_message(
+                    &status(n),
+                    Kind::Health,
+                    || 0,
+                    |_| panic!("healthy UART uses its FIFO")
+                ),
+                Ok(Delivery::Queued)
+            );
+        }
+        let mut first = pool.take(1).unwrap();
+        assert_eq!(admit(first.bytes()), BleAdmission::Enqueued);
+        first.mark_ble_enqueued();
+        let uart = RefCell::new(std::vec::Vec::new());
+        {
+            let write = drain_cooperative(
+                first.bytes(),
+                |chunk, count| {
+                    if !uart.borrow().is_empty() {
+                        return Err("UART write fault");
+                    }
+                    *count = 3;
+                    uart.borrow_mut().extend_from_slice(&chunk[..3]);
+                    Ok(Step::Progress)
+                },
+                || 0,
+                |_| {},
+            );
+            let mut write = pin!(write);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(
+                write.as_mut().poll(&mut cx),
+                Poll::Ready(Err(LineError::Output("UART write fault")))
+            );
+        }
+        first.fail(Reason::Write);
+        // Already committed JSON has one BLE attempt; its later removal cannot
+        // also enter the new-message fallback path.
+        let mut queued = pool.take(2).unwrap();
+        assert_eq!(admit(queued.bytes()), BleAdmission::Enqueued);
+        queued.mark_ble_enqueued();
+        queued.fail(Reason::Disabled);
+        drop(owner);
+        assert!(pool.stats().closed);
+        let reply = DeviceMessage::CommandResult {
+            cmd: "status",
+            ok: true,
+            error: None,
+        };
+        assert_eq!(
+            pool.publish_message(&status(3), Kind::Health, || 3, admit),
+            Ok(Delivery::UartClosed(BleAdmission::Enqueued))
+        );
+        assert_eq!(
+            pool.publish_message(&reply, Kind::Command, || 4, admit),
+            Ok(Delivery::UartClosed(BleAdmission::Enqueued))
+        );
+        assert_eq!(
+            pool.publish_message(&status(5), Kind::Health, || 5, admit),
+            Ok(Delivery::UartClosed(BleAdmission::Full))
+        );
+        connected.set(false);
+        assert_eq!(
+            pool.publish_message(&status(6), Kind::Health, || 6, admit),
+            Ok(Delivery::UartClosed(BleAdmission::NoClient))
+        );
+        assert_eq!((ble.len(), ble_drops.get()), (4, 1));
+        for n in [1, 2, 3] {
+            let line = ble.try_receive().unwrap();
+            let text = core::str::from_utf8(&line).unwrap();
+            assert!(text.contains(&format!("\"uptime\":{n},")));
+            assert!(text.ends_with("}\n"));
+        }
+        assert_eq!(
+            ble.try_receive().unwrap().as_slice(),
+            b"{\"type\":\"command_result\",\"cmd\":\"status\",\"ok\":true}\n"
+        );
+        assert!(ble.is_empty());
+        assert_eq!(uart.borrow().as_slice(), b"{\"t");
+        let s = pool.stats();
+        assert_eq!(
+            (s.drops, s.uart_lost_after_ble_enqueue, s.occupied),
+            (6, 4, 0)
+        );
+        assert_eq!(s.by_reason, [0, 4, 0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn full_pool_does_not_bypass_admission_and_closed_reserved_reply_counts_once() {
+        let pool = pool::<4, 1>();
+        for _ in 0..3 {
+            send(&pool, Kind::Observation, b"observation\n", 0);
+        }
+        assert_eq!(
+            pool.publish_message(
+                &status(1),
+                Kind::Observation,
+                || 1,
+                |_| panic!("Full must not use BLE fallback")
+            ),
+            Ok(Delivery::Full)
+        );
+        let slot = pool.reserve(Kind::Command).unwrap();
+        pool.close();
+        let calls = core::cell::Cell::new(0);
+        assert_eq!(
+            slot.publish_message(
+                &status(2),
+                || 2,
+                |_| {
+                    calls.set(calls.get() + 1);
+                    BleAdmission::Enqueued
+                }
+            ),
+            Ok(Delivery::UartClosed(BleAdmission::Enqueued))
+        );
+        assert_eq!(
+            (
+                calls.get(),
+                pool.stats().drops,
+                pool.stats().uart_lost_after_ble_enqueue
+            ),
+            (1, 2, 1)
+        );
+        assert_eq!(pool.stats().occupied, 3);
+        while let Some(line) = pool.take(3) {
+            line.fail(Reason::Disabled);
+        }
+        assert_eq!((pool.stats().occupied, pool.stats().drops), (0, 5));
     }
 }

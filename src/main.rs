@@ -1010,16 +1010,16 @@ async fn diagnostic_pump() {
 }
 
 #[cfg(feature = "m5stickc")]
-fn forward_ble(line: &[u8]) -> bool {
+fn forward_ble(line: &[u8]) -> airhound::output_pool::BleAdmission {
     if !airhound::serial_output::is_observation(line) || BLE_CLIENTS.load(Ordering::Relaxed) == 0 {
-        return false;
+        return airhound::output_pool::BleAdmission::NoClient;
     }
     let mut copy = MsgBuffer::new();
     if copy.extend_from_slice(line).is_err() || BLE_OUTPUT_CHANNEL.try_send(copy).is_err() {
         serial_console::increment(&BLE_OUTPUT_DROPS);
-        return false;
+        return airhound::output_pool::BleAdmission::Full;
     }
-    true
+    airhound::output_pool::BleAdmission::Enqueued
 }
 
 /// Sole runtime writer. The PSRAM lease, cursor and small scratch survive yields;
@@ -1037,7 +1037,7 @@ async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Bl
     serial_console::take_runtime_ownership();
     OUTPUT_READY.signal(());
     while let Some(mut line) = pool.receive(|| Instant::now().as_micros()).await {
-        if forward_ble(line.bytes()) {
+        if forward_ble(line.bytes()) == airhound::output_pool::BleAdmission::Enqueued {
             line.mark_ble_enqueued();
         }
         if pool.stats().closed {
