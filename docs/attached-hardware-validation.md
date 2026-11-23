@@ -39,8 +39,9 @@ confirmed working buttons and a quiet buzzer during capture, then both buttons
 still working after the reader closed without reset or unplug. This bounded
 physical-control evidence does not establish current host Pause/Resume/Finish,
 physical recovery or complete-rig acceptance. The reviewed `3fbc1a0` follow-up
-addresses health-output bursts; target CI and hardware acceptance remain pending,
-and it is not installed. Earlier BLE-only and zero-input failures remain below,
+addresses health-output bursts; its target build and packaging passed, while
+artifact audit and hardware acceptance remain pending. It is not installed.
+Earlier BLE-only and zero-input failures remain below,
 tracked with the current runtime work in
 [#317](https://github.com/dougborg/AirHound/issues/317),
 [#320](https://github.com/dougborg/AirHound/issues/320) and
@@ -58,12 +59,13 @@ it does not establish actual GUI button acceptance.
 
 The Orbic currently runs official Rayhunter `0.13.0`. A later bounded attempt
 of the separate [raw-feed fork](https://github.com/dougborg/rayhunter/pull/1)
-launched the prototype with raw streaming disabled and finalized a valid
-25,306-byte gzip recording. The harness failed: a background process retained
+launched the prototype with raw streaming disabled. Its recording grew by
+25,306 bytes during that phase, and the finalized 25,592-byte gzip passed
+integrity verification. The harness failed: a background process retained
 its ADB output pipe, and BusyBox `wget` rejected a legitimate HTTP 202 response.
 The enabled raw-feed phase never ran. Official-service restoration and protected
 recording/configuration preservation were verified; cleanup removed only the
-exact obsolete copied executable and preserved the other 43 staged files.
+two exact obsolete copied executables and preserved the other 43 staged files.
 The corrected harness has offline review coverage but its revised runtime has
 not executed. Neither this disabled-phase result nor the earlier helper preflight
 establishes raw-feed or AirHound cellular-source acceptance. Experimental work
@@ -292,8 +294,9 @@ do not establish unsampled final totals or RF loss. Reader cleanup and default
 data preservation passed. No current-image host lifecycle or full-rig run followed.
 The independently reviewed `3fbc1a0` follow-up in
 [#321](https://github.com/dougborg/AirHound/pull/321) yields between the remaining
-health-report enqueues; its target CI and hardware acceptance are pending. The
-installed image remains `96b19ae`, not that unflashed follow-up.
+health-report enqueues; its target build and packaging passed, while artifact
+audit and hardware acceptance remain pending. The installed image remains
+`96b19ae`, not that unflashed follow-up.
 
 ## Provenance and privacy
 
@@ -346,7 +349,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
 | AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; diagnostic import retained 85 packets. Latest external combined run retained 728 live packets across two Flipper capture generations | Prior 63- and 65-packet attempts failed before Resume. The bridge Hello does not establish downstream firmware, assigned channel, RSSI or RF loss; literal stop acknowledgments do not prove physical RF silence |
-| Orbic / Rayhunter | Official Rayhunter `0.13.0` active; exact retail model remains unconfirmed | Latest prototype attempt launched only the raw-disabled phase and finalized a valid 25,306-byte gzip; harness failed on ADB pipe ownership and valid HTTP 202 handling. Official service and protected data restored; exact obsolete-executable cleanup preserved the remaining staged files | Corrected harness runtime unexecuted; enabled raw-feed and AirHound live-cellular acceptance still pending in [#293](https://github.com/dougborg/AirHound/issues/293). Raw diagnostic records are not I/Q or all cellular RF traffic |
+| Orbic / Rayhunter | Official Rayhunter `0.13.0` active; exact retail model remains unconfirmed | Latest prototype attempt launched only the raw-disabled phase: recording grew by 25,306 bytes, and the finalized 25,592-byte gzip passed integrity verification; harness failed on ADB pipe ownership and valid HTTP 202 handling. Official service and protected data restored; cleanup of two exact obsolete executable copies preserved the other 43 staged files | Corrected harness runtime unexecuted; enabled raw-feed and AirHound live-cellular acceptance still pending in [#293](https://github.com/dougborg/AirHound/issues/293). Raw diagnostic records are not I/Q or all cellular RF traffic |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor; historical explicit REQ_VERSION on 2026-11-21 reported firmware 4.1.1 / UART protocol 3 | A bounded query and subsequent read-only window observed an already-streaming advertising feed; prior scan configuration and queued reports were unknown ([#188](https://github.com/dougborg/AirHound/issues/188)) | Current discovery is descriptor-only; current firmware remains unverified. No live AirHound source integration; historical reads do not establish capture rate, RF loss, extended/Coded support or a verified board model |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
