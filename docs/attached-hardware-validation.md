@@ -297,6 +297,8 @@ full-rig acceptance remained pending under
 [#175](https://github.com/dougborg/AirHound/issues/175) and
 [#269](https://github.com/dougborg/AirHound/issues/269).
 
+<a id="current-m5-uart-correction--2026-11-23-utc"></a>
+
 ### M5 UART correction history — 2026-11-23 UTC
 
 A subsequent controlled-reset diagnostic on `3baaacc` received both media, then
