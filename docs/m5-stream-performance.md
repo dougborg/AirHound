@@ -72,6 +72,16 @@ ordinary line is abandoned and never resumed. Controller-blob assertion text
 written before that hook is outside normal framing guarantees and remains fatal
 diagnostic evidence. XIAO keeps its existing console implementation.
 
+Periodic M5 health publication also yields before Status and again before
+StreamStats. This separates an optional scan-loss diagnostic and the two health
+records into different executor polls. Serialization remains synchronous in a
+helper, so no 512-byte buffer survives these yields. A four-slot channel regression
+reproduces the former same-poll burst rejecting both health records and verifies
+that consumer progress admits them. Yielding does not reserve space: competing
+producers can still fill the queue, and those rejections still increment
+`output_drops`. This does not attribute all observed output or diagnostic losses
+to the periodic burst or establish lossless health delivery under saturation.
+
 A UART error or line timeout permanently disables normal serial writes until
 reboot; subsequent records cannot be joined to a partial line. BLE forwarding may
 continue and carry aggregate failure counts. No error path logs recursively.
