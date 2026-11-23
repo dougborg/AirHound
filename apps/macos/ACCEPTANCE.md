@@ -12,9 +12,10 @@ host lifecycle success belongs to firmware `0.1.1`. Its reviewed `07c7142` / `0.
 application update passed flash and boot/memory checks, but a subsequent same-boot
 recording received Wi-Fi and no BLE and failed before Pause/Resume. The reviewed
 [#318](https://github.com/dougborg/AirHound/pull/318) correction for
-[#317](https://github.com/dougborg/AirHound/issues/317) still needs fresh CI and
-hardware acceptance; it is not the installed firmware. None of these results
-proves that the current GUI's Start, repeat recording, live/history presentation
+[#317](https://github.com/dougborg/AirHound/issues/317) passed its target-build and
+stack-reservation gates; remaining checks and hardware acceptance are pending.
+It is not the installed firmware. None of these results proves that the current
+GUI's Start, repeat recording, live/history presentation
 or all-receiver controls work. Those actual-window checks remain open for the
 everyday-recording goal.
 
