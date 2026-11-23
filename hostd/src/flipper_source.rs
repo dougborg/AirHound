@@ -125,9 +125,11 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
         },
         |event| {
             match event {
-                Output::FailureStatus(status) => {
-                    latest_status = diagnostic_status(status);
-                    set_reported_health(control, State::Failed, false);
+                Output::FailureStatus {
+                    status,
+                    stop_complete,
+                } => {
+                    latest_status = retain_failure_status(control, status, stop_complete);
                 }
                 Output::DeviceInfo(info) => {
                     identity["flipper_firmware"] =
@@ -157,7 +159,7 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
                         State::Stopped => "stopped",
                         State::Failed => "failed",
                     };
-                    latest_status = json!({"state":name,"cause":status.cause,"uart_text_evidence":status.evidence,"capture_generation":status.generation,"app_uptime_ms":status.app_uptime_ms,"uart_rx_bytes":status.uart_rx_bytes,"uart_dropped_bytes":status.uart_dropped_bytes,"uart_error_events":status.uart_error_events,"rpc_dropped_messages":status.rpc_dropped_messages,"unread_ring_bytes":status.unread_ring_bytes});
+                    latest_status = json!({"state":name,"cause":status.cause,"uart_text_evidence":status.evidence,"stop_complete":reported_stop_complete(&status),"capture_generation":status.generation,"app_uptime_ms":status.app_uptime_ms,"uart_rx_bytes":status.uart_rx_bytes,"uart_dropped_bytes":status.uart_dropped_bytes,"uart_error_events":status.uart_error_events,"rpc_dropped_messages":status.rpc_dropped_messages,"unread_ring_bytes":status.unread_ring_bytes});
                     set_reported_health(
                         control,
                         status.state,
@@ -194,14 +196,36 @@ fn worker<T: Read + Write, F: FnOnce(&str) -> io::Result<T>>(
     result
 }
 
-fn diagnostic_status(status: airhound_flipper::bridge::Status) -> serde_json::Value {
+fn reported_stop_complete(status: &airhound_flipper::bridge::Status) -> bool {
+    status.evidence & airhound_flipper::bridge::STOP_REQUEST_EVIDENCE
+        == airhound_flipper::bridge::STOP_REQUEST_EVIDENCE
+        && matches!(status.state, State::Paused | State::Stopped | State::Failed)
+        && status.uart_dropped_bytes == 0
+        && status.uart_error_events == 0
+        && status.rpc_dropped_messages == 0
+        && status.unread_ring_bytes == 0
+}
+
+fn retain_failure_status(
+    control: &ScanControl,
+    status: airhound_flipper::bridge::Status,
+    stop_complete: bool,
+) -> serde_json::Value {
+    set_reported_health(control, State::Failed, false);
+    diagnostic_status(status, stop_complete)
+}
+
+fn diagnostic_status(
+    status: airhound_flipper::bridge::Status,
+    stop_complete: bool,
+) -> serde_json::Value {
     // Keep the original clock and every reported counter even when the lifecycle
     // validator rejects this status. This is diagnostic evidence, not readiness.
     json!({
         "accepted_lifecycle":false,
         "state":format!("{:?}",status.state),
         "cause":status.cause,
-        "uart_text_evidence":status.evidence,
+        "uart_text_evidence":status.evidence,"stop_complete":stop_complete && reported_stop_complete(&status),
         "capture_generation":status.generation,
         "app_uptime_ms":status.app_uptime_ms,
         "uart_rx_bytes":status.uart_rx_bytes,
@@ -459,20 +483,24 @@ mod tests {
             clock_discontinuity: false,
             frame: vec![0x80],
         };
-        let producer = diagnostic_status(airhound_flipper::bridge::Status {
-            state: State::Failed,
-            cause: 5,
-            evidence: 7,
-            generation: 1,
-            app_uptime_ms: 9876,
-            uart_rx_bytes: 12345,
-            uart_dropped_bytes: 17,
-            uart_error_events: 2,
-            rpc_dropped_messages: 3,
-            unread_ring_bytes: 4,
-        });
+        let producer = diagnostic_status(
+            airhound_flipper::bridge::Status {
+                state: State::Failed,
+                cause: 5,
+                evidence: 7,
+                generation: 1,
+                app_uptime_ms: 9876,
+                uart_rx_bytes: 12345,
+                uart_dropped_bytes: 17,
+                uart_error_events: 2,
+                rpc_dropped_messages: 3,
+                unread_ring_bytes: 4,
+            },
+            false,
+        );
         assert_eq!(producer["app_uptime_ms"], 9876);
         assert_eq!(producer["accepted_lifecycle"], false);
+        assert_eq!(producer["stop_complete"], false);
         assert_eq!(producer["uart_rx_bytes"], 12345);
         assert_eq!(producer["uart_error_events"], 2);
         assert_eq!(producer["rpc_dropped_messages"], 3);
@@ -514,6 +542,82 @@ mod tests {
         assert!(rx.try_recv().is_err());
         assert_eq!(counts, (0, 8));
     }
+    #[test]
+    fn reported_completion_requires_both_bits_and_zero_final_loss() {
+        let mut status = airhound_flipper::bridge::Status {
+            state: State::Failed,
+            cause: 3,
+            evidence: 15,
+            generation: 1,
+            app_uptime_ms: 100,
+            uart_rx_bytes: 100,
+            uart_dropped_bytes: 0,
+            uart_error_events: 0,
+            rpc_dropped_messages: 0,
+            unread_ring_bytes: 0,
+        };
+        assert_eq!(diagnostic_status(status, true)["stop_complete"], true);
+        for evidence in [3, 7, 11] {
+            status.evidence = evidence;
+            assert_eq!(diagnostic_status(status, true)["stop_complete"], false);
+        }
+        status.evidence = 15;
+        status.unread_ring_bytes = 1;
+        assert_eq!(diagnostic_status(status, true)["stop_complete"], false);
+        status.unread_ring_bytes = 0;
+        status.uart_dropped_bytes = 1;
+        assert_eq!(diagnostic_status(status, true)["stop_complete"], false);
+        assert_eq!(diagnostic_status(status, true)["accepted_lifecycle"], false);
+    }
+
+    #[test]
+    fn rejected_raw_completion_cannot_promote_receiver_health() {
+        let control = ScanControl::new(true);
+        control.set_receiver(receiver("/dev/fixture"));
+        for state in [State::Paused, State::Failed] {
+            let raw = airhound_flipper::bridge::Status {
+                state,
+                cause: 3,
+                evidence: 15,
+                generation: 99,
+                app_uptime_ms: 100,
+                uart_rx_bytes: 100,
+                uart_dropped_bytes: 0,
+                uart_error_events: 0,
+                rpc_dropped_messages: 0,
+                unread_ring_bytes: 0,
+            };
+            let Output::FailureStatus {
+                status,
+                stop_complete,
+            } = (Output::FailureStatus {
+                status: raw,
+                stop_complete: false,
+            })
+            else {
+                panic!()
+            };
+            let reported = retain_failure_status(&control, status, stop_complete);
+            control.set_bridge_status(
+                json!({"producer_last_report":reported,"radio_stop":"unverified"}),
+            );
+            let health = control.health_message();
+            assert_eq!(health["receiver"]["availability"], "unavailable");
+            assert_eq!(
+                health["receiver"]["bridge_status"]["producer_last_report"]["uart_text_evidence"],
+                15
+            );
+            assert_eq!(
+                health["receiver"]["bridge_status"]["producer_last_report"]["stop_complete"],
+                false
+            );
+            assert_eq!(
+                health["receiver"]["bridge_status"]["producer_last_report"]["accepted_lifecycle"],
+                false
+            );
+        }
+    }
+
     #[test]
     fn lifecycle_availability_changes_before_transport_teardown_without_erasing_evidence() {
         let control = ScanControl::new(true);

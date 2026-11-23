@@ -26,6 +26,7 @@ struct Diagnostic {
     request: u32,
     initial: Status,
     last: Status,
+    fresh_stop_boundary: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +98,30 @@ impl Session {
                 .is_some_and(|d| d.last.state == State::Stopping)
     }
 
+    /// Completion is a derived failure-stop proof, never a repaired lifecycle.
+    /// A raw reported bit without a fresh bound stop boundary is insufficient.
+    pub fn diagnostic_stop_complete(&self) -> bool {
+        self.failed
+            && self.diagnostic.as_ref().is_some_and(|d| {
+                d.fresh_stop_boundary
+                    && d.last.state == State::Failed
+                    && d.last.evidence & bridge::STOP_REQUEST_EVIDENCE
+                        == bridge::STOP_REQUEST_EVIDENCE
+                    && d.last.uart_dropped_bytes == 0
+                    && d.last.uart_error_events == 0
+                    && d.last.rpc_dropped_messages == 0
+                    && d.last.unread_ring_bytes == 0
+            })
+    }
+
+    pub fn invalidate_diagnostics(&mut self) {
+        self.diagnostic = None;
+    }
+
+    pub fn diagnostic_available(&self) -> bool {
+        self.failed && self.diagnostic.is_some()
+    }
+
     pub fn receive_diagnostic(&mut self, bytes: &[u8]) -> io::Result<Option<Status>> {
         let result = self.receive_diagnostic_inner(bytes);
         if result.is_err() {
@@ -106,7 +131,7 @@ impl Session {
     }
 
     fn receive_diagnostic_inner(&mut self, bytes: &[u8]) -> io::Result<Option<Status>> {
-        if !self.diagnostic_pending() {
+        if !self.diagnostic_available() {
             return Err(invalid("No bound failure drain is active"));
         }
         let message =
@@ -121,7 +146,12 @@ impl Session {
                     || status.generation != d.initial.generation
                     || status.cause != d.initial.cause
                     || !matches!(status.state, State::Stopping | State::Failed)
-                    || status.evidence & d.last.evidence != d.last.evidence
+                    || status.evidence & d.last.evidence & !bridge::STOP_COMPLETE
+                        != d.last.evidence & !bridge::STOP_COMPLETE
+                    || (d.last.state == State::Failed && status.state != State::Failed)
+                    || (status.state == State::Stopping
+                        && status.evidence & bridge::STOP_COMPLETE != 0)
+                    || (status.evidence & bridge::STOP_COMPLETE != 0 && status.evidence & 4 == 0)
                     || status.app_uptime_ms.wrapping_sub(d.initial.app_uptime_ms) > 3250
                     || status.app_uptime_ms.wrapping_sub(d.last.app_uptime_ms) > 3250
                     || status.uart_rx_bytes < d.last.uart_rx_bytes
@@ -323,6 +353,7 @@ impl Session {
         if status.cause >= 3 || status.state == State::Failed {
             if status.cause >= 3
                 && status.state == State::Stopping
+                && status.evidence & bridge::STOP_COMPLETE == 0
                 && status.generation == self.generation
                 && (request == 0 || self.lifecycle.is_some_and(|(id, _)| id == request))
             {
@@ -330,6 +361,7 @@ impl Session {
                     request,
                     initial: status,
                     last: status,
+                    fresh_stop_boundary: status.evidence & bridge::STOP_REQUEST_EVIDENCE == 0,
                 });
             }
             return Err(invalid(match status.cause {
@@ -383,7 +415,7 @@ impl Session {
             State::Capturing => {
                 if !matches!(previous_state, State::Preflight | State::Capturing)
                     || status.cause != 0
-                    || status.evidence & 3 != 3
+                    || status.evidence != 3
                     || self.parser.is_none()
                 {
                     return Err(invalid("Capture lacks explicit preflight/start evidence"));
@@ -391,6 +423,9 @@ impl Session {
                 Some(Command::StartBeacon)
             }
             State::Stopping => {
+                if status.evidence & bridge::STOP_COMPLETE != 0 {
+                    return Err(invalid("Completion evidence before terminal stop"));
+                }
                 if !matches!(
                     previous_state,
                     State::Ready
@@ -418,7 +453,8 @@ impl Session {
                     && status.unread_ring_bytes == 0;
                 if !unopened_stop
                     && (!(previous_state == State::Stopping || previous_state == status.state)
-                        || status.evidence & 4 == 0
+                        || status.evidence & bridge::STOP_REQUEST_EVIDENCE
+                            != bridge::STOP_REQUEST_EVIDENCE
                         || self.stop_boundary != Some(request)
                         || status.unread_ring_bytes != 0)
                 {
@@ -457,14 +493,15 @@ impl Session {
                     return Err(invalid("Bridge start/preflight evidence disappeared"));
                 }
                 if request == self.status_request
-                    && status.evidence & previous.evidence & 4 != previous.evidence & 4
+                    && status.evidence & previous.evidence & bridge::STOP_REQUEST_EVIDENCE
+                        != previous.evidence & bridge::STOP_REQUEST_EVIDENCE
                 {
                     return Err(invalid("Current stop evidence disappeared"));
                 }
             }
         }
         if status.state == State::Stopping && self.stop_boundary != Some(request) {
-            if status.evidence & 4 != 0 {
+            if status.evidence & bridge::STOP_REQUEST_EVIDENCE != 0 {
                 return Err(invalid("New stop reused prior stop evidence"));
             }
             self.stop_boundary = Some(request);
@@ -504,7 +541,7 @@ mod tests {
             peer.receive(
                 1,
                 Body::Hello(bridge::Hello {
-                    capabilities: 7,
+                    capabilities: bridge::CAPABILITIES,
                     api_major: 87,
                     api_minor: 1,
                     uart_baud: 115200,
@@ -601,7 +638,7 @@ mod tests {
         assert!(peer.session.command(Command::StartBeacon).is_err());
         assert!(peer.status(id, State::Capturing, 0, 3, 1).is_err());
         assert!(peer.session.command(Command::Heartbeat).is_err());
-        for (caps, major, minor) in [(0, 87, 1), (3, 87, 1), (7, 88, 1), (7, 87, 2)] {
+        for (caps, major, minor) in [(0, 87, 1), (3, 87, 1), (7, 87, 1), (15, 88, 1), (15, 87, 2)] {
             let mut peer = Peer {
                 session: Session::new([7; 16]).unwrap(),
                 sequence: 0,
@@ -672,7 +709,7 @@ mod tests {
         let pause = peer.command(Command::Pause);
         peer.ack(pause, Command::Pause);
         peer.status(pause, State::Stopping, 1, 3, 1).unwrap();
-        peer.status(pause, State::Paused, 1, 7, 1).unwrap();
+        peer.status(pause, State::Paused, 1, 15, 1).unwrap();
         let next = peer.command(Command::StartBeacon);
         peer.ack(next, Command::StartBeacon);
         peer.status(next, State::Preflight, 0, 0, 2).unwrap();
@@ -739,12 +776,12 @@ mod tests {
         let pause = peer.command(Command::Pause);
         peer.ack(pause, Command::Pause);
         peer.status(pause, State::Stopping, 1, 3, 1).unwrap();
-        peer.status(pause, State::Paused, 1, 7, 1).unwrap();
+        peer.status(pause, State::Paused, 1, 15, 1).unwrap();
         let stop = peer.command(Command::Stop);
         peer.ack(stop, Command::Stop);
         peer.status(stop, State::Stopping, 2, 3, 1).unwrap();
         assert!(peer.session.command(Command::Stop).is_err());
-        peer.status(stop, State::Stopped, 2, 7, 1).unwrap();
+        peer.status(stop, State::Stopped, 2, 15, 1).unwrap();
         let mut peer = Peer::new();
         peer.start();
         let stop = peer.command(Command::Stop);
@@ -775,9 +812,9 @@ mod tests {
         peer.status(start, State::Capturing, 0, 3, 1).unwrap();
         peer.ack(pause, Command::Pause);
         peer.status(pause, State::Stopping, 1, 3, 1).unwrap();
-        peer.status(pause, State::Paused, 1, 7, 1).unwrap();
+        peer.status(pause, State::Paused, 1, 15, 1).unwrap();
         let next = peer.command(Command::StartBeacon);
-        peer.status(pause, State::Paused, 1, 7, 1).unwrap();
+        peer.status(pause, State::Paused, 1, 15, 1).unwrap();
         peer.ack(next, Command::StartBeacon);
         peer.status(next, State::Preflight, 0, 0, 2).unwrap();
     }
