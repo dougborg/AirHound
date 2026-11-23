@@ -10,9 +10,10 @@ and varying internal memory; see the
 Diagnostic records now share the output queue: their four sampled `log_drops`
 are included in the 30 `output_drops`, not additional losses. The independently
 reviewed `3fbc1a0` follow-up in [#321](https://github.com/dougborg/AirHound/pull/321)
-yields between remaining health-report enqueues; target CI and hardware acceptance
-are pending and it is not installed. The sections below retain earlier design
-and experiments; their stack/heap measurements do not describe the current image.
+yields between remaining health-report enqueues; its target build and packaging
+passed, while artifact audit and hardware acceptance remain pending. It is not
+installed. The sections below retain earlier design and experiments; their
+stack/heap measurements do not describe the current image.
 
 ## Earlier throughput design
 
