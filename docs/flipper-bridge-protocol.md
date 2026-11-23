@@ -22,7 +22,7 @@ Pause/Stop: Ack accepted first if available. The first Stopping status for each 
 
 Codec goldens: every header integer boundary, max payload300, truncated/excess bytes, reserved bits, wrong enum/state, unknown version, nonce/instance mismatch, sequence/request wrap, malformed length/version text. Stateful tests: Hello no RF, duplicateStart no second UART write, invalid heartbeat cannot extend watchdog, pause/stop evidence vs accepted ack, full queue still stops, gaps no decoder splice, disconnect no resume.
 
-The shared allocation-free codec is `companions/flipper/src/bridge.rs`; host and FAP use the same implementation. The prior `4ab3c66` producer / `a239454` host passed a bounded physical Start/Pause/Resume/Pause/Finish test, documented in `flipper-live-producer.md`. The current completion-capability revision still awaits its own matched-host physical acceptance; the prior evidence does not establish watchdog completion.
+The shared allocation-free codec is `companions/flipper/src/bridge.rs`; host and FAP use the same implementation. The prior `4ab3c66` producer / `a239454` host passed a bounded physical Start/Pause/Resume/Pause/Finish test, documented in `flipper-live-producer.md`. The completion-capability `c7e72ae` revision subsequently passed a matched-host normal Resume lifecycle and one paused-host heartbeat-expiry test, documented there separately. Earlier evidence7 acceptance does not establish this new watchdog outcome.
 
 Completion capability (bit3) is required before Start by the matching host; older
 hosts reject the new capability and the new host rejects an older producer that
