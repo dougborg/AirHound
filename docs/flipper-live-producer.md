@@ -66,7 +66,7 @@ The outputs retain DWARF, matching code/data and debuglink CRC, exact source/SDK
 hashes and an explicit `hardware_tested: false`; acceptance evidence remains
 separate from immutable build metadata. Independent source/artifact review and the
 UART-free and single-source passive device checks below passed. Remaining gates
-include Resume, physical watchdog/transport-failure tests, concurrent sources,
+include physical watchdog/transport-failure tests, concurrent sources,
 endurance and the normal native setup/capture workflow. The diagnostic and
 original Marauder companion remain preserved.
 
@@ -177,7 +177,8 @@ Hello/Ready/explicit Stop/SessionClose in 0.916 seconds. The actual producer
 reported `1a5ce78`, generation zero, zero UART bytes and no stop-text evidence;
 this proves app cleanup without claiming an AWOK radio stop. Postchecks found
 the loader idle, expected image hashes, released lease/USB ownership and unchanged
-default service. New passive Resume and fault-path acceptance remain pending.
+default service. Passive Resume and fault-path acceptance were still pending at
+that stage.
 
 ### Outstanding stop replies after the drain update
 
@@ -207,4 +208,44 @@ completed Pause still fails closed as cause13, distinct from proven malformed
 framing (cause6). No late data is silently accepted as resumed capture. Tests
 reproduce the observed timing with a delayed split second reply, missing replies,
 clock wrap, escalation and historical duplicate replies. A new independent
-source/artifact review and matched-host device acceptance remain required.
+source/artifact review and matched-host tests subsequently passed. The new
+artifact and bounded Resume evidence are recorded below; the missing bytes from
+the prior failed attempt remain unidentified.
+
+
+## Explicit Resume service acceptance
+
+The independently reviewed `4ab3c66` producer artifact, SHA-256
+`780436ec7082c147e33bc50d0460b49873d1f7bec11647bb6aab781dda6a6431`,
+was staged and hash-verified before replacing only the AirHound bridge. The prior
+`1a5ce78` image was parked separately, preserving the older accepted bridge and
+original third-party companion. A separate production Rust no-UART check with
+clean host `a239454` passed in 0.931 seconds: generation-zero Ready/Stop, zero UART
+bytes, no Start, clean SessionClose, idle loader and unchanged default service.
+
+One subsequent private full-service Start/Pause/Resume/Pause/Finish run passed
+with the matched host binary SHA-256
+`c74737918a1c8e5e7bc70b27c6ababb382b6a5f2ad84f717f8173fe4a7a9e385`.
+SQLite retained 373 records and 130 live Wi-Fi packet observations, split 65/65
+between generations one and two in the same producer app instance. Independent
+read-only checks confirmed source attribution, both generations, a finished run
+and `quick_check=ok`. The shared client exposed the observations.
+
+During the settled first Pause, fresh producer reports advanced 1.207 seconds
+while UART bytes remained 28,872; no packet observations were stored between that
+Pause and the second Preflight. The same service retained the serial descriptor
+and shared lease. Resume explicitly established generation two and new reception.
+Finish used fresh evidence: gen-two Paused/cause1/bits7, then a new
+Stopping/cause2/bits3 boundary, then Stopped/cause2/bits7. Reported UART drops,
+UART errors, RPC/output drops and unread bytes were zero. The private service
+exited normally; postchecks confirmed idle loader, expected hashes, released
+lease/USB ownership and unchanged user service/capture state.
+
+Pause requests were issued 2.010 and 2.000 seconds after observing each Capturing
+state. These are host request intervals, not exact RF-duration limits. Literal
+firmware text remains unauthenticated and unknown RF loss remains unknown.
+Packet RSSI, receive channel and GPS/receiver location remain absent; timestamps
+retain device-boot microseconds with wrap/reset uncertainty. This accepts one
+bounded single-source Resume lifecycle. Physical watchdog/transport-loss,
+concurrent receivers, endurance and the normal native workflow remain separate
+acceptance gates. Both earlier failed Resume-stage attempts remain failures.
