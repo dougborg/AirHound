@@ -3,6 +3,29 @@
 This checklist is intentionally separate from compilation and model coverage.
 The preview is under acceptance, not a signed-off production release.
 
+## Current scope
+
+The runnable counter preview has GUI source `946d3c0` and the unchanged signed
+`07c7142` backend. The current backend passed native Wi-Fi/BLE reception after
+renewed permission approval; the reconnected M5 also passed a separate bounded
+identity, Wi-Fi/BLE and host lifecycle check. Neither proves that the current
+GUI's Start, repeat recording, live/history presentation or all-receiver controls
+work. Those actual-window checks remain open for the everyday-recording goal.
+
+Later backend-controlled sessions accepted concurrent CatSniffer, ALFA and
+Flipper reception with managed GPS; an earlier assembled session also included
+M5. Preserve their exact source/firmware and failure scopes in the
+[attached-hardware ledger](../../docs/attached-hardware-validation.md), which
+owns the current support matrix. Physical disconnect recovery and endurance
+remain separate acceptance work. The historical ALFA failure below is retained,
+not the latest overall ALFA status.
+
+## Earlier native interaction evidence
+
+The manual checks below belong to the predecessor preview on 2026-11-22 unless
+otherwise stated. They are useful regression evidence, not acceptance of every
+later GUI/backend signing identity.
+
 | Requirement | Evidence | Status |
 | --- | --- | --- |
 | Shared Rust capture/control boundary | Swift uses the shared Rust CLI client; no Swift scan/policy/database implementation | Implemented |
@@ -15,12 +38,12 @@ The preview is under acceptance, not a signed-off production release.
 | Bounded browsing/live polling | Record window eviction and cursor tests; paged/follow controls | Passed rendered table/inspector and next-page check (500 to 1,000 retained records); live following advanced after reconnect |
 | Readiness/recovery/drop distinctions | Unknown-versus-zero tests and preserved backend phases/counters | Automated checks pass |
 | Window close leaves capture running | Service lifetime is independent in code/model tests | Passed on 2026-11-22: Cmd-W terminated GUI; service PID and active run survived, retained records grew, reopened GUI reconnected to that run |
-| Packaged backend startup/signing | Local optimized bundle, plist/codesign/embedded-help checks | Bundle and extracted archive signatures, executable hashes and embedded help verified; repeat after final name fallback build |
-| ALFA + CatSniffer capture together | Local packaged-backend attempt on 2026-11-22 | Failed: ALFA MCU timeout; reset/retest required |
+| Packaged backend startup/signing | Local optimized bundles, plist/codesign/embedded-help checks | Earlier bundle/archive checks passed; the current GUI-only delivery also verified its outer signature and preserved the nested signed backend byte-for-byte. Actual current GUI controls remain a separate gate |
+| ALFA + CatSniffer capture together | Initial packaged-backend attempt on 2026-11-22 | Historically failed with ALFA MCU timeout; subsequent individual and combined success is recorded in the current hardware ledger, without an endurance claim |
 | Service connection status/popover | User confirmed clicking the bottom status opens the popover on 2026-11-22 | Passed manual interaction check |
 | Native rendered UI/accessibility | Compact predecessor row rendered; current bottom status is available across both tabs | Capture/observations interactions verified with native accessibility and dark-mode screenshots; light appearance and full VoiceOver review not claimed |
 
-The combined attempt retained 1,355 CatSniffer packets with zero reported host
+That initial combined attempt retained 1,355 CatSniffer packets with zero reported host
 drops. ALFA produced no observations, reported two recovery attempts and failed.
 A separate bounded receive-only diagnostic returned `MCU command 12 sequence 1
 timed out`; a read-only register probe succeeded. Those results do not establish
@@ -36,12 +59,23 @@ three synthetic APs and opened in Observations. Invalid replay run
 `c0b3e3e570f20967d3e5f10a1247b05b` finished as failed, and the GUI showed
 `receiver synthetic-replay: early eof`. A valid plan was restored afterward.
 
-Before merge: complete final code review, final-head CI, and bundle verification
-with the unnamed-observation display fix. Dark-mode rendering was inspected;
-light appearance and a complete VoiceOver audit remain future UI acceptance work.
+The earlier unnamed-observation and selection work was reviewed and merged.
+Dark-mode rendering was inspected on that preview; light appearance and a
+complete VoiceOver audit remain future UI acceptance work. A passing build or
+model test does not replace actual current-window testing.
 
-ALFA recovery and successful ALFA + CatSniffer capture remain separate open
-hardware follow-ups (#155), not prerequisites for this native preview.
+The original ALFA failure and recovery history remain tracked in #155 and the
+hardware ledger. Do not repeat the old combined-failure verdict as the current
+support status or treat the later short successes as physical recovery/endurance
+acceptance.
+
+The private `RepeatRecordingTests` regression uses the real Rust service and a
+synthetic helper with no hardware access. One unchanged plan and SessionModel
+successfully Start/Finish twice, including a second Start queued during polling,
+distinct request/run IDs, first-run Pause/Resume, nonempty live observations and
+reopening both saved histories without cross-run rows. The local check passed
+against the preserved signed `07c7142` backend. This verifies the model/service
+path; it does not close the actual-window second-recording acceptance item.
 
 The observation-selection regression now covers automatic selection of both live
 and completed runs, plus preservation of a manually stopped Follow Live state.
