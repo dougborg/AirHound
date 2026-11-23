@@ -249,3 +249,21 @@ retain device-boot microseconds with wrap/reset uncertainty. This accepts one
 bounded single-source Resume lifecycle. Physical watchdog/transport-loss,
 concurrent receivers, endurance and the normal native workflow remain separate
 acceptance gates. Both earlier failed Resume-stage attempts remain failures.
+
+
+## Explicit stop completion revision (not yet hardware accepted)
+
+The `c7e72ae` producer adds a required Hello capability and a distinct bounded
+stop-completion evidence bit. The previous autonomous `Failed/cause3/bits7` report
+could describe either a completed stop or a deadline reached with outstanding
+replies, noise or incomplete framing. The new bit is set only for all-reply,
+complete-framing, quiet completion within the existing deadlines; final known
+transport loss or unread bytes revoke it. Failed session health never recovers.
+Matching hosts must retain revocation and reject old capabilities before Start.
+
+Independent review and 60 native companion tests passed, including clean versus
+incomplete autonomous outcomes, clock wrap, fresh Finish and final loss. The same
+outcome regression fails against the prior source. A separate API87.1 artifact
+was built with source/debug provenance; this revision has no device acceptance
+yet. Installed `4ab3c66` and the accepted normal-lifecycle evidence above remain
+unchanged. Physical fault and concurrency acceptance remain pending.
