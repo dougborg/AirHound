@@ -41,6 +41,7 @@ fn hello_and_unbound_controls_never_start_uart() {
     assert_eq!(c.request(h(1, 0), Command::Hello, 0).unwrap().uart, None);
     assert_eq!(c.request(h(2, 42), Command::Stop, 1).unwrap().uart, None);
     assert_eq!(c.state, State::Stopped);
+    assert_eq!(c.evidence, 0);
     assert!(c.request(h(3, 42), Command::StartBeacon, 2).is_err());
 }
 #[test]
@@ -163,7 +164,7 @@ fn finish_after_pause_needs_fresh_request_scoped_stop_evidence() {
     c.feed(101, b"Stopping WiFi tran/recv\r\n");
     c.poll(200);
     assert_eq!(c.state, State::Paused);
-    assert_eq!(c.evidence, 7);
+    assert_eq!(c.evidence, 15);
     assert_eq!(
         c.request(h(4, 42), Command::Stop, 210).unwrap().uart,
         Some(UartAction::Stop)
@@ -175,7 +176,7 @@ fn finish_after_pause_needs_fresh_request_scoped_stop_evidence() {
     c.feed(311, b"Stopping WiFi tran/recv\r\n");
     c.poll(361);
     assert_eq!(c.state, State::Stopped);
-    assert_eq!(c.evidence, 7);
+    assert_eq!(c.evidence, 15);
 }
 #[test]
 fn pause_to_stop_escalation_and_repeated_stop_cannot_extend_deadline() {
@@ -245,7 +246,7 @@ fn delayed_ack_and_valid_queued_tail_drain_within_fixed_bounds() {
             let finished = ack.wrapping_add(tail.len().div_ceil(115) as u32 * 10 + 50);
             c.poll(finished);
             assert_eq!(c.state, State::Paused);
-            assert_eq!(c.evidence, 7);
+            assert_eq!(c.evidence, 15);
             assert!(finished.wrapping_sub(stop) < 3000);
         }
     }
@@ -330,7 +331,7 @@ fn retry_reply_after_first_quiet_boundary_cannot_become_late_paused_input() {
         assert_eq!(c.state, State::Stopping);
         c.poll(at(3600));
         assert_eq!(c.state, State::Paused);
-        assert_eq!(c.evidence, 7);
+        assert_eq!(c.evidence, 15);
         // A duplicate completed reply observed before a later Stop is historical.
         // Test the controller's accounting only; runtime rejects late Paused RX.
         c.feed(at(3601), b"\r\nStopping WiFi tran/recv\r\n");
@@ -404,4 +405,56 @@ fn cancelled_preflight_cannot_credit_old_stop_reply_to_new_stop() {
     c.poll(251);
     assert_eq!(c.state, State::Stopped);
     assert_eq!(c.evidence & 2, 0); // No Start ever issued.
+}
+
+#[test]
+fn autonomous_terminal_completion_distinguishes_identical_old_failure_tuples() {
+    for origin in [0u32, u32::MAX - 4000] {
+        let at = |n: u32| origin.wrapping_add(n);
+        // All cases previously ended Failed/cause3/evidence7. Only the clean
+        // all-replies + quiet case may now carry explicit completion bit3.
+        for case in ["clean", "missing_retry", "noisy", "partial", "malformed"] {
+            let mut c = running(origin);
+            assert_eq!(c.poll(at(3000)), Some(UartAction::Stop));
+            assert_eq!(c.poll(at(3500)), Some(UartAction::Stop));
+            c.feed(at(3600), b"Stopping WiFi tran/recv\r\n");
+            c.poll(at(3600));
+            if case != "missing_retry" {
+                c.feed(at(3700), b"Stopping WiFi tran/recv\r\n");
+                c.poll(at(3700));
+            }
+            match case {
+                "partial" => c.feed(at(3701), b"[BUF/BEGIN]"),
+                "malformed" => c.feed(at(3701), b"[BUF/BEGIN]xxxxxxxxxxxxxxxxxxxxxxxx"),
+                "noisy" => c.pending_input(at(5600)),
+                _ => {}
+            }
+            c.poll(at(if case == "clean" { 3750 } else { 5600 }));
+            assert_eq!(c.state, State::Failed, "{case}");
+            assert_eq!(c.cause, 3, "{case}");
+            assert_eq!(c.evidence & 7, 7, "old tuple must match: {case}");
+            assert_eq!(
+                c.evidence & 8,
+                if case == "clean" { 8 } else { 0 },
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn final_loss_revokes_completed_autonomous_failure_and_cannot_be_relabelled() {
+    let mut c = running(0);
+    c.poll(3000);
+    c.feed(3001, b"Stopping WiFi tran/recv\r\n");
+    c.poll(3100);
+    assert_eq!((c.state, c.cause, c.evidence), (State::Failed, 3, 15));
+    c.fail(3101, 5); // final ISR counters after the terminal poll
+    assert_eq!((c.state, c.cause, c.evidence), (State::Failed, 3, 7));
+    let mut c = running(0);
+    c.fail(100, 5);
+    c.fail(101, 4); // a later transport cause cannot hide earlier known loss
+    c.feed(102, b"Stopping WiFi tran/recv\r\n");
+    c.poll(200);
+    assert_eq!((c.state, c.evidence & 8), (State::Failed, 0));
 }

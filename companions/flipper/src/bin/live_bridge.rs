@@ -194,7 +194,19 @@ impl Emit {
         state.uart_error_events = rx.errors.load(Ordering::Relaxed) as u64;
         state.rpc_dropped_messages = s.queue_loss.load(Ordering::Relaxed) as u64;
         state.unread_ring_bytes = unread;
-        self.body(s, c, c.request_id(), Body::Status(state))
+        if state.evidence & wire::STOP_COMPLETE != 0 {
+            // Pause keeps UART owned. Recheck the ring at publication as well
+            // as the poll boundary; terminal teardown already stopped the ISR.
+            state.unread_ring_bytes = state
+                .unread_ring_bytes
+                .max(unsafe { sys::furi_stream_buffer_bytes_available(rx.stream) as u32 });
+        }
+        self.body(
+            s,
+            c,
+            c.request_id(),
+            Body::Status(bridge_io::checked_status(state)),
+        )
     }
 }
 fn now() -> u32 {
@@ -577,6 +589,9 @@ fn main(args: Option<&CStr>) -> i32 {
                 || rx.errors.load(Ordering::Relaxed) > 0
             {
                 c.fail(now(), 5);
+            }
+            if shared.queue_loss.load(Ordering::Relaxed) > 0 {
+                c.fail(now(), 8);
             }
             emit.status(&shared, &c, &rx, received, unread);
         }

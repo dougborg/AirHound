@@ -175,3 +175,34 @@ fn late_paused_input_requests_stop_and_fails_before_emitting_raw() {
     c.poll(400);
     assert_eq!(c.state, State::Failed);
 }
+
+#[test]
+fn final_publication_revokes_completion_for_each_late_io_counter() {
+    use airhound_flipper::bridge::Status;
+    let clean = Status {
+        state: State::Failed,
+        cause: 3,
+        evidence: 15,
+        generation: 1,
+        app_uptime_ms: 3100,
+        uart_rx_bytes: 100,
+        uart_dropped_bytes: 0,
+        uart_error_events: 0,
+        rpc_dropped_messages: 0,
+        unread_ring_bytes: 0,
+    };
+    assert_eq!(bridge_io::checked_status(clean), clean);
+    for index in 0..4 {
+        let mut late = clean;
+        match index {
+            0 => late.uart_dropped_bytes = 1,
+            1 => late.uart_error_events = 1,
+            2 => late.rpc_dropped_messages = 1,
+            _ => late.unread_ring_bytes = 1,
+        }
+        let checked = bridge_io::checked_status(late);
+        assert_eq!(checked.evidence, 7);
+        late.evidence = 7;
+        assert_eq!(checked, late); // preserve correlated failure/loss diagnostics
+    }
+}
