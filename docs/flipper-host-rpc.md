@@ -158,7 +158,9 @@ For autonomous failures, `stop_complete` is derived from the validated same-sess
 request, generation, cause, sequence, fresh cleared-stop boundary and terminal
 completion evidence. It is not copied from an arbitrary rejected Status. Raw
 reported bits/counters remain available with `accepted_lifecycle: false`, even
-when this derived proof is false. Final loss can revoke completion; coalesced or
+when this derived proof is false. Final loss or unread bytes permanently revoke completion for that failure drain,
+even if a later raw report reasserts its completion bit; coalesced or
 closing reports update the retained evidence, and a poisoned/failed continuation
-clears derived proof while preserving the original source error. A valid failure
+clears derived proof while preserving the original source error. Raw bytes after
+a terminal report also poison completion instead of silently being ignored. A valid failure
 stop never restores receiver health or changes the recording to successful.
