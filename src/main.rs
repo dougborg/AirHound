@@ -484,7 +484,7 @@ async fn main(spawner: embassy_executor::Spawner) {
             // Keep reporting repeated advertisements for fresh RSSI/time evidence
             // across recordings without restarting the autonomous radio session.
             let _session = match airhound::ble_scan_control::start_continuous_scan(
-                scanner.scan(&config),
+                scanner.scan(&config).await,
                 |command| stack.command(command),
             )
             .await
