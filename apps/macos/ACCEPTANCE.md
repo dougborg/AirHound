@@ -30,9 +30,11 @@ M5. Preserve their exact source/firmware and failure scopes in the
 owns the current support matrix. Physical disconnect recovery and endurance
 remain separate acceptance work. Official Rayhunter `0.13.0` on the Orbic and its
 separate raw-feed fork prototype do not constitute an AirHound live cellular
-source. The fork's helper preflight passed, but full raw-feed runtime acceptance
-remains pending after two failed staged attempts and restoration of the official
-daemon; experimental work in [#293](https://github.com/dougborg/AirHound/issues/293)
+source. The fork's helper preflight passed, but neither unsuccessful staged
+attempt launched the prototype. The official daemon remained running throughout
+both; recording state was preserved or resumed, with recording resumed after the
+second attempt. Full raw-feed runtime acceptance remains pending; experimental
+work in [#293](https://github.com/dougborg/AirHound/issues/293)
 is not a prerequisite for the currently supported rig. The historical ALFA
 failure below is retained, not the latest overall ALFA status.
 
