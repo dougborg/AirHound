@@ -140,6 +140,12 @@ generation and nondecreasing counters remain checked; malformed or disconnected
 transport ends the drain. Coalesced RPC frames survive the initial failure
 exactly once in a bounded queue.
 
+A terminal failure report can arrive before the transport and bridge acknowledgments
+of a heartbeat submitted earlier. Both already-correlated replies are drained within
+the same fixed deadline before SessionClose; no new heartbeat is sent. Missing or
+mismatched replies invalidate completion. Secondary drain and SessionClose errors
+are logged separately while the original receiver failure remains the result.
+
 Later bound failure reports retain their device clock, loss and unread-byte
 counters as `accepted_lifecycle: false`. They cannot make a failed run successful
 or restore receiver availability. Terminal Failed state and a stop-text bit do

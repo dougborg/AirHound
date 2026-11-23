@@ -306,14 +306,16 @@ pub fn run<T: Read + Write>(
         // deadline is set once at the first observed failure, not per status.
         // 250ms accommodates wire/scheduling latency beyond the device 3s cap;
         // it changes neither that producer deadline nor its heartbeat lease.
-        if drain_failure(
+        if let Err(error) = drain_failure(
             &mut link,
             &mut session,
             &mut output,
             Instant::now() + Duration::from_millis(3250),
-        )
-        .is_err()
-        {
+        ) {
+            log::warn!(
+                "Flipper failure_drain failed ({:?}): {error}; stop completion is unverified",
+                error.kind()
+            );
             invalidate_failure_proof(&mut session, &mut output);
         }
     }
@@ -339,7 +341,11 @@ pub fn run<T: Read + Write>(
                 _ => Err(invalid("Unexpected closing RPC response")),
             },
         );
-    if closed.is_err() {
+    if let Err(error) = &closed {
+        log::warn!(
+            "Flipper session_close failed ({:?}): {error}; stop completion is unverified",
+            error.kind()
+        );
         invalidate_failure_proof(&mut session, &mut output);
     }
     result.and(closed)
@@ -364,7 +370,12 @@ fn drain_failure<T: Read + Write>(
     output: &mut impl FnMut(Output) -> io::Result<()>,
     deadline: Instant,
 ) -> io::Result<()> {
-    while session.diagnostic_pending() {
+    // An autonomous terminal can precede the RPC and AHFB acknowledgments
+    // of a heartbeat submitted before the failure was observed. Consume only
+    // those already-correlated replies before issuing StopSession, within the
+    // same original deadline; send no new bridge command or lease renewal.
+    while session.diagnostic_pending() || session.awaiting_ack() || link.correlation.awaiting_ack()
+    {
         if Instant::now() >= deadline {
             return Err(timeout("Flipper failure diagnostic drain timed out"));
         }
@@ -528,6 +539,26 @@ mod tests {
         WatchdogMissingBoundary,
         WatchdogBadTail,
         WatchdogRawTail,
+        WatchdogPendingRpc,
+        WatchdogPendingBridge,
+        WatchdogMissingRpcAck,
+        WatchdogMissingBridgeAck,
+        WatchdogWrongRpcAck,
+        WatchdogWrongBridgeAck,
+    }
+
+    impl Fault {
+        fn delayed_heartbeat(self) -> bool {
+            matches!(
+                self,
+                Self::WatchdogPendingRpc
+                    | Self::WatchdogPendingBridge
+                    | Self::WatchdogMissingRpcAck
+                    | Self::WatchdogMissingBridgeAck
+                    | Self::WatchdogWrongRpcAck
+                    | Self::WatchdogWrongBridgeAck
+            )
+        }
     }
 
     fn peer(mut io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
@@ -581,36 +612,40 @@ mod tests {
                         content: Some(Content::Empty(proto::Empty {})),
                         ..Default::default()
                     };
-                    if let Err(error) = io.write_all(&rpc::encode(&response).unwrap()) {
-                        // A peer rejecting queued invalid diagnostics may close
-                        // immediately after its best-effort StopSession. Only
-                        // that teardown ACK may race the intentional close.
-                        if matches!(request.content, Some(Content::StopSession(_)))
-                            && matches!(
-                                fault,
-                                Fault::WatchdogBadNonce
-                                    | Fault::WatchdogReplay
-                                    | Fault::WatchdogWrongRequest
-                                    | Fault::WatchdogWrongGeneration
-                                    | Fault::WatchdogWrongCause
-                                    | Fault::WatchdogCounterDecrease
-                                    | Fault::WatchdogInitialWrongGeneration
-                                    | Fault::WatchdogInitialWrongRequest
-                                    | Fault::WatchdogMissingBoundary
-                                    | Fault::WatchdogBadTail
-                                    | Fault::WatchdogRawTail
-                            )
-                            && matches!(
-                                error.kind(),
-                                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
-                            )
-                        {
-                            return commands;
+                    let delayed_heartbeat = fault.delayed_heartbeat()
+                        && matches!(&request.content, Some(Content::AppDataExchangeRequest(data)) if matches!(bridge::decode(&data.data).unwrap().body, Body::Command(Command::Heartbeat)));
+                    if !delayed_heartbeat {
+                        if let Err(error) = io.write_all(&rpc::encode(&response).unwrap()) {
+                            // A peer rejecting queued invalid diagnostics may close
+                            // immediately after its best-effort StopSession. Only
+                            // that teardown ACK may race the intentional close.
+                            if matches!(request.content, Some(Content::StopSession(_)))
+                                && matches!(
+                                    fault,
+                                    Fault::WatchdogBadNonce
+                                        | Fault::WatchdogReplay
+                                        | Fault::WatchdogWrongRequest
+                                        | Fault::WatchdogWrongGeneration
+                                        | Fault::WatchdogWrongCause
+                                        | Fault::WatchdogCounterDecrease
+                                        | Fault::WatchdogInitialWrongGeneration
+                                        | Fault::WatchdogInitialWrongRequest
+                                        | Fault::WatchdogMissingBoundary
+                                        | Fault::WatchdogBadTail
+                                        | Fault::WatchdogRawTail
+                                )
+                                && matches!(
+                                    error.kind(),
+                                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                                )
+                            {
+                                return commands;
+                            }
+                            panic!(
+                                "fixture ACK failed for {fault:?} request {}: {error}",
+                                request.command_id
+                            );
                         }
-                        panic!(
-                            "fixture ACK failed for {fault:?} request {}: {error}",
-                            request.command_id
-                        );
                     }
                     match request.content.unwrap() {
                         Content::AppStartRequest(app) => {
@@ -706,7 +741,9 @@ mod tests {
                                 );
                                 continue;
                             }
-                            send(message.header.request_id, Body::Ack { command, result: 0 });
+                            if !delayed_heartbeat {
+                                send(message.header.request_id, Body::Ack { command, result: 0 });
+                            }
                             let status = |state, cause, evidence, generation| Status {
                                 state,
                                 cause,
@@ -904,6 +941,97 @@ mod tests {
                                         );
                                     }
                                 }
+                                Command::Heartbeat if delayed_heartbeat => {
+                                    let mut stopping = status(State::Stopping, 3, 3, generation);
+                                    stopping.app_uptime_ms = 3001;
+                                    send(0, Body::Status(stopping));
+                                    let terminal = Status {
+                                        state: State::Failed,
+                                        evidence: 15,
+                                        app_uptime_ms: 3101,
+                                        ..stopping
+                                    };
+                                    send(0, Body::Status(terminal));
+                                    // The real producer can repeat the final state before
+                                    // answering an already-submitted heartbeat.
+                                    send(0, Body::Status(terminal));
+                                    let mut response = response;
+                                    if matches!(fault, Fault::WatchdogWrongRpcAck) {
+                                        response.command_id += 1;
+                                    }
+                                    let ack = rpc::encode(&response).unwrap();
+                                    sequence += 1;
+                                    let mut frame = [0; bridge::MAX_MESSAGE];
+                                    let n = bridge::encode(
+                                        Message {
+                                            header: Header {
+                                                request_id: message.header.request_id
+                                                    + u32::from(matches!(
+                                                        fault,
+                                                        Fault::WatchdogWrongBridgeAck
+                                                    )),
+                                                nonce: message.header.nonce,
+                                                app_instance: 42,
+                                                sequence,
+                                            },
+                                            body: Body::Ack { command, result: 1 },
+                                        },
+                                        &mut frame,
+                                    )
+                                    .unwrap();
+                                    let bridge_ack = rpc::encode(&proto::Main {
+                                        content: Some(Content::AppDataExchangeRequest(
+                                            app::DataExchangeRequest {
+                                                data: frame[..n].to_vec(),
+                                            },
+                                        )),
+                                        ..Default::default()
+                                    })
+                                    .unwrap();
+                                    if matches!(
+                                        fault,
+                                        Fault::WatchdogMissingRpcAck | Fault::WatchdogWrongRpcAck
+                                    ) {
+                                        std::thread::sleep(Duration::from_millis(100));
+                                        if io.write_all(&bridge_ack).is_err() {
+                                            return commands;
+                                        }
+                                        if matches!(fault, Fault::WatchdogWrongRpcAck) {
+                                            let _ = io.write_all(&ack);
+                                        }
+                                        continue;
+                                    }
+                                    if matches!(
+                                        fault,
+                                        Fault::WatchdogMissingBridgeAck
+                                            | Fault::WatchdogWrongBridgeAck
+                                    ) {
+                                        std::thread::sleep(Duration::from_millis(100));
+                                        if io.write_all(&ack).is_err() {
+                                            return commands;
+                                        }
+                                        if matches!(fault, Fault::WatchdogWrongBridgeAck) {
+                                            let _ = io.write_all(&bridge_ack);
+                                        }
+                                        continue;
+                                    }
+                                    let (first, second) =
+                                        if matches!(fault, Fault::WatchdogPendingRpc) {
+                                            (&bridge_ack, &ack)
+                                        } else {
+                                            (&ack, &bridge_ack)
+                                        };
+                                    // Force separate reads so terminal cannot accidentally
+                                    // consume both pending acknowledgments in one batch.
+                                    std::thread::sleep(Duration::from_millis(100));
+                                    if io.write_all(first).is_err() {
+                                        return commands;
+                                    }
+                                    std::thread::sleep(Duration::from_millis(100));
+                                    if io.write_all(second).is_err() {
+                                        return commands;
+                                    }
+                                }
                                 Command::Heartbeat => (),
                                 Command::Hello => unreachable!(),
                             }
@@ -1066,6 +1194,65 @@ mod tests {
                 5000
             };
             assert!(started.elapsed() < Duration::from_millis(limit));
+        }
+    }
+
+    #[test]
+    fn watchdog_terminal_waits_for_both_already_submitted_acknowledgments() {
+        for fault in [
+            Fault::WatchdogPendingRpc,
+            Fault::WatchdogPendingBridge,
+            Fault::WatchdogMissingRpcAck,
+            Fault::WatchdogMissingBridgeAck,
+            Fault::WatchdogWrongRpcAck,
+            Fault::WatchdogWrongBridgeAck,
+        ] {
+            let (mut io, other) = transport();
+            let peer = peer(other, fault);
+            let mut proof = Vec::new();
+            let started = Instant::now();
+            let error = run(
+                &mut io,
+                [7; 16],
+                || Desired {
+                    enabled: true,
+                    shutdown: false,
+                },
+                |event| {
+                    if let Output::FailureStatus { stop_complete, .. } = event {
+                        proof.push(stop_complete);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            drop(io);
+            let commands = peer.join().unwrap();
+            assert_eq!(
+                commands,
+                [Command::Hello, Command::StartBeacon, Command::Heartbeat]
+            );
+            assert_eq!(
+                error.to_string(),
+                "Bridge reported autonomous stop or failure"
+            );
+            let missing = matches!(
+                fault,
+                Fault::WatchdogMissingRpcAck | Fault::WatchdogMissingBridgeAck
+            );
+            let valid = matches!(
+                fault,
+                Fault::WatchdogPendingRpc | Fault::WatchdogPendingBridge
+            );
+            assert_eq!(proof.last(), Some(&valid), "pending {fault:?}: {proof:?}");
+            assert!(
+                proof.contains(&true),
+                "terminal was validated before pending-ACK cleanup"
+            );
+            if missing {
+                assert!(started.elapsed() >= Duration::from_millis(4250));
+            }
+            assert!(started.elapsed() < Duration::from_secs(6));
         }
     }
 
