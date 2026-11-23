@@ -16,8 +16,10 @@ After the observer closed, the production-reader lifecycle attempt received no
 device input and failed before Pause/Resume. An explicit line-state diagnostic
 produced a new boot and both media but did not establish physical button recovery;
 the user's unresponsive-button report remains unresolved. The reviewed `14d6085`
-host transport policy passed focused tests but awaits hardware validation in
-[#175](https://github.com/dougborg/AirHound/issues/175). The earlier BLE-only failure
+host transport policy passed focused tests, but its first hardware opening test
+also failed with zero device input and no Pause/Resume. Clean Finish and data
+preservation do not turn that failure into reception or button acceptance;
+[#175](https://github.com/dougborg/AirHound/issues/175) remains unresolved. The earlier BLE-only failure
 in [#317](https://github.com/dougborg/AirHound/issues/317) remains distinct.
 None of these results proves that the current GUI's Start, repeat recording,
 live/history presentation or all-receiver controls work. Those actual-window checks remain open for the

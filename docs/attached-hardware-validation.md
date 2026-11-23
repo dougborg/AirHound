@@ -38,8 +38,9 @@ After that observer closed, a production-reader lifecycle attempt received no
 device input and failed before Pause/Resume. A later explicit control-line
 open produced a new boot and both media, but did not establish button recovery.
 The user's unresponsive-button report remains unresolved. The separately reviewed
-`14d6085` host transport policy has 14 passing focused tests; its hardware
-validation is pending under [#175](https://github.com/dougborg/AirHound/issues/175).
+`14d6085` host transport policy has 14 passing focused tests, but its first
+hardware opening test also failed with zero device input. Transport and physical
+control recovery remain unresolved under [#175](https://github.com/dougborg/AirHound/issues/175).
 Neither the continuity pass nor that candidate establishes current M5 lifecycle
 or complete-rig acceptance. The earlier BLE-only failure in
 [#317](https://github.com/dougborg/AirHound/issues/317) remains preserved separately.
@@ -240,10 +241,16 @@ The scoped host candidate `14d6085` clears and verifies Unix close-time hangup,
 restores the configured baud through the platform serial API, and atomically
 deasserts/verifies DTR/RTS before ingestion. Fourteen focused tests and independent
 review passed, including macOS custom-baud handling, unsupported-control refusal,
-and close-before-lease cleanup. It has not passed hardware acceptance or replaced
-the installed backend. Passive discovery and other receiver transports are
-unchanged. Opening may still reset the board; Pause/Resume must not toggle lines.
-Current lifecycle, physical buttons and full-rig acceptance remain pending under
+and close-before-lease cleanup. Its first hardware opening test then failed:
+35.099607 seconds, 13 host-side records and no device input, status, uptime, WiFi
+or BLE. Pause/Resume and the second stage were not attempted; no reset or retry
+followed. Owned Finish, private exit, port/lease release, database integrity and
+default-data preservation passed. The recording was finished cleanly, but the
+acceptance verdict remains failed. This policy is not a proven reception or
+button fix and has not replaced the installed backend. Passive discovery and
+other receiver transports are unchanged. Opening may still reset the board;
+Pause/Resume must not toggle lines. Current lifecycle, physical buttons and
+full-rig acceptance remain pending under
 [#175](https://github.com/dougborg/AirHound/issues/175) and
 [#269](https://github.com/dougborg/AirHound/issues/269).
 
@@ -293,7 +300,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | Native Bluetooth | CoreBluetooth, OS-managed | Current signed `07c7142` retry: 1,273 observations alongside WiFi, clean finish; earlier `33a5e93` result retained below | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
 | Native WiFi | CoreWLAN, OS interface | Current signed `07c7142` retry: 321 observations alongside BLE after renewed permission approval, clean finish | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; installed AirHound `0.2.0` / `m5stickc_plus2`, reviewed source `3baaacc` application verified | Corrected-image 240-second observation: 37,244 BLE + 1,430 WiFi, repeated late advertisers, seven zero reported producer drop/error samples. After close, production lifecycle failed with no device input. A separate line-state diagnostic produced a new boot and both media with four scan drops; buttons remained unresolved | Current host lifecycle, physical controls and full rig remain unaccepted. Reviewed `14d6085` transport policy awaits hardware validation in [#175](https://github.com/dougborg/AirHound/issues/175). Preserve earlier `07c7142` BLE-only failure in [#317](https://github.com/dougborg/AirHound/issues/317) and prior `0.1.1` lifecycle successes. Radios remain autonomous; RF loss unknown; physical recovery pending |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; installed AirHound `0.2.0` / `m5stickc_plus2`, reviewed source `3baaacc` application verified | Corrected-image 240-second observation: 37,244 BLE + 1,430 WiFi, repeated late advertisers, seven zero reported producer drop/error samples. After close, production lifecycle failed with no device input. A separate line-state diagnostic produced a new boot and both media with four scan drops; buttons remained unresolved | Current host lifecycle, physical controls and full rig remain unaccepted. Reviewed `14d6085` transport policy failed its first hardware opening test with zero device input; investigation continues in [#175](https://github.com/dougborg/AirHound/issues/175). Preserve earlier `07c7142` BLE-only failure in [#317](https://github.com/dougborg/AirHound/issues/317) and prior `0.1.1` lifecycle successes. Radios remain autonomous; RF loss unknown; physical recovery pending |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
@@ -766,7 +773,8 @@ internally unexplained; production readiness timeouts are unchanged.
   the M5 lifecycle success belongs to prior firmware `0.1.1`. Installed `3baaacc`
   passed continued both-media reporting, then failed production lifecycle with no
   input after observer close; physical buttons remain unresolved. Validate the
-  reviewed host transport policy and close/reopen behavior in
+  host transport and close/reopen behavior after the reviewed `14d6085` policy
+  also failed its first hardware opening test in
   [#175](https://github.com/dougborg/AirHound/issues/175) before claiming current
   full-rig acceptance. Preserve the separate earlier BLE-only failure in
   [#317](https://github.com/dougborg/AirHound/issues/317) and all later failures.
