@@ -5,7 +5,7 @@
 mod passive_cli {
     use serde_json::{json, Value};
     use std::{
-        io,
+        io::{self, Read},
         path::PathBuf,
         process::{Child, Command, Stdio},
         thread,
@@ -50,6 +50,7 @@ mod passive_cli {
         let socket = root.join("private/control.sock");
         let executable = env!("CARGO_BIN_EXE_airhound-hostd");
         let child = Command::new(executable)
+            .env("RUST_LOG", "airhound_hostd=debug")
             .args(["serve", "--socket"])
             .arg(&socket)
             .arg("--database")
@@ -220,6 +221,18 @@ mod passive_cli {
             assert!(Instant::now() < deadline, "service shutdown timeout");
             thread::sleep(Duration::from_millis(10));
         }
+        let mut diagnostics = String::new();
+        service
+            .child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut diagnostics)
+            .unwrap();
+        assert!(
+            diagnostics.contains("Starting AirHound control service (capture=false)"),
+            "actual serve path did not emit diagnostics to stderr: {diagnostics}"
+        );
         assert_eq!(
             std::fs::symlink_metadata(&socket).unwrap_err().kind(),
             io::ErrorKind::NotFound

@@ -299,6 +299,18 @@ impl Args {
     }
 }
 
+fn init_logging(verbose: u8) {
+    let level = match verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
+        .target(env_logger::Target::Stderr)
+        .format_timestamp_millis()
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
@@ -308,6 +320,8 @@ async fn main() -> io::Result<()> {
         capture,
     }) = args.command
     {
+        init_logging(args.verbose);
+        log::debug!("Starting AirHound control service (capture={capture})");
         return service_cli::serve(socket, database.clone(), capture).await;
     }
     if let Some(DiscoveryCommand::Client { socket, command }) = args.command {
@@ -351,14 +365,7 @@ async fn main() -> io::Result<()> {
         };
     }
 
-    let level = match args.verbose {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
-        .format_timestamp_millis()
-        .init();
+    init_logging(args.verbose);
     receiver::validate_selection(args.ble_adapter.as_deref(), cfg!(target_os = "macos"))
         .map_err(io::Error::other)?;
     if args.list_ble_adapters {
