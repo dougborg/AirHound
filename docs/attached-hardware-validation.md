@@ -31,6 +31,18 @@ longer-duration recovery checks remain open. The matrices below
 retain earlier successes and failures with their build and test scope; they do
 not imply that every tested device is currently attached or enabled.
 
+On 2026-11-23 UTC, clean candidate `fc3a556` passed one explicit u-blox
+`IdentifyDevice` request through the production Rust backend in a private service.
+The receiver reported firmware `SPG 3.01`, software `ROM CORE 3.01 (107888)`,
+hardware `00080000` and protocol `18.00`, with a timestamp inside the actual
+request. No `MOD` field was reported, so model remained unknown; compatibility
+also remained unknown and reception remained `not_tested`. No capture started; the private service
+exited cleanly, the serial port and shared lease were released, and the installed
+service, saved data and setups were preserved. This establishes the macOS backend
+identification path for [#309](https://github.com/dougborg/AirHound/issues/309),
+not GPS reception or native button acceptance. The installed `aa472a0` preview
+remains unchanged and does not include this new identification action.
+
 ## Current preview delivery
 
 The reviewed desktop preview is built from clean merged source `aa472a0` and
@@ -102,7 +114,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
-| u-blox GNSS | `1546:01a8`, USB CDC; gpsd NMEA0183/9600 | 60-second CatSniffer session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Explicit GPSD session configuration implemented and live-tested in #276. gpsd 3.27.5/protocol 16.1 is host software, not receiver firmware. Receiver model/firmware remains unverified |
+| u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and not yet in installed `aa472a0`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active transport loss, physical reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
 | AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; diagnostic import retained 85 packets. Latest external combined run retained 728 live packets across two Flipper capture generations | Prior 63- and 65-packet attempts failed before Resume. The bridge Hello does not establish downstream firmware, assigned channel, RSSI or RF loss; literal stop acknowledgments do not prove physical RF silence |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor | Recognized candidate only | No current AirHound live-source integration; product descriptor is not a queried firmware version |
