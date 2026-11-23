@@ -110,10 +110,8 @@ struct SessionView: View {
                     session.receiverStatusIsCurrent
                       ? receiver.phases : "Last reported: \(receiver.phases)")
                   Text(receiver.detail).font(.caption).foregroundStyle(.secondary)
-                  Text(
-                    "Recovery attempts: \(receiver.recovery) · Host drops: \(receiver.hostDrops) · Producer drops: \(receiver.producerDrops)"
-                  )
-                  .font(.caption).monospacedDigit()
+                  Text(receiver.metricsDescription)
+                    .font(.caption).monospacedDigit()
                 }
               }
               if session.isActive, let location = session.capture?["receiver_health"]?["location"],
