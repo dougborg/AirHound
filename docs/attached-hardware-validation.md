@@ -5,6 +5,27 @@ hardware certification. Supported sources still need permissions and correct
 firmware. USB product names alone establish neither firmware nor working reception.
 The remaining integration work is tracked in [#269](https://github.com/dougborg/AirHound/issues/269).
 
+## Current acceptance status
+
+The installed `33a5e93` backend now receives native WiFi and Bluetooth after the
+user approved permissions: the unchanged service finished a 20.196328-second run
+with 483 WiFi and 1,233 BLE observations. Existing recordings and saved setups
+were preserved. This verifies backend-controlled reception, not native GUI
+Start/Finish controls.
+
+A separate, private Flipper live-source build passed one capture/Pause/Finish
+run with 65 packets. The next attempt retained 63 packets but failed during its
+first Pause; Resume was never dispatched. A reviewed stop-drain correction and
+more precise failure telemetry are staged, with hardware acceptance still pending.
+The Flipper UI in [#297](https://github.com/dougborg/AirHound/pull/297) is merged,
+but the installed GUI/backend have not been replaced with these live-source builds.
+
+The M5 remains absent from the latest passive inventory. Physical CatSniffer
+unplug/replug, Flipper Resume/fault/concurrent operation, actual GUI capture
+controls and longer-duration recovery checks remain open. The matrices below
+retain earlier successes and failures with their build and test scope; they do
+not imply that every tested device is currently attached or enabled.
+
 ## Provenance and privacy
 
 Baseline desktop code: `67eab20`; executable was the embedded helper in the local
@@ -46,16 +67,16 @@ configuration; rediscover the current endpoint and select it explicitly.
 
 ## Individual devices
 
-| Device / role | Observed identity and endpoint | Current evidence | Limit / next check |
+| Device / role | Observed identity and endpoint | Recorded evidence | Limit / next check |
 | --- | --- | --- | --- |
-| Native Bluetooth | CoreBluetooth, OS-managed | 30-second run: 1,816 observations, clean finish | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
-| Native WiFi | CoreWLAN, OS interface | CLI helper initially returned redacted addresses; a separately permitted backend app received 1,172 observations | Actual Location permission differs between app identities. Success is not proof that LaunchServices itself is the required fix. Confirm the running GUI/backend identity has permission |
+| Native Bluetooth | CoreBluetooth, OS-managed | Latest installed-backend permission retry: 1,233 observations alongside WiFi, clean finish | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
+| Native WiFi | CoreWLAN, OS interface | Latest unchanged installed backend received 483 observations alongside BLE after user permission approval | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | 66-second durable serial run: 407 WiFi  + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; gpsd NMEA0183/9600 | 60-second CatSniffer session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Explicit GPSD session configuration implemented and live-tested in #276. gpsd 3.27.5/protocol 16.1 is host software, not receiver firmware. Receiver model/firmware remains unverified |
-| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | After the user reconnected USB, fresh `device_info` and idle-loader checks responded; subsequent companion metadata reads matched the same hardware identity | Earlier nonresponsive attempts remain failures. Later screen snapshots reported an out-of-memory crash after the JavaScript attempt and a distinct NULL-pointer crash after a native companion attempt; exact native fault site remains unknown. Stop recovery and transport release were verified |
-| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Fresh GPIO `info` reported official Marauder 1.21.0, Dev Board Pro target; settings reported SavePCAP enabled | Binary-capture attempts produced empty files. A native console displayed beacon reception before a crash, but no complete binary capture survived. Final stop-only recovery received two firmware-text stop acknowledgments. Genuine capture/import and live host bridge remain gaps |
+| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Fresh identity/control, UART-free production transport acceptance, and one private live-source capture/Pause/Finish passed | Live FAP build identity is separate from Flipper firmware and AWOK identity. A later first-Pause failure prevented Resume; reviewed replacement artifacts await hardware acceptance. Earlier crashes belong to distinct acquisition paths |
+| AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; later diagnostic acquisition/import retained 85 packets and the private live receiver retained 65 packets | The next live attempt retained 63 packets but failed stopping. No successful Resume or concurrent live-source claim. The bridge Hello does not itself establish downstream firmware, assigned channel, RSSI or RF loss |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor | Recognized candidate only | No current AirHound live-source integration; product descriptor is not a queried firmware version |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
@@ -78,6 +99,7 @@ that opening the port is nondisruptive.
 | Actual GUI-launched service, bounded native WiFi + BLE attempt | Zero observations; **failed** terminal state | GUI Start Local Service launch and authenticated connection were verified. CoreWLAN reported redacted addresses; CoreBluetooth initialization timed out. The test recording was stopped, the service stayed running, and existing recordings/profiles were preserved |
 | Same installed service after permission approval, native WiFi + BLE | 944 WiFi + 1,962 BLE observations; finished | Original harness rejected valid native metadata shapes; source-specific offline revalidation passed without rescanning |
 | Same installed service, native WiFi + BLE + M5 + CatSniffer + ALFA + managed GPS, 45.27 seconds | 9,857 observations; 9,655 fresh receiver-location associations; finished | All five sources received; ALFA channels 1/6/11; zero invalid source/location associations. Backend-controlled acceptance; existing recordings/profiles preserved, external ports released, service remained running |
+| Updated installed `33a5e93` service after permission approval, native WiFi + BLE, 20.196328 seconds | 483 WiFi + 1,233 BLE observations; 1,721 total records; finished | Both native scanners running, zero invalid source associations; nine prior recordings and saved setups preserved. Same signed backend and service throughout; no GUI capture-control claim |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
 
@@ -194,7 +216,7 @@ hardware recording.
 [#294](https://github.com/dougborg/AirHound/pull/294) are merged. The installed
 application now combines GUI source `41f704a` (including the reviewed capture
 controls) with backend source `33a5e93`. These are the actual component builds,
-not a claim that an earlier artifact was rebuilt from the merge commit. The final
+not a claim that an earlier artifact was rebuilt from the merge commit. The #294
 merged tree differs from this composition only in a test-only GPS fixture fix.
 The installed signed backend SHA-256 is
 `20cf48cfb1930b7c3e7b889dd7d2091c257420b08f6699d9fa1d2e7bdb5e4365`;
@@ -242,10 +264,17 @@ and a Location prompt for that same nested service. Location remained
 `NotDetermined`; WiFi reported redacted addresses and Bluetooth initialization
 failed. Only the test run was finished; the service stayed running and all prior
 recordings/profiles were preserved. No privacy setting was reset and no prompt
-was approved automatically. This is pending user authorization, not native-radio
-acceptance for the new binary. Unlock the Mac and approve **AirHound** Bluetooth
-and **AirHound Service** Location before repeating the bounded check with the
-same installed service.
+was approved automatically.
+
+After the user approved the outstanding permissions, the same signed binary and
+service passed the bounded retry: 483 WiFi and 1,233 BLE observations over
+20.196328 seconds, with 1,721 total durable records and a finished live run.
+Both native scanners reported running; CoreBluetooth reported powered on. All
+1,716 observations retained their exact configured source attribution. SQLite
+integrity and foreign-key checks passed. Nine pre-existing run metadata sets and
+saved profiles remained unchanged, and the service stayed running. This closes
+native reception acceptance for this installed binary without a rebuild,
+restart or privacy reset; it does not establish native GUI Start/Finish acceptance.
 
 At the reviewed #294 head, all 19 required checks and the relevant native,
 packaging, performance, website and CodeQL workflows passed. Desktop line
@@ -257,9 +286,12 @@ mean every coverage metric exceeds 80%.
 Physical CatSniffer reconnect remains tracked in
 [#290](https://github.com/dougborg/AirHound/issues/290). The full hardware milestone
 [#269](https://github.com/dougborg/AirHound/issues/269), native GUI Start/Finish
-acceptance, reattached M5 verification and native permission retry remain open.
+acceptance and reattached M5 verification remain open.
 
 ## Flipper and AWOK follow-up
+
+The following sequence preserves failures from earlier acquisition paths. The
+latest live-source evidence and remaining limits appear at the end of this section.
 
 After USB reconnect, the Flipper's fresh identity and GPIO `info` exchange succeeded.
 A bounded settings-only binary transfer returned 681 bytes with a matching device
@@ -308,7 +340,7 @@ A sequential 100,000-chunk ASan/UBSan replay of the matched-source text callback
 found no bounds failure; it does not emulate concurrent GUI/RX behavior or prove
 that the installed companion is safe.
 
-The next isolated implementation is the [AirHound UART diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic):
+The subsequent isolated implementation was the [AirHound UART diagnostic](../companions/flipper/README.md#bounded-uart-diagnostic):
 fixed memory, one UART command owner, device-local stop timing, immutable UI text,
 and storage only after RX shutdown. It is not a fix for the unknown native fault and
 does not replace or flash either firmware.
@@ -326,8 +358,8 @@ That mode timed out after 1,500 ms with 18 hash-verified bytes: five `0xf3` byte
 preceded the echoed `stopscan` on the same line, followed by a prompt, without
 the required acknowledgment. It reported zero drops/errors/unread bytes and
 OTG disabled; the owned dialog closed and loader returned idle. This establishes
-received console data, not the cause of the prefix bytes. The next narrow change
-adds the same leading CRLF as the working JS stop path to terminate stale input,
+received console data, not the cause of the prefix bytes. The following narrow change
+added the same leading CRLF as the working JS stop path to terminate stale input,
 while retaining exact acknowledgment matching. No baud, power, firmware, or
 capture-duration change was made.
 
@@ -347,7 +379,51 @@ client replay returned 85 Wi-Fi packet observations with correct source identity
 replay and producer boot-clock provenance, and unknown RSSI/channel/GPS/wall time.
 SQLite `quick_check` passed; the private service exited 0 and removed its socket.
 This accepts the bounded diagnostic acquisition/import path only. RF loss,
-endurance and normal concurrent live-receiver operation remain unproven.
+endurance and concurrent live-receiver operation are not established by that test.
+
+### Private live receiver acceptance and failed follow-up
+
+The reviewed host source `b2db65a` and live FAP source `f457474` then passed one
+private shared-backend capture/Pause/Finish run. The backend artifact SHA-256 was
+`38f8b3b61c253b0b38193b6127157b43341ec4b3d7c6b7754bf03de551b16ad2`;
+the FAP SHA-256 was
+`40652e454a05d28a63dec7f94d77b8bb10d9095a4c12d317abb466dbfd63d976`.
+SQLite retained 187 records, including 65 real WiFi packet observations, with the
+configured source, bound app-instance token and capture generation 1. Original
+device boot-relative timestamps remained distinct from host receipt time;
+channel, RSSI and receiver location were unreported. The bound Hello identifies
+the FAP build and its compiled firmware ABI, not AWOK firmware or hardware boot.
+
+Pause was requested 2.002654 seconds after the host observed Capturing. The device
+Capturing-to-Paused report span was 3.016 seconds; neither number is an exact RF
+duration or a hard two-second device limit. Durable evidence showed Paused
+(cause 1/evidence 7), a fresh Finish Stopping boundary (cause 2/evidence 3), then
+Stopped (cause 2/evidence 7). Known UART/RPC/host loss counters were zero; RF loss
+remained unknown. The recording finished, the private service exited zero,
+CLI/idle-loader and original companion hashes were verified, and the serial port
+and lease were released. The installed AirHound service and its data were preserved.
+
+The next bounded test intended to exercise quiet Pause and one explicit Resume,
+but failed during the first Pause. It retained 63 packets in 176 records and ended
+failed; **Resume was never dispatched**. A fresh stop-text acknowledgment was
+observed while UART bytes continued arriving, but the final report did not prove
+clean drain completion. The earlier failure DTO omitted its app uptime and did
+not distinguish deadline expiry from malformed/incomplete framing, so the exact
+terminal condition is not established. Cleanup restored CLI/idle-loader access,
+preserved the original companion and default service, and released the port;
+radio-stop completion remained unverified. This attempt does not negate the
+earlier bounded pass or count as successful Resume.
+
+Pinned producer source shows that Marauder can acknowledge Stop before draining
+queued packet buffers. The reviewed follow-up retains a one-second acknowledgment
+budget, adds a finite two-second first-ack drain budget and an absolute three-second
+stop ceiling; repeated acknowledgments, heartbeats and escalation cannot extend
+that ceiling. Host diagnostics retain the failed report's app uptime/counters and
+specific stop-failure reason without promoting it to an accepted lifecycle state.
+Producer `1a5ce78` and host composition `c7f890d` passed independent source review
+and eight paired tests, including a finite approximately 16 KiB tail beyond the
+old one-second deadline. New artifacts are staged, not yet hardware accepted;
+the 65-packet success belongs only to the earlier artifacts above.
 
 PR #295 also corrects helper-supervisor cleanup ordering: completion is published
 only after child reaping and lease release. That fix is newer than the installed
@@ -358,9 +434,8 @@ internally unexplained; production readiness timeouts are unchanged.
 
 ## Remaining acceptance
 
-- Approve the updated installed application's pending Bluetooth and Location
-  prompts, then repeat native reception without rebuilding or resetting privacy
-  settings. Reconnect and verify the M5 before claiming the complete rig is ready.
+- Reconnect and verify the M5 before claiming the complete rig is ready. Native
+  permission/reception acceptance now passes for the unchanged installed backend.
 - Exercise **Attached receiver rig (USB recovery)** through the native Load, Start Recording
   and Finish Recording controls. Actual GUI service launch and native observation
   presentation passed; the combined capture above used CLI controls against that
@@ -370,12 +445,13 @@ internally unexplained; production readiness timeouts are unchanged.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Integrate the proven bounded Flipper acquisition into a normal shared-backend
-  receiver with explicit setup, heartbeat/stop handling and reported transport
-  loss. Diagnostic file acquisition/import alone does not complete that path.
-  Fresh identity/control and displayed beacon text do not replace a complete
-  binary capture. Preserve the acknowledged-stop state; do not retry the
-  crashing third-party acquisition path without a reviewed mitigation.
+- Validate the reviewed Flipper stop-drain correction on hardware, then complete
+  quiet Pause/Resume, watchdog/failure and concurrent-receiver acceptance. The
+  private live-source capture/Pause/Finish pass establishes a first shared-backend
+  path, not endurance or the full milestone. The native setup UI is merged in
+  #297 but remains uninstalled; do not infer installed support from repository
+  capability. Preserve prior failure evidence and do not retry the crashing
+  third-party acquisition path without a reviewed mitigation.
   A separate bounded BLE management discovery found no advertisement for the
   known Flipper identity; no BLE connection, authenticated read, pairing request
   or write occurred. The cached paired application name is not current firmware
