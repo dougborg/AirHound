@@ -31,8 +31,28 @@ struct GPSVersionTarget: Hashable {
 
 struct GPSVersionDetails {
   let value: JSONValue
+  var observedAt: Date? {
+    let milliseconds: UInt64
+    switch value["observed_at_ms"] {
+    case .integer(let number) where number > 0: milliseconds = UInt64(number)
+    case .unsigned(let number) where number > 0: milliseconds = number
+    default: return nil
+    }
+    // Avoid overflowing or presenting dates outside the supported calendar range.
+    guard milliseconds <= 253_402_300_799_999 else { return nil }
+    return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+  }
+
   var lines: [String] {
     var result = [String]()
+    if value["state"] == .string("identified") {
+      result.append("Queried version snapshot")
+      if let observedAt {
+        result.append("Last queried \(observedAt.formatted(date: .abbreviated, time: .standard))")
+      } else {
+        result.append("Query time not reported.")
+      }
+    }
     for (key, label) in [
       ("firmware_version", "GPS firmware"), ("software_version", "GPS software"),
       ("hardware_version", "Hardware version"), ("protocol_version", "UBX protocol"),

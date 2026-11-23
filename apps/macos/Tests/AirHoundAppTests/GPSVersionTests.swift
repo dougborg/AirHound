@@ -137,6 +137,28 @@ final class GPSVersionTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: arguments[5]))
   }
 
+  func testSnapshotUsesOnlyValidBackendQueryTime() {
+    guard case .object(var fields) = response else { return XCTFail() }
+    fields["observed_at_ms"] = .integer(1_700_000_000_123)
+    let details = GPSVersionDetails(value: .object(fields))
+    XCTAssertEqual(details.observedAt, Date(timeIntervalSince1970: 1_700_000_000.123))
+    XCTAssertEqual(details.lines.first, "Queried version snapshot")
+    XCTAssertTrue(details.lines[1].hasPrefix("Last queried "))
+    for invalid: JSONValue in [
+      .null, .string("today"), .integer(-1), .integer(0), .unsigned(UInt64.max), .number(.infinity),
+    ] {
+      fields["observed_at_ms"] = invalid
+      let missing = GPSVersionDetails(value: .object(fields))
+      XCTAssertNil(missing.observedAt)
+      XCTAssertEqual(missing.lines[1], "Query time not reported.")
+    }
+    fields["state"] = .string("busy")
+    fields["observed_at_ms"] = .integer(1_700_000_000_123)
+    XCTAssertFalse(
+      GPSVersionDetails(value: .object(fields)).lines.contains { $0.hasPrefix("Last queried ") },
+      "A busy response must not imply a firmware query occurred")
+  }
+
   func testLateResponseAndUnsupportedBackendDoNotPublishIdentity() async throws {
     for scenario in ["endpoint-changed", "disconnected", "unsupported"] {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
