@@ -406,7 +406,19 @@ remain missing. Session-level status records use a separate logical source.
 The bounded queue fails explicitly on overflow; an enqueue is not a durable
 commit. A successful capture exit waits for accepted records to commit before
 marking the run finished. Failed capture preserves committed records with a
-failed state; reopening a writer marks unclosed runs interrupted.
+failed state. If full storage also prevents the terminal transaction, the
+capture service keeps that run failed in its API, exposes `storage_recovery`
+with its pending/error state, and retries the exact run's failure transaction
+while idle. New recordings are refused until pending recovery commits. Status
+and history requests remain read-only; recovery is background maintenance under
+the exclusive writer lock. Free disk space when the service reports storage
+full. Already committed records remain available; uncommitted observations are
+not claimed as saved. A service restart cannot recover an in-memory failure
+reason, so it marks remaining unclosed runs interrupted, never finished.
+A recovered end timestamp records reconciliation, not a precise receiver-stop
+instant; do not infer an exact capture duration from it.
+Startup's metadata commit is a write-readiness check, not a promise of enough
+space for the entire capture. No synthetic reserve or automatic deletion is used.
 Stdin `stop`/`start` commands retain their replies and commit pause/resume
 transitions before acknowledgement. Those transitions describe requested scan
 state; per-receiver health remains the evidence for actual radio readiness.
