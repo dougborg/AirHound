@@ -5,13 +5,20 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use airhound::serial_output::{self, Fifo, Step};
 use esp_hal::{uart::UartTx, Blocking};
 
-use crate::{OUTPUT_CHANNEL, OUTPUT_DROPS, SERIALIZE_ERRORS};
+use crate::{LOG_CHANNEL, OUTPUT_DROPS, SERIALIZE_ERRORS};
 
 static RUNTIME: AtomicBool = AtomicBool::new(false);
 pub static PANICKED: AtomicBool = AtomicBool::new(false);
 pub static LOG_DROPS: AtomicU32 = AtomicU32::new(0);
 pub static FORMAT_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static WRITE_ERRORS: AtomicU32 = AtomicU32::new(0);
+
+// Internal atomic counters only; callable by the logger without PSRAM access.
+pub fn increment(counter: &core::sync::atomic::AtomicU32) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_add(1))
+    });
+}
 
 struct Logger;
 
@@ -38,16 +45,16 @@ impl log::Log for Logger {
             }
         }
         match serial_output::enqueue_diagnostic(record.level(), *record.args(), |line| {
-            OUTPUT_CHANNEL.try_send(line).is_ok()
+            LOG_CHANNEL.try_send(line).is_ok()
         }) {
             serial_output::Enqueue::Queued => {}
             serial_output::Enqueue::Full => {
-                LOG_DROPS.fetch_add(1, Ordering::Relaxed);
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+                increment(&LOG_DROPS);
+                increment(&OUTPUT_DROPS);
             }
             serial_output::Enqueue::FormatError => {
-                FORMAT_ERRORS.fetch_add(1, Ordering::Relaxed);
-                SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                increment(&FORMAT_ERRORS);
+                increment(&SERIALIZE_ERRORS);
             }
         }
     }
