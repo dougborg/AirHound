@@ -170,3 +170,34 @@ closing reports update the retained evidence, and a poisoned/failed continuation
 clears derived proof while preserving the original source error. Raw bytes after
 a terminal report also poison completion instead of silently being ignored. A valid failure
 stop never restores receiver health or changes the recording to successful.
+
+## Current private acceptance
+
+The completion-capable producer (`c7e72ae`) and host `306d24a` passed the normal
+service lifecycle: 129 live packets across two capture generations, 377 stored
+records, a 1.207-second quiet Pause with no new packets, explicit Resume, and
+fresh completion evidence `15 → 3 → 15` through Finish. The recording finished
+in 8.984887 seconds; device cleanup and the installed service were preserved.
+
+The first paused-watchdog attempt on that host retained 66 packets and 210
+records, but its derived stop-completion proof was false. It remains a failed
+acceptance result. A separate offline regression demonstrated that a terminal
+failure arriving before an already-submitted heartbeat acknowledgment could
+invalidate the proof during RPC closure; the earlier hardware wire ordering was
+not retained, so that exact cause is not claimed as proven for the failed run.
+
+After the reviewed acknowledgment-drain and service-logging fixes, host
+`58239fa` with the same producer passed paused-watchdog acceptance. The private
+host was suspended for 6.559710 seconds after a quiet Pause. All 67 packets were
+received before Pause; the 212-record run remained failed, as required for a
+receiver fault. Its final diagnostic report retained watchdog cause 3, evidence
+15, zero reported loss/unread input, and backend-validated `stop_complete: true`.
+This is the backend's validated session/boundary result; intermediate autonomous
+transitions were not separately persisted as raw wire evidence. The generic
+failed-source `radio_stop` field remains conservative. Cleanup preserved the
+installed service, device images, and serial ownership.
+
+These results do not establish concurrent capture with other receivers, active
+transport-loss behavior, physical USB reconnection, or the complete native and
+external rig. Those acceptance checks remain separate. Reported transport loss
+was zero; physical RF loss and downstream AWOK firmware identity remain unknown.
