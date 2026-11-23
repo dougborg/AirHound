@@ -493,6 +493,16 @@ fn ublox_explicit_contract_requires_current_recognized_usb_and_selected_endpoint
         json!({"protocol":"ublox","device_id":"usb:1","port":"/dev/cu.gps-test"}),
     )
     .unwrap();
+    if !identify::supports_ublox_identification() {
+        assert_eq!(
+            request.validate(&inventory).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        assert!(inventory.devices[0].candidates[0]
+            .identification_protocol
+            .is_none());
+        return;
+    }
     request.validate(&inventory).unwrap();
     assert_eq!(
         inventory.devices[0].candidates[0].identification_protocol,
@@ -552,7 +562,10 @@ fn ublox_inventory_capability_does_not_probe_or_guess_missing_endpoint() {
         },
     ];
     let candidate = classify(&gps, "macos", &Options::default()).remove(0);
-    assert_eq!(candidate.identification_protocol, Some("ublox"));
+    assert_eq!(
+        candidate.identification_protocol,
+        identify::supports_ublox_identification().then_some("ublox")
+    );
     assert!(candidate.location_configuration_hint.unwrap()["device"].is_null());
     assert!(candidate.identification.is_none());
     gps.vid = Some(0x1a86);

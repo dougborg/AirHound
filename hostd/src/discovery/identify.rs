@@ -2,7 +2,7 @@
 mod ublox;
 /// Platforms with reviewed ownership inspection and terminal restoration.
 pub const fn supports_ublox_identification() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(target_os = "macos")
 }
 use super::{discover, Inventory, Options};
 use serde::{Deserialize, Serialize};
