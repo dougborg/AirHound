@@ -32,6 +32,7 @@ pub mod protocol;
 pub mod proximity;
 pub mod rules;
 pub mod scanner;
+pub mod serial_output;
 pub mod watchlist;
 
 pub mod evidence;
