@@ -416,17 +416,15 @@ pub fn verify(root: &Path) -> io::Result<Value> {
         json!({"bundle_id":id,"integrity":"verified","rf_verified":false,"defaults":defaults(&bundle,&m)}),
     )
 }
-/// Import local user-selected code. No downloads, execution, radio access, or automatic replacement.
-pub fn install(root: &Path, source: &Path, replace: bool) -> io::Result<Value> {
-    if !root.is_absolute() || !source.is_absolute() {
-        return Err(invalid("install paths must be absolute"));
+// Explicitly release ownership before closing: another thread may fork while
+// this descriptor is open, retaining its open-file description until exec.
+struct InstallLock(File);
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
     }
-    private_dir(
-        root.parent()
-            .ok_or_else(|| invalid("helper store needs parent"))?,
-        false,
-    )?;
-    private_dir(root, true)?;
+}
+fn acquire_install_lock(root: &Path) -> io::Result<InstallLock> {
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -444,6 +442,20 @@ pub fn install(root: &Path, source: &Path, replace: bool) -> io::Result<Value> {
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(io::Error::last_os_error());
     }
+    Ok(InstallLock(lock))
+}
+/// Import local user-selected code. No downloads, execution, radio access, or automatic replacement.
+pub fn install(root: &Path, source: &Path, replace: bool) -> io::Result<Value> {
+    if !root.is_absolute() || !source.is_absolute() {
+        return Err(invalid("install paths must be absolute"));
+    }
+    private_dir(
+        root.parent()
+            .ok_or_else(|| invalid("helper store needs parent"))?,
+        false,
+    )?;
+    private_dir(root, true)?;
+    let _lock = acquire_install_lock(root)?;
     let bytes = read_bounded(&source.join("manifest.json"), MAX_MANIFEST)?;
     let m: Manifest = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     m.validate()?;
