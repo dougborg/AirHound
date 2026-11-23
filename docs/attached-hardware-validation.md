@@ -25,9 +25,10 @@ without recapturing. A later active-host suspension with host `07c7142` retained
 acceptance failed because the host reported eight output drops. Physical USB
 loss/reconnect remains untested, and producer completion does not prove physical
 RF silence. Earlier acquisition, drain and watchdog failures remain below.
-The Flipper UI and live-source support remain included in the newer `d8ad552`
-desktop delivery described below. Earlier native reception and GUI delivery do
-not establish capture-control acceptance on this new build.
+The Flipper live-source support remains included in the newer `d8ad552` backend
+described below. The existing GUI artifacts remain unchanged; earlier native
+reception and GUI delivery do not establish capture-control acceptance with this
+new backend.
 
 The M5 now runs verified `3fbc1a0` / `0.2.0`, application `bc468e56`, from
 [#321](https://github.com/dougborg/AirHound/pull/321). Its ten-minute observation
@@ -113,7 +114,9 @@ button remains unaccepted on the installed build.
 ## Current preview delivery
 
 The installed backend is now clean source `d8ad552`, including the reviewed
-storage-full recovery correction. After disk exhaustion left a recording without
+storage-full recovery correction. The canonical outer GUI remains `07c7142`,
+and the running Counter Preview GUI remains `946d3c0`; neither GUI was rebuilt
+for this backend rollout. After disk exhaustion left a recording without
 its durable terminal update, an authorized maintenance rollout retained the old
 application and backups, preserved all existing observation rows, sources, saved
 requests and setups, and repaired the affected run's terminal state and transition.
