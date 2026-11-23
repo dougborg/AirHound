@@ -58,7 +58,7 @@ impl Pair {
             self.queue(
                 m.header.request_id,
                 Body::Hello(bridge::Hello {
-                    capabilities: 7,
+                    capabilities: bridge::CAPABILITIES,
                     api_major: 87,
                     api_minor: 1,
                     uart_baud: 115200,
@@ -304,7 +304,7 @@ fn paired_queued_tail_remains_parseable_after_old_stop_deadline() {
     p.drain().unwrap();
     assert_eq!(packets, 8);
     assert_eq!(p.host.state(), Some(State::Paused));
-    assert_eq!(p.host.last_reported_status().unwrap().evidence, 7);
+    assert_eq!(p.host.last_reported_status().unwrap().evidence, 15);
     p.stopped(now + 100, Command::Stop, State::Stopped);
 }
 
@@ -356,7 +356,7 @@ fn paired_retry_reply_delays_pause_until_all_commands_are_acknowledged() {
     p.poll(3600);
     p.drain().unwrap();
     assert_eq!(p.host.state(), Some(State::Paused));
-    assert_eq!(p.host.last_reported_status().unwrap().evidence, 7);
+    assert_eq!(p.host.last_reported_status().unwrap().evidence, 15);
     p.start(3700);
     assert_eq!(p.producer.generation, 2);
     p.stopped(3900, Command::Stop, State::Stopped);
@@ -415,5 +415,92 @@ fn paired_late_paused_input_is_distinct_from_malformed_framing() {
         (State::Stopping, 13, 3)
     );
     assert_eq!(p.host.state(), Some(State::Failed));
+    assert!(p.host.command(Command::StartBeacon).is_err());
+}
+
+#[test]
+fn paired_watchdog_completion_distinguishes_deadline_and_retains_final_loss_revocation() {
+    for missing_retry in [false, true] {
+        let mut p = Pair::new();
+        p.start(10);
+        assert_eq!(p.poll(3010), Some(UartAction::Stop));
+        assert!(p.drain().is_err());
+        assert_eq!(p.host.last_reported_status().unwrap().evidence, 3);
+        if missing_retry {
+            assert_eq!(p.poll(3510), Some(UartAction::Stop));
+            while let Some(bytes) = p.queued.pop_front() {
+                p.host.receive_diagnostic(&bytes).unwrap();
+            }
+        }
+        let ack_at = if missing_retry { 3600 } else { 3011 };
+        p.producer.feed(ack_at, b"Stopping WiFi tran/recv\r\n");
+        p.poll(ack_at);
+        while let Some(bytes) = p.queued.pop_front() {
+            p.host.receive_diagnostic(&bytes).unwrap();
+        }
+        let terminal_at = if missing_retry { 5600 } else { 3110 };
+        p.poll(terminal_at);
+        while let Some(bytes) = p.queued.pop_front() {
+            p.host.receive_diagnostic(&bytes).unwrap();
+        }
+        let terminal = p.host.last_reported_status().unwrap();
+        assert_eq!(terminal.state, State::Failed);
+        assert_eq!(terminal.cause, 3);
+        assert_eq!(terminal.evidence & 4, 4);
+        assert_eq!(
+            terminal.evidence & bridge::STOP_COMPLETE != 0,
+            !missing_retry
+        );
+        assert_eq!(p.host.state(), Some(State::Failed));
+        assert!(p.host.command(Command::StartBeacon).is_err());
+        if !missing_retry {
+            // Final producer I/O checks can revoke completion after a controller
+            // terminal transition. Keep the latest counters, not stale proof.
+            p.producer.fail(3111, 5);
+            let mut final_loss = p.producer.status(3111);
+            final_loss.uart_dropped_bytes = 1;
+            assert_eq!(final_loss.evidence, 7);
+            p.queue(0, Body::Status(final_loss));
+            let bytes = p.queued.pop_front().unwrap();
+            assert_eq!(p.host.receive_diagnostic(&bytes).unwrap(), Some(final_loss));
+            assert_eq!(p.host.last_reported_status(), Some(final_loss));
+            assert!(!p.host.diagnostic_stop_complete());
+        }
+    }
+}
+
+#[test]
+fn paired_normal_pause_without_explicit_completion_is_rejected() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.command(Command::Pause, 100);
+    p.drain().unwrap();
+    let mut incomplete = p.producer.status(200);
+    incomplete.state = State::Paused;
+    incomplete.evidence = 7;
+    p.queue(p.producer.request_id(), Body::Status(incomplete));
+    assert!(p.drain().is_err());
+    assert_eq!(p.host.state(), Some(State::Failed));
+}
+
+#[test]
+fn paired_stale_pause_ack_cannot_validate_autonomous_completion() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.stopped(100, Command::Pause, State::Paused);
+    let mut stale = p.producer.status(300);
+    stale.state = State::Stopping;
+    stale.cause = 3;
+    stale.evidence = 7; // The previous Pause text ACK was never cleared.
+    p.queue(0, Body::Status(stale));
+    assert!(p.drain().is_err());
+    assert!(!p.host.diagnostic_stop_complete());
+    stale.state = State::Failed;
+    stale.evidence = 15;
+    stale.app_uptime_ms = 400;
+    p.queue(0, Body::Status(stale));
+    let bytes = p.queued.pop_front().unwrap();
+    assert_eq!(p.host.receive_diagnostic(&bytes).unwrap(), Some(stale));
+    assert!(!p.host.diagnostic_stop_complete());
     assert!(p.host.command(Command::StartBeacon).is_err());
 }

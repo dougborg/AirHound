@@ -25,7 +25,10 @@ pub struct Desired {
 pub enum Output {
     DeviceInfo(BTreeMap<String, String>),
     Bridge(Event),
-    FailureStatus(airhound_flipper::bridge::Status),
+    FailureStatus {
+        status: airhound_flipper::bridge::Status,
+        stop_complete: bool,
+    },
 }
 
 struct Link<'a, T> {
@@ -118,7 +121,10 @@ fn bridge_event(
             Ok(event) => output(Output::Bridge(event)),
             Err(error) => {
                 if let Some(status) = session.last_reported_status() {
-                    output(Output::FailureStatus(status))?;
+                    output(Output::FailureStatus {
+                        status,
+                        stop_complete: session.diagnostic_stop_complete(),
+                    })?;
                 }
                 Err(error)
             }
@@ -300,12 +306,16 @@ pub fn run<T: Read + Write>(
         // deadline is set once at the first observed failure, not per status.
         // 250ms accommodates wire/scheduling latency beyond the device 3s cap;
         // it changes neither that producer deadline nor its heartbeat lease.
-        let _ = drain_failure(
+        if drain_failure(
             &mut link,
             &mut session,
             &mut output,
             Instant::now() + Duration::from_millis(3250),
-        );
+        )
+        .is_err()
+        {
+            invalidate_failure_proof(&mut session, &mut output);
+        }
     }
     // SessionClose, not AppExit of an arbitrary current application. An error
     // remains an error even if this transport shutdown is acknowledged.
@@ -314,14 +324,38 @@ pub fn run<T: Read + Write>(
             Content::StopSession(proto::StopSession {}),
             |received| match received {
                 Received::ApplicationState(_) => Ok(()),
-                Received::ApplicationData(bytes) => {
-                    let event = session.receive(&bytes)?;
-                    output(Output::Bridge(event))
+                Received::ApplicationData(bytes) if session.diagnostic_available() => {
+                    if let Some(status) = session.receive_diagnostic(&bytes)? {
+                        output(Output::FailureStatus {
+                            status,
+                            stop_complete: session.diagnostic_stop_complete(),
+                        })?;
+                    }
+                    Ok(())
+                }
+                received @ Received::ApplicationData(_) => {
+                    bridge_event(received, &mut session, &mut output)
                 }
                 _ => Err(invalid("Unexpected closing RPC response")),
             },
         );
+    if closed.is_err() {
+        invalidate_failure_proof(&mut session, &mut output);
+    }
     result.and(closed)
+}
+
+fn invalidate_failure_proof(
+    session: &mut Session,
+    output: &mut impl FnMut(Output) -> io::Result<()>,
+) {
+    session.invalidate_diagnostics();
+    if let Some(status) = session.last_reported_status() {
+        let _ = output(Output::FailureStatus {
+            status,
+            stop_complete: false,
+        });
+    }
 }
 
 fn drain_failure<T: Read + Write>(
@@ -337,7 +371,10 @@ fn drain_failure<T: Read + Write>(
         link.pump(|received| match received {
             Received::ApplicationData(bytes) => {
                 if let Some(status) = session.receive_diagnostic(&bytes)? {
-                    output(Output::FailureStatus(status))?;
+                    output(Output::FailureStatus {
+                        status,
+                        stop_complete: session.diagnostic_stop_complete(),
+                    })?;
                 }
                 Ok(())
             }
@@ -485,6 +522,11 @@ mod tests {
         WatchdogWrongCause,
         WatchdogCounterDecrease,
         WatchdogUnread,
+        WatchdogRevoked,
+        WatchdogInitialWrongGeneration,
+        WatchdogInitialWrongRequest,
+        WatchdogMissingBoundary,
+        WatchdogBadTail,
     }
 
     fn peer(mut io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
@@ -572,7 +614,11 @@ mod tests {
                                 let mut frame = [0; bridge::MAX_MESSAGE];
                                 let terminal = matches!(body, Body::Status(status) if status.state == State::Failed && status.cause == 3);
                                 let mut nonce = message.header.nonce;
-                                if terminal && matches!(fault, Fault::WatchdogBadNonce) {
+                                if terminal
+                                    && (matches!(fault, Fault::WatchdogBadNonce)
+                                        || (matches!(fault, Fault::WatchdogBadTail)
+                                            && matches!(body, Body::Status(s) if s.evidence==7)))
+                                {
                                     nonce[0] ^= 1;
                                 }
                                 let wire_sequence = sequence
@@ -617,7 +663,7 @@ mod tests {
                                 send(
                                     message.header.request_id,
                                     Body::Hello(bridge::Hello {
-                                        capabilities: 7,
+                                        capabilities: bridge::CAPABILITIES,
                                         api_major: 87,
                                         api_minor: 1,
                                         uart_baud: 115200,
@@ -690,11 +736,30 @@ mod tests {
                                             | Fault::WatchdogWrongCause
                                             | Fault::WatchdogCounterDecrease
                                             | Fault::WatchdogUnread
+                                            | Fault::WatchdogRevoked
+                                            | Fault::WatchdogInitialWrongGeneration
+                                            | Fault::WatchdogInitialWrongRequest
+                                            | Fault::WatchdogMissingBoundary
+                                            | Fault::WatchdogBadTail
                                     ) {
                                         let mut failed = status(State::Stopping, 3, 3, generation);
                                         failed.app_uptime_ms = 3001;
                                         failed.uart_rx_bytes = 10;
-                                        send(0, Body::Status(failed));
+                                        if matches!(fault, Fault::WatchdogInitialWrongGeneration) {
+                                            failed.generation += 1;
+                                        }
+                                        if matches!(fault, Fault::WatchdogMissingBoundary) {
+                                            failed.state = State::Failed;
+                                            failed.evidence = 15;
+                                        }
+                                        send(
+                                            if matches!(fault, Fault::WatchdogInitialWrongRequest) {
+                                                99
+                                            } else {
+                                                0
+                                            },
+                                            Body::Status(failed),
+                                        );
                                         if matches!(fault, Fault::WatchdogEof) {
                                             return commands;
                                         }
@@ -715,13 +780,18 @@ mod tests {
                                         }
                                         if !matches!(
                                             fault,
-                                            Fault::WatchdogMissing | Fault::WatchdogRepeated
+                                            Fault::WatchdogMissing
+                                                | Fault::WatchdogRepeated
+                                                | Fault::WatchdogInitialWrongGeneration
+                                                | Fault::WatchdogInitialWrongRequest
+                                                | Fault::WatchdogMissingBoundary
                                         ) {
                                             failed.state = State::Failed;
-                                            failed.evidence = 7;
+                                            failed.evidence = 15;
                                             failed.app_uptime_ms = 3101;
                                             if matches!(fault, Fault::WatchdogLoss) {
                                                 failed.uart_dropped_bytes = 1;
+                                                failed.evidence = 7;
                                             }
                                             if matches!(fault, Fault::WatchdogWrongGeneration) {
                                                 failed.generation += 1;
@@ -734,6 +804,7 @@ mod tests {
                                             }
                                             if matches!(fault, Fault::WatchdogUnread) {
                                                 failed.unread_ring_bytes = 1;
+                                                failed.evidence = 7;
                                             }
                                             send(
                                                 if matches!(fault, Fault::WatchdogWrongRequest) {
@@ -743,6 +814,15 @@ mod tests {
                                                 },
                                                 Body::Status(failed),
                                             );
+                                            if matches!(
+                                                fault,
+                                                Fault::WatchdogRevoked | Fault::WatchdogBadTail
+                                            ) {
+                                                failed.app_uptime_ms += 1;
+                                                failed.evidence &= !bridge::STOP_COMPLETE;
+                                                failed.uart_dropped_bytes = 1;
+                                                send(0, Body::Status(failed));
+                                            }
                                         }
                                     }
                                 }
@@ -778,7 +858,7 @@ mod tests {
                                         );
                                         send(
                                             message.header.request_id,
-                                            Body::Status(status(target, cause, 7, generation)),
+                                            Body::Status(status(target, cause, 15, generation)),
                                         );
                                     }
                                 }
@@ -815,11 +895,17 @@ mod tests {
             Fault::WatchdogWrongCause,
             Fault::WatchdogCounterDecrease,
             Fault::WatchdogUnread,
+            Fault::WatchdogRevoked,
+            Fault::WatchdogInitialWrongGeneration,
+            Fault::WatchdogInitialWrongRequest,
+            Fault::WatchdogMissingBoundary,
+            Fault::WatchdogBadTail,
         ] {
             let (mut io, other) = transport();
             let peer = peer(other, fault);
             let started = Instant::now();
             let mut diagnostic = vec![];
+            let mut completion = vec![];
             let mut accepted_terminal = false;
             let mut packet_count = 0;
             let error = run(
@@ -831,7 +917,13 @@ mod tests {
                 },
                 |event| {
                     match event {
-                        Output::FailureStatus(s) => diagnostic.push(s),
+                        Output::FailureStatus {
+                            status,
+                            stop_complete,
+                        } => {
+                            completion.push(stop_complete);
+                            diagnostic.push(status);
+                        }
                         Output::Bridge(Event::Raw { packets, .. }) => packet_count += packets.len(),
                         Output::Bridge(Event::Status(s))
                             if matches!(s.state, State::Failed | State::Stopped) =>
@@ -852,11 +944,26 @@ mod tests {
                 "Bridge reported autonomous stop or failure"
             );
             assert!(!accepted_terminal);
+            if matches!(fault, Fault::WatchdogTerminal) {
+                assert_eq!(completion, [false, true]);
+            } else if matches!(fault, Fault::WatchdogRevoked | Fault::WatchdogBadTail) {
+                assert!(completion.starts_with(&[false, true, false]));
+                assert!(completion[2..].iter().all(|proof| !proof));
+            } else {
+                assert!(completion.iter().all(|complete| !complete));
+            }
             assert_eq!(
                 packet_count, 1,
                 "diagnostic Raw must never become observations"
             );
-            assert_eq!(diagnostic[0].state, State::Stopping);
+            assert_eq!(
+                diagnostic[0].state,
+                if matches!(fault, Fault::WatchdogMissingBoundary) {
+                    State::Failed
+                } else {
+                    State::Stopping
+                }
+            );
             assert_eq!(diagnostic[0].cause, 3);
             if matches!(
                 fault,
@@ -869,7 +976,15 @@ mod tests {
                         diagnostic[1].cause,
                         diagnostic[1].evidence
                     ),
-                    (State::Failed, 3, 7)
+                    (
+                        State::Failed,
+                        3,
+                        if matches!(fault, Fault::WatchdogLoss | Fault::WatchdogUnread) {
+                            7
+                        } else {
+                            15
+                        }
+                    )
                 );
                 assert_eq!(diagnostic[1].app_uptime_ms, 3101);
                 assert_eq!(
@@ -880,11 +995,21 @@ mod tests {
                     diagnostic[1].unread_ring_bytes,
                     u32::from(matches!(fault, Fault::WatchdogUnread))
                 );
+            } else if matches!(fault, Fault::WatchdogRevoked) {
+                assert_eq!(diagnostic.len(), 3);
+                assert_eq!(diagnostic[1].evidence, 15);
+                assert_eq!(diagnostic[2].evidence, 7);
+                assert_eq!(diagnostic[2].uart_dropped_bytes, 1);
+                assert_eq!(diagnostic[2].state, State::Failed);
+            } else if matches!(fault, Fault::WatchdogBadTail) {
+                assert!(diagnostic.len() >= 3);
+                assert_eq!(diagnostic[1].evidence, 15);
+                assert_eq!(diagnostic.last().unwrap(), &diagnostic[1]);
             } else if matches!(fault, Fault::WatchdogRepeated) {
-                assert_eq!(diagnostic.len(), 61);
+                assert!(diagnostic.len() >= 61);
                 assert!(diagnostic.iter().all(|s| s.state == State::Stopping));
             } else {
-                assert_eq!(diagnostic.len(), 1);
+                assert!(diagnostic.iter().all(|report| report == &diagnostic[0]));
             }
             if matches!(fault, Fault::WatchdogMissing | Fault::WatchdogRepeated) {
                 assert!(started.elapsed() >= Duration::from_millis(3250));
@@ -994,7 +1119,12 @@ mod tests {
                 shutdown: false
             },
             |event| {
-                if let Output::FailureStatus(status) = event {
+                if let Output::FailureStatus {
+                    status,
+                    stop_complete,
+                } = event
+                {
+                    assert!(!stop_complete);
                     reported = Some(status);
                 }
                 Ok(())

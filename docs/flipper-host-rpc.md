@@ -73,7 +73,9 @@ The runtime source is `flipper_marauder` with one required `port`. It targets
 firmware ABI **87.1** and the separately installed AirHound bridge at
 `/ext/apps/GPIO/airhound_bridge.fap`. It does not install applications, update
 firmware, select another application, reset a board, or reconnect automatically.
-Hardware acceptance of this live runtime is still pending.
+Hardware evidence and its exact build scope are recorded in
+[attached hardware validation](attached-hardware-validation.md). Later protocol
+changes require acceptance of the matching host and FAP artifacts.
 
 ```json
 {
@@ -144,3 +146,19 @@ or restore receiver availability. Terminal Failed state and a stop-text bit do
 not alone prove complete quiet drain or receipt of every outstanding Stop reply.
 Absent or incomplete terminal evidence remains unverified; the original source
 error is returned even when later diagnostic evidence is received.
+
+The current host requires Hello capability mask15, including explicit bounded
+stop-completion evidence. Older capability7 peers are rejected before Start.
+Evidence bit3 (value8) is separate from the stop-text acknowledgment (value4):
+normal Paused/Stopped after UART ownership requires both, a fresh request-scoped
+boundary, complete parser framing and zero reported loss/unread bytes. Gen0
+no-UART Stop remains evidence0 and makes no radio-stop claim.
+
+For autonomous failures, `stop_complete` is derived from the validated same-session
+request, generation, cause, sequence, fresh cleared-stop boundary and terminal
+completion evidence. It is not copied from an arbitrary rejected Status. Raw
+reported bits/counters remain available with `accepted_lifecycle: false`, even
+when this derived proof is false. Final loss can revoke completion; coalesced or
+closing reports update the retained evidence, and a poisoned/failed continuation
+clears derived proof while preserving the original source error. A valid failure
+stop never restores receiver health or changes the recording to successful.
