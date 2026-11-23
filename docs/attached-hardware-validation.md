@@ -30,11 +30,14 @@ preview described below. The earlier native reception result does not establish
 permission or reception acceptance for this newly signed application.
 
 The M5 remains absent from the latest passive inventory. Physical CatSniffer
-unplug/replug, strict active-host fault acceptance, physical USB transport loss,
-actual GUI capture controls and longer-duration recovery checks remain open. The
-matrices below
-retain earlier successes and failures with their build and test scope; they do
-not imply that every tested device is currently attached or enabled.
+unplug/replug, physical USB transport loss, actual GUI capture controls and
+longer-duration recovery checks remain open. Bounded host burst handling after
+the eight output drops is tracked in
+[#312](https://github.com/dougborg/AirHound/issues/312), separately from the
+validated watchdog stop completion and original strict acceptance failure.
+The matrices below retain earlier successes and failures with their build and
+test scope; they do not imply that every tested device is currently attached or
+enabled.
 
 On 2026-11-23 UTC, clean candidate `fc3a556` passed one explicit u-blox
 `IdentifyDevice` request through the production Rust backend in a private service.
@@ -608,11 +611,12 @@ internally unexplained; production readiness timeouts are unchanged.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Resolve the eight host output drops from the active-host suspension before
-  claiming strict fault acceptance. That failed attempt retained producer stop
-  completion; it does not establish physical RF silence. Physical USB
-  removal/re-enumeration remains untested. The accepted external concurrent session does not establish the full native/M5 rig
-  or endurance. The native setup UI from #297 is included in installed `07c7142`,
+- Track bounded host burst handling after the eight output drops in
+  [#312](https://github.com/dougborg/AirHound/issues/312); retain the original
+  strict acceptance failure separately from validated watchdog stop completion.
+  Producer completion does not establish physical RF silence. Physical USB
+  removal/re-enumeration remains untested. The accepted external concurrent
+  session does not establish the full native/M5 rig or endurance. The native setup UI from #297 is included in installed `07c7142`,
   but its actual capture controls remain unaccepted. Preserve prior failure
   evidence and do not retry the crashing third-party acquisition path without a
   reviewed mitigation.
