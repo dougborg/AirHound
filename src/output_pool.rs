@@ -48,6 +48,8 @@ pub enum BleAdmission {
     Enqueued,
     Full,
     NoClient,
+    /// Unexpected concurrent/reentrant handoff; rejected instead of reordering.
+    HandoffBusy,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
@@ -67,6 +69,7 @@ pub struct Stats {
     pub by_kind: [u32; 5],
     pub by_reason: [u32; 6],
     pub uart_lost_after_ble_enqueue: u32,
+    pub handoff_rejections: u32,
     pub saturated: bool,
     pub closed: bool,
 }
@@ -92,14 +95,16 @@ pub fn diagnostic_stats(
     reserved: usize,
 ) -> Result<crate::protocol::MsgBuffer, core::fmt::Error> {
     crate::serial_output::diagnostic(log::Level::Info, format_args!(
-        "Output pool: cap={} reserve={} used={} queued={} high={} residence_us={} poll_gap_us={} closed={} saturated={} pool_drops={} obs={} detect={} health={} command={} diag_pool={} admission={} closed_drop={} cancel={} timeout={} write={} disabled={} ble_enqueued_uart_lost={}",
+        "Output pool: cap={} reserve={} used={} queued={} high={} residence_us={} poll_gap_us={} closed={} saturated={} pool_drops={} obs={} detect={} health={} command={} diag_pool={} admission={} closed_drop={} cancel={} timeout={} write={} disabled={} ble_enqueued_uart_lost={} handoff_reject={}",
         capacity, reserved, s.occupied, s.queued, s.high_water, s.max_residence_us, s.max_poll_gap_us,
         s.closed, s.saturated, s.drops, s.by_kind[0], s.by_kind[1], s.by_kind[2], s.by_kind[3], s.by_kind[4],
-        s.by_reason[0], s.by_reason[1], s.by_reason[2], s.by_reason[3], s.by_reason[4], s.by_reason[5], s.uart_lost_after_ble_enqueue))
+        s.by_reason[0], s.by_reason[1], s.by_reason[2], s.by_reason[3], s.by_reason[4], s.by_reason[5], s.uart_lost_after_ble_enqueue, s.handoff_rejections))
 }
 
 struct State<const N: usize> {
     writer_taken: bool,
+    handoff_active: bool,
+    draining: usize,
     free: [u8; N],
     free_len: usize,
     queue: [u8; N],
@@ -119,6 +124,8 @@ impl<const N: usize> State<N> {
         }
         Self {
             writer_taken: false,
+            handoff_active: false,
+            draining: 0,
             free,
             free_len: N,
             queue: [0; N],
@@ -197,7 +204,7 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
         message: &crate::protocol::DeviceMessage<'_>,
         kind: Kind,
         now_us: impl FnOnce() -> u64,
-        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+        closed_ble: impl FnMut(&[u8]) -> BleAdmission,
     ) -> Result<Delivery, core::fmt::Error> {
         match self.reserve(kind) {
             Ok(slot) => slot.publish_message(message, now_us, closed_ble),
@@ -213,10 +220,41 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
         message: &crate::protocol::DeviceMessage<'_>,
         kind: Kind,
         count_loss: bool,
-        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+        mut closed_ble: impl FnMut(&[u8]) -> BleAdmission,
     ) -> Result<Delivery, core::fmt::Error> {
-        // Synchronous call: no 512-byte value survives an await and no PSRAM
-        // payload is acquired. Only DeviceMessage JSON can enter this path.
+        // All production pool users are normal tasks on the single Embassy
+        // executor. Enforce the non-overlap boundary as well: an outstanding
+        // draining lease or reentrant/concurrent fallback cannot be overtaken.
+        let accepted = self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+            if s.handoff_active || s.draining != 0 {
+                let stats = &mut s.stats;
+                increment(&mut stats.handoff_rejections, &mut stats.saturated);
+                if count_loss {
+                    stats.loss(kind, Reason::Closed, false);
+                }
+                return false;
+            }
+            s.handoff_active = true;
+            true
+        });
+        if !accepted {
+            return Ok(Delivery::UartClosed(BleAdmission::HandoffBusy));
+        }
+        let _handoff = ClosedHandoff { pool: self };
+        // At most N previously committed records. No new admission is possible;
+        // each lock covers metadata only, with payload copying outside it. This
+        // synchronous handoff preserves FIFO before the new direct BLE record.
+        while let Some(mut older) = self.take_at(None, true) {
+            if crate::serial_output::is_observation(older.bytes())
+                && closed_ble(older.bytes()) == BleAdmission::Enqueued
+            {
+                older.mark_ble_enqueued();
+            }
+            older.fail(Reason::Disabled);
+        }
+        // No new PSRAM payload is acquired. The local 512B JSON buffer never
+        // survives an await, and diagnostics cannot enter this typed adapter.
         let mut line = crate::protocol::MsgBuffer::new();
         line.resize_default(SLOT_BYTES)
             .map_err(|_| core::fmt::Error)?;
@@ -276,18 +314,19 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
         }
     }
     pub fn take(&self, now_us: u64) -> Option<Draining<'_, M, N, R>> {
-        self.take_at(Some(now_us))
+        self.take_at(Some(now_us), false)
     }
-    fn take_at(&self, now_us: Option<u64>) -> Option<Draining<'_, M, N, R>> {
+    fn take_at(&self, now_us: Option<u64>, handoff: bool) -> Option<Draining<'_, M, N, R>> {
         let entry = self.state.lock(|s| {
             let mut s = s.borrow_mut();
-            if s.count == 0 {
+            if s.count == 0 || (s.handoff_active && !handoff) {
                 return None;
             }
             let index = s.queue[s.head] as usize;
             s.head = (s.head + 1) % N;
             s.count -= 1;
             s.stats.queued -= 1;
+            s.draining += 1;
             if let Some(now_us) = now_us {
                 let residence = now_us
                     .wrapping_sub(s.committed_us[index])
@@ -332,16 +371,31 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
                 .max(micros.min(u32::MAX as u64) as u32);
         });
     }
-    fn release(&self, index: usize, reason: Option<Reason>, ble: bool) {
+    fn release(&self, index: usize, reason: Option<Reason>, ble: bool, draining: bool) {
         self.state.lock(|s| {
             let mut s = s.borrow_mut();
             if let Some(reason) = reason {
                 let kind = s.kinds[index];
                 s.stats.loss(kind, reason, ble);
             }
+            if draining {
+                assert!(s.draining > 0);
+                s.draining -= 1;
+            }
             s.release(index);
         });
         self.free.signal(());
+    }
+}
+
+struct ClosedHandoff<'a, M: RawMutex, const N: usize, const R: usize> {
+    pool: &'a Pool<M, N, R>,
+}
+impl<M: RawMutex, const N: usize, const R: usize> Drop for ClosedHandoff<'_, M, N, R> {
+    fn drop(&mut self) {
+        self.pool
+            .state
+            .lock(|s| s.borrow_mut().handoff_active = false);
     }
 }
 
@@ -365,7 +419,7 @@ pub struct WriterOwner<'a, M: RawMutex, const N: usize, const R: usize> {
 impl<M: RawMutex, const N: usize, const R: usize> Drop for WriterOwner<'_, M, N, R> {
     fn drop(&mut self) {
         self.pool.close();
-        while let Some(line) = self.pool.take_at(None) {
+        while let Some(line) = self.pool.take_at(None, false) {
             line.fail(Reason::Disabled);
         }
     }
@@ -382,7 +436,7 @@ impl<M: RawMutex, const N: usize, const R: usize> Reservation<'_, M, N, R> {
         mut self,
         message: &crate::protocol::DeviceMessage<'_>,
         now_us: impl FnOnce() -> u64,
-        closed_ble: impl FnOnce(&[u8]) -> BleAdmission,
+        closed_ble: impl FnMut(&[u8]) -> BleAdmission,
     ) -> Result<Delivery, core::fmt::Error> {
         let Some(length) = crate::comm::serialize_message(message, self.buffer()) else {
             self.discard_unpublished();
@@ -429,21 +483,22 @@ impl<M: RawMutex, const N: usize, const R: usize> Reservation<'_, M, N, R> {
         if result.is_ok() {
             self.pool.ready.signal(());
         } else {
-            self.pool.release(self.index, Some(Reason::Closed), false);
+            self.pool
+                .release(self.index, Some(Reason::Closed), false, false);
         }
         result
     }
     /// Serialization failures have their existing separate error counter.
     pub fn discard_unpublished(mut self) {
         self.live = false;
-        self.pool.release(self.index, None, false);
+        self.pool.release(self.index, None, false, false);
     }
 }
 impl<M: RawMutex, const N: usize, const R: usize> Drop for Reservation<'_, M, N, R> {
     fn drop(&mut self) {
         if self.live {
             self.pool
-                .release(self.index, Some(Reason::Cancelled), false);
+                .release(self.index, Some(Reason::Cancelled), false, false);
         }
     }
 }
@@ -476,13 +531,13 @@ impl<M: RawMutex, const N: usize, const R: usize> Draining<'_, M, N, R> {
     }
     pub fn complete(mut self) {
         self.live = false;
-        self.pool.release(self.index, None, false);
+        self.pool.release(self.index, None, false, true);
     }
     pub fn fail(mut self, reason: Reason) {
         self.live = false;
         self.pool.close();
         self.pool
-            .release(self.index, Some(reason), self.ble_enqueued);
+            .release(self.index, Some(reason), self.ble_enqueued, true);
     }
 }
 impl<M: RawMutex, const N: usize, const R: usize> Drop for Draining<'_, M, N, R> {
@@ -491,7 +546,7 @@ impl<M: RawMutex, const N: usize, const R: usize> Drop for Draining<'_, M, N, R>
             // Cancellation may follow partial output: never splice another line.
             self.pool.close();
             self.pool
-                .release(self.index, Some(Reason::Cancelled), self.ble_enqueued);
+                .release(self.index, Some(Reason::Cancelled), self.ble_enqueued, true);
         }
     }
 }
@@ -729,6 +784,7 @@ mod tests {
             by_kind: [u32::MAX; 5],
             by_reason: [u32::MAX; 6],
             uart_lost_after_ble_enqueue: u32::MAX,
+            handoff_rejections: u32::MAX,
             saturated: true,
             closed: true,
         };
@@ -900,12 +956,114 @@ mod tests {
                 pool.stats().drops,
                 pool.stats().uart_lost_after_ble_enqueue
             ),
-            (1, 2, 1)
+            (1, 5, 1)
         );
-        assert_eq!(pool.stats().occupied, 3);
+        assert_eq!(pool.stats().occupied, 0);
         while let Some(line) = pool.take(3) {
             line.fail(Reason::Disabled);
         }
         assert_eq!((pool.stats().occupied, pool.stats().drops), (0, 5));
+    }
+
+    #[test]
+    fn producer_during_failed_writer_yield_hands_off_old_json_before_new_without_duplicates() {
+        use crate::protocol::MsgBuffer;
+        use embassy_sync::channel::Channel;
+        let pool = pool::<8, 2>();
+        let ble = Channel::<NoopRawMutex, MsgBuffer, 4>::new();
+        let admit = |bytes: &[u8]| {
+            let mut line = MsgBuffer::new();
+            line.extend_from_slice(bytes).unwrap();
+            if ble.try_send(line).is_ok() {
+                BleAdmission::Enqueued
+            } else {
+                BleAdmission::Full
+            }
+        };
+        for n in [1, 2] {
+            pool.publish_message(&status(n), Kind::Health, || 0, |_| panic!("healthy path"))
+                .unwrap();
+        }
+        // This is the real post-write-failure scheduling boundary: the current
+        // line was already BLE-forwarded, but an older queued line remains.
+        let writer = async {
+            let _owner = pool.writer_owner().unwrap();
+            let mut first = pool.take(1).unwrap();
+            assert_eq!(admit(first.bytes()), BleAdmission::Enqueued);
+            first.mark_ble_enqueued();
+            first.fail(Reason::Write);
+            embassy_futures::yield_now().await;
+            while let Some(mut old) = pool.receive(|| 3).await {
+                if admit(old.bytes()) == BleAdmission::Enqueued {
+                    old.mark_ble_enqueued();
+                }
+                old.fail(Reason::Disabled);
+            }
+        };
+        let mut writer = pin!(writer);
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(matches!(writer.as_mut().poll(&mut cx), Poll::Pending));
+        assert_eq!(pool.stats().queued, 1);
+        pool.publish_message(&status(3), Kind::Health, || 2, admit)
+            .unwrap();
+        assert_eq!(pool.stats().queued, 0);
+        assert!(matches!(writer.as_mut().poll(&mut cx), Poll::Ready(())));
+        for n in [1, 2, 3] {
+            let bytes = ble.try_receive().unwrap();
+            assert!(core::str::from_utf8(&bytes)
+                .unwrap()
+                .contains(&format!("\"uptime\":{n},")));
+        }
+        assert!(ble.is_empty());
+        assert_eq!(
+            (pool.stats().drops, pool.stats().uart_lost_after_ble_enqueue),
+            (3, 3)
+        );
+    }
+
+    #[test]
+    fn outstanding_lease_or_reentrant_handoff_is_rejected_instead_of_reordering() {
+        use core::cell::Cell;
+        let pool = pool::<8, 2>();
+        for n in [1, 2] {
+            pool.publish_message(&status(n), Kind::Health, || 0, |_| unreachable!())
+                .unwrap();
+        }
+        let held = pool.take(1).unwrap();
+        pool.close();
+        assert_eq!(
+            pool.publish_message(
+                &status(3),
+                Kind::Health,
+                || 2,
+                |_| panic!("must not overtake held lease")
+            ),
+            Ok(Delivery::UartClosed(BleAdmission::HandoffBusy))
+        );
+        held.fail(Reason::Write);
+        let callbacks = Cell::new(0);
+        let result = pool.publish_message(
+            &status(4),
+            Kind::Health,
+            || 3,
+            |_| {
+                callbacks.set(callbacks.get() + 1);
+                assert!(pool.take(3).is_none()); // writer cannot race the handoff
+                assert_eq!(
+                    pool.publish_message(
+                        &status(99),
+                        Kind::Health,
+                        || 3,
+                        |_| panic!("reentrant handoff")
+                    ),
+                    Ok(Delivery::UartClosed(BleAdmission::HandoffBusy))
+                );
+                BleAdmission::Enqueued
+            },
+        );
+        assert_eq!(result, Ok(Delivery::UartClosed(BleAdmission::Enqueued)));
+        assert_eq!(callbacks.get(), 2); // queued2, then new4; no nested99
+        assert_eq!(pool.stats().handoff_rejections, 3);
+        assert_eq!((pool.stats().occupied, pool.stats().drops), (0, 6));
     }
 }
