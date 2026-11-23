@@ -5,7 +5,10 @@ pub const HEADER_BYTES: usize = 44;
 pub const MAX_PAYLOAD: usize = 256;
 pub const MAX_MESSAGE: usize = HEADER_BYTES + MAX_PAYLOAD;
 pub const WATCHDOG_MS: u32 = 3000;
-pub const CAPABILITIES: u32 = 7;
+/// Bit3 requires explicit bounded stop-completion evidence before acceptance.
+pub const CAPABILITIES: u32 = 15;
+pub const STOP_COMPLETE: u16 = 8;
+pub const STOP_REQUEST_EVIDENCE: u16 = 4 | STOP_COMPLETE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -247,7 +250,7 @@ pub fn decode(data: &[u8]) -> Result<Message<'_>, Error> {
                 rpc_dropped_messages: u64le(p, 36),
                 unread_ring_bytes: u32le(p, 44),
             };
-            if status.cause > 14 || status.evidence & !7 != 0 {
+            if status.cause > 14 || status.evidence & !15 != 0 {
                 return Err(Error::Value);
             }
             Body::Status(status)

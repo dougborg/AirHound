@@ -10,7 +10,7 @@ fn header() -> Header {
 }
 fn hello() -> Hello<'static> {
     Hello {
-        capabilities: 7,
+        capabilities: CAPABILITIES,
         api_major: 87,
         api_minor: 1,
         uart_baud: 115200,
@@ -118,7 +118,7 @@ fn invalid_metadata_and_reserved_fields_fail_closed() {
             ..hello()
         },
         Hello {
-            capabilities: 8,
+            capabilities: 16,
             ..hello()
         },
         Hello {
@@ -255,4 +255,42 @@ fn stop_failure_causes_roundtrip_and_unknown_causes_fail_closed() {
         out[45] = 15;
         assert!(decode(&out[..len]).is_err());
     }
+}
+
+#[test]
+fn completion_capability_and_evidence_are_explicit_and_bounded() {
+    assert_eq!(CAPABILITIES, 15);
+    let mut out = [0; MAX_MESSAGE];
+    let n = encode(hello_message(), &mut out).unwrap();
+    assert_eq!(u32::from_le_bytes(out[44..48].try_into().unwrap()), 15);
+    assert_eq!(decode(&out[..n]).unwrap(), hello_message());
+    let mut status = Status {
+        state: State::Failed,
+        cause: 3,
+        evidence: 15,
+        generation: 1,
+        app_uptime_ms: 3100,
+        uart_rx_bytes: 100,
+        uart_dropped_bytes: 0,
+        uart_error_events: 0,
+        rpc_dropped_messages: 0,
+        unread_ring_bytes: 0,
+    };
+    let message = Message {
+        header: hello_message().header,
+        body: Body::Status(status),
+    };
+    let n = encode(message, &mut out).unwrap();
+    assert_eq!(decode(&out[..n]).unwrap(), message);
+    status.evidence = 16;
+    assert!(
+        encode(
+            Message {
+                body: Body::Status(status),
+                ..message
+            },
+            &mut out
+        )
+        .is_err()
+    );
 }

@@ -2,7 +2,7 @@
 //! Every returned UART action requires publishing its current status first. If
 //! publication fails, the caller must fail the session and must not send Start.
 use crate::{
-    bridge::{Command, Header, State, Status, WATCHDOG_MS},
+    bridge::{Command, Header, STOP_COMPLETE, STOP_REQUEST_EVIDENCE, State, Status, WATCHDOG_MS},
     diagnostic::Witness,
 };
 
@@ -38,6 +38,7 @@ pub struct Controller {
     stop_expected: u64,
     stop_attempts: u8,
     pause_target: bool,
+    completion_invalid: bool,
     witness: Witness,
 }
 impl Controller {
@@ -62,6 +63,7 @@ impl Controller {
             stop_expected: 0,
             stop_attempts: 0,
             pause_target: false,
+            completion_invalid: false,
             witness: Witness::new(),
         }
     }
@@ -171,12 +173,17 @@ impl Controller {
         self.stop_ack_at = None;
         self.stop_baseline = self.witness.stops;
         self.stop_attempts = 1;
-        self.evidence &= !4;
+        self.evidence &= !STOP_REQUEST_EVIDENCE;
         Some(UartAction::Stop)
     }
     /// Transport/queue/UART failures cannot renew a session or restart RF.
     pub fn fail(&mut self, now: u32, cause: u8) -> Option<UartAction> {
         self.lifecycle_request = 0;
+        // Known I/O loss is cumulative and cannot be hidden by a later cause.
+        if matches!(cause, 5 | 8) {
+            self.completion_invalid = true;
+        }
+        self.evidence &= !STOP_COMPLETE;
         if self.state == State::Stopped {
             // Final ISR/queue counters may reveal loss after the last poll.
             self.state = State::Failed;
@@ -266,13 +273,16 @@ impl Controller {
                     .is_some_and(|at| now.wrapping_sub(at) >= 2000);
                 let absolute_expired = now.wrapping_sub(self.since) >= 3000;
                 if acknowledged || ack_expired || drain_expired || absolute_expired {
-                    if acknowledged
+                    let completed = acknowledged
                         && !ack_expired
                         && !drain_expired
                         && !absolute_expired
                         && !self.witness.malformed
-                        && matches!(self.cause, 1 | 2)
-                    {
+                        && !self.completion_invalid;
+                    if completed {
+                        self.evidence |= STOP_COMPLETE;
+                    }
+                    if completed && matches!(self.cause, 1 | 2) {
                         self.state = if self.pause_target {
                             State::Paused
                         } else {

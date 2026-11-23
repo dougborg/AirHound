@@ -1,5 +1,5 @@
 //! Ordered, nonblocking controller I/O contract, exercised with fake queues.
-use crate::bridge::State;
+use crate::bridge::{STOP_COMPLETE, State, Status};
 use crate::bridge_control::{Controller, UartAction};
 /// An ISR arrival between the drain and boundary check is still pending input,
 /// even if another read made the ring look empty. Recent arrivals are not quiet.
@@ -52,4 +52,17 @@ pub fn poll(c: &mut Controller, now: u32, buffered_input: bool, out: &mut impl O
     if let Some(action) = c.poll(now) {
         dispatch(c, now, action, out)
     }
+}
+
+/// Final publication can see counters newer than the controller's last poll.
+/// Preserve those diagnostics, but never publish completion alongside known loss.
+pub fn checked_status(mut status: Status) -> Status {
+    if status.uart_dropped_bytes != 0
+        || status.uart_error_events != 0
+        || status.rpc_dropped_messages != 0
+        || status.unread_ring_bytes != 0
+    {
+        status.evidence &= !STOP_COMPLETE;
+    }
+    status
 }
