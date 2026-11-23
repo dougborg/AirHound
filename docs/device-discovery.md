@@ -305,7 +305,7 @@ use `passive_with_active_metadata`; otherwise the mode remains `passive`.
 
 ### Explicit u-blox version query
 
-On macOS and Linux, a recognized u-blox GNSS USB candidate with a serial endpoint
+On macOS, a recognized u-blox GNSS USB candidate with a serial endpoint
 advertises `identification_protocol: "ublox"`. This is permission to offer an
 explicit identification action, not proof of receiver readiness. Inventory never
 opens the port or performs this query. Multiple endpoints require an explicit
@@ -320,8 +320,10 @@ identify --config probe.json`). No Python/helper settings are accepted. The Rust
 backend verifies the current recognized USB device and endpoint, refuses active
 capture, checks external ownership, and holds the shared serial lease until its
 transport is restored/closed and the post-query attachment is revalidated.
-Unknown external ownership fails closed. Linux uses `/proc` and can report a
-permission error when other process descriptors cannot be inspected.
+Unknown external ownership fails closed. Other platforms do not advertise this
+explicit probe and return an unsupported-platform result before opening a port.
+Existing gpsd capture support is unchanged; this identification action does not
+add a GPS driver or require elevated process inspection on Linux.
 
 The only transmitted command is the eight-byte, zero-payload UBX-MON-VER poll.
 The nonblocking worker has a fixed three-second query deadline, a 64 KiB input

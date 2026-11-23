@@ -283,77 +283,10 @@ async fn check_owner(port: &Path) -> io::Result<()> {
     }
     outcome
 }
-#[cfg(target_os = "linux")]
-async fn check_owner(port: &Path) -> io::Result<()> {
-    let port = port.to_owned();
-    tokio::task::spawn_blocking(move || {
-        let rdev = fs::metadata(port)?.rdev();
-        let deadline = Instant::now() + Duration::from_secs(1);
-        let mut count = 0;
-        for (process_count, entry) in fs::read_dir("/proc")?.enumerate() {
-            if process_count >= 50000 || Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "GNSS ownership inspection exceeded bound",
-                ));
-            }
-            let entry = entry?;
-            if !entry
-                .file_name()
-                .to_string_lossy()
-                .bytes()
-                .all(|b| b.is_ascii_digit())
-            {
-                continue;
-            }
-            let files = match fs::read_dir(entry.path().join("fd")) {
-                Ok(v) => v,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "cannot inspect process ownership of GNSS endpoint",
-                    ))
-                }
-            };
-            for fd in files {
-                count += 1;
-                if count > 50000 || Instant::now() > deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "GNSS ownership inspection exceeded bound",
-                    ));
-                }
-                match fs::metadata(fd?.path()) {
-                    Ok(m) if m.file_type().is_char_device() && m.rdev() == rdev => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::WouldBlock,
-                            "GNSS endpoint has an existing owner",
-                        ))
-                    }
-                    Ok(_) => (),
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-                    Err(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::PermissionDenied,
-                            "cannot inspect GNSS endpoint owner",
-                        ))
-                    }
-                }
-            }
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|_| io::Error::other("GNSS ownership worker failed"))?
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(target_os = "macos"))]
 async fn check_owner(_port: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "u-blox identification is unavailable on this platform",
-    ))
+    Err(io::Error::new(io::ErrorKind::Unsupported,
+        "explicit u-blox identification requires macOS ownership inspection; gpsd capture is unchanged"))
 }
 
 struct Port {
@@ -821,6 +754,15 @@ mod tests {
         let inventory = assemble(vec![raw], vec![], "macos", &Options::default());
         let request:Request=serde_json::from_value(serde_json::json!({"protocol":"ublox","device_id":"fixture-gps","port":"/dev/fixture-gps"})).unwrap();
         let before = binding(&inventory, &request).unwrap();
+        if !super::super::supports_ublox_identification() {
+            assert_eq!(
+                validate_completion_binding(&inventory, &request, &before)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::Unsupported
+            );
+            return;
+        }
         validate_completion_binding(&inventory, &request, &before).unwrap();
         let mut removed = inventory.clone();
         removed.devices.clear();
@@ -850,13 +792,11 @@ mod tests {
         assert!(probe(&other.path, &lease, &AtomicBool::new(false), DEADLINE).is_err());
         assert!(serial_lease::acquire(&pty.path).is_err());
     }
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn existing_external_pty_owner_is_refused() {
         let pty = Pty::new();
         let error = check_owner(&pty.path).await.unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::PermissionDenied
-        ));
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
     }
 }
