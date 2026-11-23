@@ -66,7 +66,7 @@ The outputs retain DWARF, matching code/data and debuglink CRC, exact source/SDK
 hashes and an explicit `hardware_tested: false`; acceptance evidence remains
 separate from immutable build metadata. Independent source/artifact review and the
 UART-free and single-source passive device checks below passed. Remaining gates
-include physical watchdog/transport-failure tests, concurrent sources,
+include transport-disconnect tests, concurrent sources,
 endurance and the normal native setup/capture workflow. The diagnostic and
 original Marauder companion remain preserved.
 
@@ -251,7 +251,7 @@ concurrent receivers, endurance and the normal native workflow remain separate
 acceptance gates. Both earlier failed Resume-stage attempts remain failures.
 
 
-## Explicit stop completion revision (not yet hardware accepted)
+## Explicit stop completion revision and bounded acceptance
 
 The `c7e72ae` producer adds a required Hello capability and a distinct bounded
 stop-completion evidence bit. The previous autonomous `Failed/cause3/bits7` report
@@ -264,6 +264,47 @@ Matching hosts must retain revocation and reject old capabilities before Start.
 Independent review and 60 native companion tests passed, including clean versus
 incomplete autonomous outcomes, clock wrap, fresh Finish and final loss. The same
 outcome regression fails against the prior source. A separate API87.1 artifact
-was built with source/debug provenance; this revision has no device acceptance
-yet. Installed `4ab3c66` and the accepted normal-lifecycle evidence above remain
-unchanged. Physical fault and concurrency acceptance remain pending.
+was built with source/debug provenance. The `c7e72ae` FAP, SHA-256
+`82a9777c1cc96048e2ae2752cfe8a18ae995871e558349639c40c4a22cbac1e3`,
+was staged and verified before replacing only the AirHound bridge. The prior
+`4ab3c66`, `1a5ce78` and `f457474` images remain separately parked; the original
+third-party companion is unchanged. A matched production Rust no-UART check
+passed with host `306d24a`, generation zero and zero UART counters.
+
+A subsequent private Start/Pause/Resume/Pause/Finish run with that matched host
+stored 129 live packets (65 in generation one and 64 in generation two) among
+377 records. Fresh reports advanced 1.207 seconds during the settled Pause with
+unchanged UART count and no new packets. Finish carried fresh normalized
+completion evidence 15 → 3 → 15. SQLite integrity, source attribution, both
+generations, zero reported transport/output loss, idle-loader/hash/lease cleanup
+and unchanged default service all passed independent read-only checks. Unknown
+RSSI, physical receive channel and receiver location remained absent.
+
+The first paused-host watchdog attempt with host `306d24a` remains a failed
+acceptance: the producer reported Failed/cause3/bits15 with zero known loss, but
+the host did not retain validated completion. An offline regression reproduced
+an outstanding RPC/AHFB heartbeat-acknowledgment ordering problem. The failed
+hardware run did not retain its exact wire ordering, so that causal link remains
+an inference. The corrected
+host drains only those already-submitted correlated replies within the original
+failure-drain deadline; it sends no new heartbeat and does not repair failed
+session health. A separate logger correction preserves service stderr diagnostics.
+
+One repeated bounded watchdog test with host `58239fa` and the unchanged `c7e72ae`
+FAP passed. After reception and a quiet Pause, the exact private host was frozen
+for 6.560 seconds and then resumed. The database retained 67 live packets among
+212 records, with no packets added after Pause. The final same-generation report
+was Failed/cause3/bits15 with backend-derived `stop_complete: true`, zero reported
+UART/RPC/output losses and zero unread bytes. The recording correctly stayed
+failed and the private service exited with its expected failure status. The
+derived completion validates the backend's bound failure context; intermediate
+autonomous wire transitions were not separately persisted, and the generic
+failed-source `radio_stop` field remains `unverified`. Cleanup
+restored idle CLI/loader, released USB/lease ownership, preserved all companion
+hashes and left the default service unchanged.
+
+This accepts one bounded paused-host heartbeat-expiry case, not USB removal,
+active-capture host loss, arbitrary failure recovery, endurance or concurrent
+receivers. Literal UART acknowledgments remain unauthenticated; bounded observed
+completion does not prove physical RF silence or lossless reception. The normal
+native setup/capture workflow and concurrent-receiver acceptance remain open.
