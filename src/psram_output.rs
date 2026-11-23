@@ -1,6 +1,6 @@
 //! Task-only PSRAM output adapter. The runtime logger never calls this module.
 use crate::{protocol::DeviceMessage, serial_console::increment, SERIALIZE_ERRORS};
-use airhound::output_pool::{Kind, Pool, Reason, Unavailable};
+use airhound::output_pool::{BleAdmission, Delivery, Kind, Pool, Reason, Unavailable};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
@@ -32,16 +32,22 @@ fn reason(error: Unavailable) -> Reason {
     }
 }
 pub fn publish(message: &DeviceMessage<'_>, kind: Kind) {
-    if pool()
-        .publish_message(
-            message,
-            kind,
-            || embassy_time::Instant::now().as_micros(),
-            crate::forward_ble,
-        )
-        .is_err()
-    {
-        increment(&SERIALIZE_ERRORS);
+    account_delivery(pool().publish_message(
+        message,
+        kind,
+        || embassy_time::Instant::now().as_micros(),
+        crate::forward_ble,
+    ));
+}
+fn account_delivery(result: Result<Delivery, core::fmt::Error>) {
+    match result {
+        Err(_) => increment(&SERIALIZE_ERRORS),
+        Ok(Delivery::UartClosed(BleAdmission::HandoffBusy))
+            if crate::BLE_CLIENTS.load(Ordering::Relaxed) > 0 =>
+        {
+            increment(&crate::BLE_OUTPUT_DROPS)
+        }
+        _ => {}
     }
 }
 pub fn publish_bytes(bytes: &[u8], kind: Kind) {
@@ -72,9 +78,7 @@ pub async fn command(message: &DeviceMessage<'_>) {
             crate::forward_ble,
         ),
     };
-    if result.is_err() {
-        increment(&SERIALIZE_ERRORS);
-    }
+    account_delivery(result);
 }
 
 pub fn report() {
