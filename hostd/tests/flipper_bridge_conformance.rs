@@ -326,3 +326,94 @@ fn paired_transport_cancellation_stops_locally_despite_queued_host_events() {
     assert_eq!(p.host.last_reported_status().unwrap().cause, 4);
     assert!(p.host.command(Command::StartBeacon).is_err());
 }
+
+#[test]
+fn paired_retry_reply_delays_pause_until_all_commands_are_acknowledged() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.command(Command::Pause, 2300);
+    p.drain().unwrap();
+    assert_eq!(p.poll(2800), Some(UartAction::Stop));
+    p.drain().unwrap();
+    p.feed(3036, b"Stopping WiFi tran/recv\r\n");
+    p.drain().unwrap();
+    p.poll(3036);
+    p.drain().unwrap();
+    p.feed(3436, b"console tail\r\n");
+    p.drain().unwrap();
+    p.poll(3486);
+    p.drain().unwrap();
+    assert_eq!(p.host.state(), Some(State::Stopping));
+    // Synthetic second command reply: the actual failed run's late bytes
+    // were not retained, so this does not claim to identify their contents.
+    p.feed(3492, b"#stopscan\r\nStopping WiFi ");
+    p.drain().unwrap();
+    p.poll(3542);
+    p.drain().unwrap();
+    assert_eq!(p.host.state(), Some(State::Stopping));
+    p.feed(3550, b"tran/recv\r\n> ");
+    p.drain().unwrap();
+    p.poll(3600);
+    p.drain().unwrap();
+    assert_eq!(p.host.state(), Some(State::Paused));
+    assert_eq!(p.host.last_reported_status().unwrap().evidence, 7);
+    p.start(3700);
+    assert_eq!(p.producer.generation, 2);
+    p.stopped(3900, Command::Stop, State::Stopped);
+}
+
+#[test]
+fn paired_missing_retry_reply_preserves_specific_failed_diagnostic() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.command(Command::Pause, 100);
+    p.drain().unwrap();
+    assert_eq!(p.poll(600), Some(UartAction::Stop));
+    p.drain().unwrap();
+    p.feed(725, b"Stopping WiFi tran/recv\r\n");
+    p.drain().unwrap();
+    p.poll(725);
+    p.drain().unwrap();
+    p.poll(775);
+    p.drain().unwrap();
+    assert_eq!(p.host.state(), Some(State::Stopping));
+    p.command(Command::Heartbeat, 2700);
+    p.drain().unwrap();
+    p.poll(2725);
+    let error = p.drain().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Bridge stop deadline expired with outstanding acknowledgments"
+    );
+    let report = p.host.last_reported_status().unwrap();
+    assert_eq!(report, p.producer.status(2725));
+    assert_eq!(
+        (report.cause, report.evidence, report.app_uptime_ms),
+        (14, 7, 2725)
+    );
+    assert_eq!(p.host.state(), Some(State::Failed));
+    assert!(p.host.command(Command::StartBeacon).is_err());
+}
+
+#[test]
+fn paired_late_paused_input_is_distinct_from_malformed_framing() {
+    let mut p = Pair::new();
+    p.start(10);
+    p.stopped(100, Command::Pause, State::Paused);
+    // bridge_io raises this explicit cause before retaining any late Raw.
+    assert_eq!(p.producer.fail(206, 13), Some(UartAction::Stop));
+    p.status(206);
+    let error = p.drain().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Bridge received unexpected UART input while paused"
+    );
+    let report = p.host.last_reported_status().unwrap();
+    assert_eq!(report, p.producer.status(206));
+    assert_eq!(
+        (report.state, report.cause, report.evidence),
+        (State::Stopping, 13, 3)
+    );
+    assert_eq!(p.host.state(), Some(State::Failed));
+    assert!(p.host.command(Command::StartBeacon).is_err());
+}
