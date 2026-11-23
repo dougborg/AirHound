@@ -112,8 +112,9 @@ same service returned to idle; the earlier failed recording was retained.
 
 A separate runnable GUI built from `946d3c0` was delivered with the exact existing
 signed `07c7142` backend preserved byte-for-byte. It includes the reported Flipper
-loss-counter presentation fix. The backend stayed running, and the delivery
-preserved the older GUI's RAM-only draft. The user subsequently confirmed that GUI windows were visible; an empty
+loss-counter presentation fix. The backend stayed running, and the older GUI was
+left running to retain any RAM-only draft. The user subsequently confirmed that
+GUI windows were visible; an empty
 accessibility-window inventory was not proof that no window existed. Launch and
 visible-window confirmation do not establish capture-control acceptance.
 
