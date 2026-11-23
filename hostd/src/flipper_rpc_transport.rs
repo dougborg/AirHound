@@ -96,6 +96,10 @@ pub enum Received {
 }
 
 impl Correlation {
+    pub fn awaiting_ack(&self) -> bool {
+        self.pending.is_some()
+    }
+
     pub fn request(&mut self, content: Content) -> io::Result<Main> {
         if self.pending.is_some() {
             return Err(invalid("Flipper RPC command still pending"));
