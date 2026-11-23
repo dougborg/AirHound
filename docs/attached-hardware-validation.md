@@ -7,11 +7,11 @@ The remaining integration work is tracked in [#269](https://github.com/dougborg/
 
 ## Current acceptance status
 
-The prior installed `33a5e93` backend received native WiFi and Bluetooth after the
-user approved permissions: the unchanged service finished a 20.196328-second run
-with 483 WiFi and 1,233 BLE observations. Existing recordings and saved setups
-were preserved. This verifies backend-controlled reception, not native GUI
-Start/Finish controls.
+After renewed user permission approval, the installed `07c7142` backend received
+321 WiFi and 1,273 BLE observations in a finished 20.135618-second native check.
+All prior recordings and saved setups were preserved. This verifies reception on
+the current signed backend, not native GUI capture controls; the earlier failed
+attempt remains retained.
 
 The completion-capable Flipper producer `c7e72ae` passed a private normal
 Pause/Resume/Finish run with host `306d24a` (129 packets), then a paused-host
@@ -26,10 +26,11 @@ acceptance failed because the host reported eight output drops. Physical USB
 loss/reconnect remains untested, and producer completion does not prove physical
 RF silence. Earlier acquisition, drain and watchdog failures remain below.
 The Flipper UI and live-source builds are delivered in the installed `07c7142`
-preview described below. The earlier native reception result does not establish
-permission or reception acceptance for this newly signed application.
+preview described below. Its newly verified native reception and the separately
+delivered GUI update do not establish actual GUI control acceptance.
 
-The M5 remains absent from the latest passive inventory. Physical CatSniffer
+The M5 reappeared after a cable change and passed current firmware identification,
+WiFi/BLE reception and host Pause/Resume/Finish as detailed below. Physical CatSniffer
 unplug/replug, physical USB transport loss, actual GUI capture controls and
 longer-duration recovery checks remain open. Bounded host burst handling after
 the eight output drops is tracked in
@@ -79,14 +80,53 @@ A subsequent bounded native-only check on installed `07c7142` failed after
 `addresses_redacted_check_location_permission`, pointing to a Location-access
 check; Bluetooth adapter initialization timed out, with the underlying cause still
 unknown. The failed recording was retained, existing recordings and saved setups
-were preserved, and the same service returned to idle. The attempt was not retried and is not permission or
-reception acceptance.
+were preserved, and the same service returned to idle. This failed result remains
+unchanged; it is not permission or reception acceptance.
 
-Actual GUI Identify/Validate/Start/Pause/Resume/Finish controls and observations
-presentation remain unaccepted. Native permissions and reception under this
-signed identity require a separate check in an interactive desktop session.
-Earlier `33a5e93` native reception and private Flipper/combined results below
-retain their original artifact scope.
+On 2026-11-23 UTC, after the user approved more permissions, one separately
+reviewed retry on the same signed `07c7142` backend finished in 20.135618 seconds:
+321 WiFi and 1,273 BLE observations, 1,599 total records, and zero invalid source
+associations. Independent checks verified database integrity and exact preservation
+of every prior row across all six tables and all saved profile-store files. The
+same service returned to idle; the earlier failed recording was retained.
+
+A separate runnable GUI built from `946d3c0` was delivered with the exact existing
+signed `07c7142` backend preserved byte-for-byte. It includes the reported Flipper
+loss-counter presentation fix. The backend stayed running, and the older GUI was
+left running to retain any RAM-only draft. The new GUI launched but exposed
+no accessibility windows; this establishes launch only, not usable-window or
+capture-control acceptance.
+
+Actual GUI Identify/Load/Validate/Start/Pause/Resume/Finish controls and observations
+presentation remain unaccepted. Earlier `33a5e93` native reception and private
+Flipper/combined results below retain their original artifact scope.
+
+### Current M5 revalidation
+
+On 2026-11-23 UTC, the reconnected M5 was tested through a private `07c7142`
+backend at 460800 baud. The first attempt retained 67 WiFi observations but no
+BLE observations or device-status report in 12.225539 seconds; its acceptance
+failed before Pause/Resume. The 12-second identity gate was shorter than the
+firmware's documented 30-second reporting interval, so absent identity in that
+window was inconclusive. The zero BLE count remains actual and unexplained.
+The original failed acceptance and its cleanly finished recording were retained.
+
+A reviewed correction allowed 35 seconds for the unchanged identity/both-media
+gate and a 70-second independent private-process deadline. The single corrected
+attempt finished in 18.683479 seconds with 86 WiFi and 24 BLE observations in
+130 records. Actual device status reported AirHound `0.1.1` on `m5stickc_plus2`.
+Host Pause stayed quiet for 2.0357155 seconds; both media advanced after Resume,
+with the same connection and sampled boot generation, then Finish released the
+port and shared lease. Twelve observations were deliberately discarded while
+host ingestion was paused; the autonomous device radios were not commanded off.
+
+Reported host drops, malformed/oversized records and reconnects were zero. One
+producer sample reported nine cumulative scan drops since boot, with unknown
+timing; output drops, BLE output drops and serialization errors were zero.
+These counters do not establish zero RF loss. Independent checks verified source,
+clock and identity provenance, database integrity, clean private-service exit and
+unchanged default-service data and saved setups. This is individual M5 acceptance,
+not the complete current rig, physical recovery, endurance or GUI acceptance.
 
 ## Provenance and privacy
 
@@ -131,10 +171,10 @@ configuration; rediscover the current endpoint and select it explicitly.
 
 | Device / role | Observed identity and endpoint | Recorded evidence | Limit / next check |
 | --- | --- | --- | --- |
-| Native Bluetooth | CoreBluetooth, OS-managed | Prior `33a5e93` installed-backend permission retry: 1,233 observations alongside WiFi, clean finish | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
-| Native WiFi | CoreWLAN, OS interface | Prior unchanged `33a5e93` installed backend received 483 observations alongside BLE after user permission approval | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
+| Native Bluetooth | CoreBluetooth, OS-managed | Current signed `07c7142` retry: 1,273 observations alongside WiFi, clean finish; earlier `33a5e93` result retained below | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
+| Native WiFi | CoreWLAN, OS interface | Current signed `07c7142` retry: 321 observations alongside BLE after renewed permission approval, clean finish | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
+| M5StickC Plus2 | Reconnected WCH `1a86:55d4`, UART at 460800 baud; current actual AirHound `0.1.1` / `m5stickc_plus2` status | Current private `07c7142` run: 86 WiFi + 24 BLE observations, 130 records, 18.683479 seconds; host Pause/Resume/Finish passed. Earlier 66-second run retained 407 WiFi + 71 BLE observations | Host errors/drops/reconnects 0; 12 intentional paused discards. Producer scan drops 9 cumulative since boot, timing unknown; RF loss unknown. Earlier short identity-window failure retained. Radios continue while host ingestion is paused/stopped; full current rig and physical recovery remain pending |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
@@ -147,7 +187,11 @@ The M5's internal free heap was about 3.6 KiB; its prior startup diagnostic conf
 memory by itself. The serial test's reported uptime progressed 61→91→121 seconds
 through pause/resume, with one connection and one boot generation. Earlier Python
 monitor opens reset the device despite DTR/RTS being held false; do not promise
-that opening the port is nondisruptive.
+that opening the port is nondisruptive. In the earlier 66-second M5 run, the
+512 stored records included 407 WiFi and 71 BLE observations. Its eight-second
+host Pause discarded 47 observations with none recorded during Pause; reported
+host errors/drops and producer counters were zero in that historical run. Those
+values do not replace the newer cumulative producer-drop report above.
 
 ## Combined sessions
 
@@ -162,6 +206,7 @@ that opening the port is nondisruptive.
 | Same installed service after permission approval, native WiFi + BLE | 944 WiFi + 1,962 BLE observations; finished | Original harness rejected valid native metadata shapes; source-specific offline revalidation passed without rescanning |
 | Same installed service, native WiFi + BLE + M5 + CatSniffer + ALFA + managed GPS, 45.27 seconds | 9,857 observations; 9,655 fresh receiver-location associations; finished | All five sources received; ALFA channels 1/6/11; zero invalid source/location associations. Backend-controlled acceptance; existing recordings/profiles preserved, external ports released, service remained running |
 | Updated installed `33a5e93` service after permission approval, native WiFi + BLE, 20.196328 seconds | 483 WiFi + 1,233 BLE observations; 1,721 total records; finished | Both native scanners running, zero invalid source associations; nine prior recordings and saved setups preserved. Same signed backend and service throughout; no GUI capture-control claim |
+| Current installed `07c7142`, native WiFi + BLE after renewed permission approval, 20.135618 seconds | 321 WiFi + 1,273 BLE observations; 1,599 total records; finished | Zero invalid source associations; every prior database row and saved profile-store file preserved. Earlier failed attempt retained; same signed service stayed running. No GUI control or combined external-rig claim |
 | Private Flipper `c7e72ae` / host `306d24a`, normal lifecycle, 8.984887 seconds | 129 packets: 65 in generation 1, 64 in generation 2; 377 records; finished | Quiet Pause for 1.207 seconds, explicit Resume, fresh Finish evidence 15 → 3 → 15; cleanup and default-service preservation passed |
 | Same Flipper / host `58239fa`, paused-host watchdog | 67 packets, 212 records; recording correctly **failed**; fault acceptance passed | Exact private host suspended for 6.559710 seconds after quiet Pause. No later packets; final cause 3, evidence 15 and backend-derived completion true, zero known loss/unread input. This covers paused-host heartbeat expiry only |
 | Same Flipper producer `c7e72ae` / host `07c7142`, active-host suspension | 147 durable packets, 303 records over 9.660146 seconds; recording **failed** and strict fault acceptance **failed** | Exact private host was suspended with SIGSTOP for 6.523048875 seconds while capture was active. Final cause 3, evidence 15 and backend-derived `stop_complete: true`; reported producer UART/RPC losses and unread input were zero, but eight host output drops failed the loss gate. Cleanup and default data preservation passed. Physical RF silence remains unverified; this was not physical USB loss/reconnect |
@@ -596,11 +641,10 @@ internally unexplained; production readiness timeouts are unchanged.
 
 ## Remaining acceptance
 
-- Reconnect and verify the M5 before claiming the complete rig is ready. Native
-  permission/reception passed for the prior `33a5e93` backend; verify the newly
-  installed signed identity independently. Its first native-only check failed
-  with WiFi address redaction and a BLE initialization timeout; the latter does
-  not by itself establish a permission denial.
+- Verify the complete compatible rig with current native and external receivers,
+  including the reconnected M5. The current signed `07c7142` native retry and
+  separate M5 lifecycle passed, but individual results do not establish their
+  combined operation. Preserve the earlier native and short M5-window failures.
 - Exercise **Attached receiver rig (USB recovery)** through the native Load, Start Recording
   and Finish Recording controls. Actual GUI service launch and native observation
   presentation passed; the earlier native/M5 combined capture used CLI controls
