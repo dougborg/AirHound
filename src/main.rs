@@ -52,7 +52,9 @@ use filter::{
     WiFiScanInput,
 };
 use mac_index::MacIndex;
-use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, MAX_MSG_LEN, VERSION};
+#[cfg(not(feature = "m5stickc"))]
+use protocol::MAX_MSG_LEN;
+use protocol::{DeviceMessage, HostCommand, MacString, MsgBuffer, VERSION};
 use scanner::{BleEvent, ScanEvent, WiFiEvent};
 use watchlist::Watchlist;
 
