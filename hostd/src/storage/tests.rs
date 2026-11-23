@@ -508,3 +508,164 @@ fn invalid_snapshot_is_not_published_and_temporary_file_is_removed() {
         .to_string_lossy()
         .starts_with(".airhound-snapshot-")));
 }
+
+#[test]
+fn disk_full_rolls_back_batch_and_failed_start_without_claiming_finish() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    store.append(&run, &[record("receiver-a")]).unwrap();
+    let pages: i64 = store
+        .connection
+        .pragma_query_value(None, "page_count", |r| r.get(0))
+        .unwrap();
+    store
+        .connection
+        .pragma_update(None, "max_page_count", pages)
+        .unwrap();
+    let large = RecordInput {
+        payload: json!({"type":"fixture","data":"x".repeat(32768)}),
+        ..record("receiver-a")
+    };
+    let error = store
+        .append(&run, &[record("receiver-a"), large])
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+    assert!(error.to_string().contains("Free disk space"));
+    let error = store
+        .start_request(
+            RecordingMode::Live,
+            &json!({"large":"x".repeat(32768)}),
+            Some(("refused-start", &json!({}))),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+    let reader = Reader::open(&f.database()).unwrap();
+    let runs = reader.runs(10).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].state, "recording");
+    assert_eq!(runs[0].record_count, 1);
+    assert_eq!(reader.records(&run, 0, 10).unwrap().records.len(), 1);
+    assert!(reader
+        .start_receipt("refused-start", &json!({}))
+        .unwrap()
+        .is_none());
+    drop(reader); // Never hold a snapshot across recovery/writes.
+    store
+        .connection
+        .pragma_update(None, "max_page_count", pages + 100)
+        .unwrap();
+    store
+        .transition(&run, "failed", &error.to_string())
+        .unwrap();
+    let final_run = Reader::open(&f.database())
+        .unwrap()
+        .runs(1)
+        .unwrap()
+        .remove(0);
+    assert_eq!(final_run.state, "failed");
+    assert!(final_run.ended_at_us.is_some());
+}
+
+#[test]
+fn full_terminal_transaction_recovers_exact_failure_after_capacity_returns() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    store.append(&run, &[record("receiver-a")]).unwrap();
+    // Force a real SQLITE_FULL during the terminal UPDATE without filling disk.
+    store.connection.execute_batch("CREATE TABLE full_fixture(data BLOB); CREATE TRIGGER terminal_requires_space BEFORE UPDATE OF state ON runs WHEN NEW.state='failed' BEGIN INSERT INTO full_fixture VALUES(zeroblob(65536)); END;").unwrap();
+    let pages: i64 = store
+        .connection
+        .pragma_query_value(None, "page_count", |r| r.get(0))
+        .unwrap();
+    store
+        .connection
+        .pragma_update(None, "max_page_count", pages)
+        .unwrap();
+    let error = store
+        .transition(&run, "failed", "original storage failure")
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+    let reader = Reader::open(&f.database()).unwrap();
+    assert_eq!(reader.runs(1).unwrap()[0].state, "recording");
+    assert!(reader.runs(1).unwrap()[0].ended_at_us.is_none());
+    drop(reader);
+    assert_eq!(
+        Store::recover(&f.database(), Some((&run, &error.to_string())))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    store
+        .connection
+        .pragma_update(None, "max_page_count", pages + 100)
+        .unwrap();
+    drop(store);
+    Store::recover(&f.database(), Some((&run, &error.to_string()))).unwrap();
+    Store::recover(
+        &f.database(),
+        Some((&run, "must not replace original reason")),
+    )
+    .unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let saved = reader.runs(1).unwrap().remove(0);
+    assert_eq!(saved.state, "failed");
+    assert!(saved.ended_at_us.is_some());
+    assert_eq!(saved.record_count, 1);
+    assert_eq!(
+        reader.records(&run, 0, 10).unwrap().records[0].payload,
+        record("receiver-a").payload
+    );
+    let reasons: Vec<String> = reader
+        .connection
+        .prepare("SELECT reason FROM transitions WHERE run_id=?1 AND state='failed'")
+        .unwrap()
+        .query_map([&run], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(reasons, vec![error.to_string()]);
+}
+
+#[test]
+fn recovery_never_relabels_finished_or_invents_missing_runs() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    store
+        .transition(&run, "finished", "durably complete")
+        .unwrap();
+    drop(store);
+    assert!(Store::recover(&f.database(), Some((&run, "late error"))).is_err());
+    assert!(Store::recover(&f.database(), Some(("missing", "error"))).is_err());
+    let saved = Reader::open(&f.database()).unwrap().runs(10).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].state, "finished");
+    assert_eq!(failure_reason(&"界".repeat(1000)).len(), 2046);
+}
+
+#[test]
+fn targeted_failure_recovery_does_not_reconcile_a_different_run() {
+    let f = Fixture::new();
+    let (mut store, failed) = setup(&f);
+    let other = store.start(RecordingMode::Replay, &json!({})).unwrap();
+    drop(store);
+    Store::recover(&f.database(), Some((&failed, "specific storage failure"))).unwrap();
+    let runs = Reader::open(&f.database()).unwrap().runs(10).unwrap();
+    assert_eq!(
+        runs.iter().find(|r| r.id == failed).unwrap().state,
+        "failed"
+    );
+    let untouched = runs.iter().find(|r| r.id == other).unwrap();
+    assert_eq!(untouched.state, "recording");
+    assert!(untouched.ended_at_us.is_none());
+    // Only generic startup recovery declares otherwise unknown orphans interrupted.
+    Store::recover(&f.database(), None).unwrap();
+    let runs = Reader::open(&f.database()).unwrap().runs(10).unwrap();
+    assert_eq!(
+        runs.iter().find(|r| r.id == failed).unwrap().state,
+        "failed"
+    );
+    assert_eq!(
+        runs.iter().find(|r| r.id == other).unwrap().state,
+        "interrupted"
+    );
+}

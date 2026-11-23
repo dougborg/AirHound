@@ -29,7 +29,21 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
 }
 fn sql(error: rusqlite::Error) -> io::Error {
-    io::Error::other(error)
+    if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull) {
+        io::Error::new(
+            io::ErrorKind::StorageFull,
+            "Recording storage is full. Free disk space before starting another recording; uncommitted observations were not saved.",
+        )
+    } else {
+        io::Error::other(error)
+    }
+}
+pub(crate) fn failure_reason(message: &str) -> String {
+    let mut end = message.len().min(2048);
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message[..end].to_owned()
 }
 pub fn now_us() -> io::Result<i64> {
     let value = SystemTime::now()
@@ -116,6 +130,22 @@ pub struct Store {
 }
 impl Store {
     pub fn open(path: &Path) -> io::Result<Self> {
+        Self::open_recovering(path, None)
+    }
+    /// Capture-service background maintenance, never a read-only history query.
+    /// The writer lock prevents recovery from touching an active recording.
+    /// A known failed run retains its reason without changing other runs.
+    /// With no known failure, ordinary orphan recovery marks open runs interrupted.
+    pub fn recover(path: &Path, failed: Option<(&str, &str)>) -> io::Result<()> {
+        if failed.is_none() && !path.try_exists()? {
+            return Ok(());
+        }
+        Self::open_recovering(path, failed).map(|_| ())
+    }
+    fn open_recovering(path: &Path, failed: Option<(&str, &str)>) -> io::Result<Self> {
+        if let Some((run, _)) = failed {
+            identifier(run)?;
+        }
         let name = path
             .file_name()
             .ok_or_else(|| invalid("database requires a filename"))?;
@@ -162,10 +192,10 @@ impl Store {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(sql)?;
-        migrations::apply(&mut connection, migrations::ALL)?;
         connection
             .busy_timeout(Duration::from_secs(2))
             .map_err(sql)?;
+        migrations::apply(&mut connection, migrations::ALL)?;
         connection
             .execute_batch(
                 "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;",
@@ -173,8 +203,28 @@ impl Store {
             .map_err(sql)?;
         let at = now_us()?;
         let tx = connection.transaction().map_err(sql)?;
-        tx.execute("INSERT INTO transitions(run_id,state,at_us,reason) SELECT id,'interrupted',?1,'writer restarted before durable finish' FROM runs WHERE state IN ('recording','paused')",[at]).map_err(sql)?;
-        tx.execute("UPDATE runs SET state='interrupted',ended_at_us=?1 WHERE state IN ('recording','paused')",[at]).map_err(sql)?;
+        if let Some((run, reason)) = failed {
+            let state: Option<String> = tx
+                .query_row("SELECT state FROM runs WHERE id=?1", [run], |r| r.get(0))
+                .optional()
+                .map_err(sql)?;
+            match state.as_deref() {
+                Some("failed") => {} // Retry after a committed acknowledgement is idempotent.
+                Some("recording" | "paused" | "interrupted") => {
+                    tx.execute("UPDATE runs SET state='failed',ended_at_us=coalesce(ended_at_us,?2) WHERE id=?1", params![run, at]).map_err(sql)?;
+                    tx.execute("INSERT INTO transitions(run_id,state,at_us,reason) VALUES(?1,'failed',?2,?3)", params![run, at, failure_reason(reason)]).map_err(sql)?;
+                }
+                _ => {
+                    return Err(invalid(
+                        "failed recording recovery requires an existing unfinished or failed run",
+                    ))
+                }
+            }
+        }
+        if failed.is_none() {
+            tx.execute("INSERT INTO transitions(run_id,state,at_us,reason) SELECT id,'interrupted',?1,'writer restarted before durable finish' FROM runs WHERE state IN ('recording','paused')",[at]).map_err(sql)?;
+            tx.execute("UPDATE runs SET state='interrupted',ended_at_us=?1 WHERE state IN ('recording','paused')",[at]).map_err(sql)?;
+        }
         tx.commit().map_err(sql)?;
         Ok(Self {
             connection,

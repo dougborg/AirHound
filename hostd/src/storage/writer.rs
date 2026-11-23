@@ -109,10 +109,15 @@ impl Writer {
                         return Ok(());
                     }
                     let result = consume(&mut store, &run, receiver, &worker_failure);
-                    if result.is_err() {
-                        // Disk failure may also prevent this write. Recovery then
-                        // marks the unclosed run interrupted, never finished.
-                        let _ = store.transition(&run, "failed", "recording writer failed");
+                    if let Err(error) = &result {
+                        // Full storage can prevent even the terminal transaction.
+                        // The capture actor retries while idle; restart recovery
+                        // marks an unknown unclosed run interrupted, never finished.
+                        let _ = store.transition(
+                            &run,
+                            "failed",
+                            &super::failure_reason(&error.to_string()),
+                        );
                     }
                     result
                 })();
