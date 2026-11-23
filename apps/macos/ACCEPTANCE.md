@@ -8,15 +8,19 @@ The preview is under acceptance, not a signed-off production release.
 The runnable counter preview has GUI source `946d3c0` and the unchanged signed
 `07c7142` backend. The current backend passed native Wi-Fi/BLE reception after
 renewed permission approval. The reconnected M5's bounded identity, Wi-Fi/BLE and
-host lifecycle success belongs to firmware `0.1.1`. Its reviewed `07c7142` / `0.2.0`
-application update passed flash and boot/memory checks, but a subsequent same-boot
-recording received Wi-Fi and no BLE and failed before Pause/Resume. The reviewed
-[#318](https://github.com/dougborg/AirHound/pull/318) correction for
-[#317](https://github.com/dougborg/AirHound/issues/317) passed its target-build and
-stack-reservation gates; remaining checks and hardware acceptance are pending.
-It is not the installed firmware. None of these results proves that the current
-GUI's Start, repeat recording, live/history presentation
-or all-receiver controls work. Those actual-window checks remain open for the
+host lifecycle success belongs to firmware `0.1.1`. Its first `07c7142` / `0.2.0`
+application passed boot checks but later failed BLE readiness. The reviewed
+[#318](https://github.com/dougborg/AirHound/pull/318) correction, source `3baaacc`,
+is now installed and passed a 240-second both-media continuity observation.
+After the observer closed, the production-reader lifecycle attempt received no
+device input and failed before Pause/Resume. An explicit line-state diagnostic
+produced a new boot and both media but did not establish physical button recovery;
+the user's unresponsive-button report remains unresolved. The reviewed `14d6085`
+host transport policy passed focused tests but awaits hardware validation in
+[#175](https://github.com/dougborg/AirHound/issues/175). The earlier BLE-only failure
+in [#317](https://github.com/dougborg/AirHound/issues/317) remains distinct.
+None of these results proves that the current GUI's Start, repeat recording,
+live/history presentation or all-receiver controls work. Those actual-window checks remain open for the
 everyday-recording goal.
 
 Later backend-controlled sessions accepted concurrent CatSniffer, ALFA and
@@ -26,7 +30,9 @@ M5. Preserve their exact source/firmware and failure scopes in the
 owns the current support matrix. Physical disconnect recovery and endurance
 remain separate acceptance work. Official Rayhunter `0.13.0` on the Orbic and its
 separate raw-feed fork prototype do not constitute an AirHound live cellular
-source; experimental work in [#293](https://github.com/dougborg/AirHound/issues/293)
+source. The fork's helper preflight passed, but full raw-feed runtime acceptance
+remains pending after two failed staged attempts and restoration of the official
+daemon; experimental work in [#293](https://github.com/dougborg/AirHound/issues/293)
 is not a prerequisite for the currently supported rig. The historical ALFA
 failure below is retained, not the latest overall ALFA status.
 
