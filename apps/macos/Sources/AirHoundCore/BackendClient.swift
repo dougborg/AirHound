@@ -31,6 +31,10 @@ public struct BackendClient {
     try await withConfig(config, command: ["validate"])
   }
 
+  public func identifyDevice(config: Data) async throws -> JSONValue {
+    try await withConfig(config, command: ["identify"], configFlag: "--config")
+  }
+
   /// The caller retains this request ID across uncertain outcomes. Never retry a start
   /// with a new ID until the service confirms whether the first request was accepted.
   public func start(config: Data, requestID: String) async throws -> JSONValue {
@@ -42,7 +46,9 @@ public struct BackendClient {
       JSONValue.self, from: await request(["export", "--output", destination.path]))
   }
 
-  private func withConfig(_ config: Data, command: [String]) async throws -> JSONValue {
+  private func withConfig(
+    _ config: Data, command: [String], configFlag: String = "--session-config"
+  ) async throws -> JSONValue {
     // Private temporary directory, removed only after the bounded client process exits.
     // The Rust backend owns syntax, schema, resource and channel validation.
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -52,7 +58,7 @@ public struct BackendClient {
     let file = directory.appendingPathComponent("session.json")
     try config.write(to: file, options: .atomic)
     return try JSONDecoder().decode(
-      JSONValue.self, from: await request(command + ["--session-config", file.path]))
+      JSONValue.self, from: await request(command + [configFlag, file.path]))
   }
 
   public func setups() async throws -> [SavedSetup] {

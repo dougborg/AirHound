@@ -64,6 +64,7 @@ public struct Candidate: Decodable {
   public let supportIssue: URL?
   public let locationConfigurationHint: JSONValue?
   public let identification: JSONValue?
+  public let identificationProtocol: String?
   public let configurationHint: JSONValue?
   public var statusDescription: String {
     switch state {

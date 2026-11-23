@@ -18,18 +18,21 @@ struct AvailableReceivers: View {
           let device = choice.device
           let candidate = choice.candidate
           DisclosureGroup {
-            if let identity = candidate.identification {
-              Text(
-                "\(identity["application"]?.string ?? "Device") \(identity["firmware_version"]?.string ?? "version unreported")"
-              )
-              .font(.callout)
-              if let board = identity["board"]?.string {
-                Text(board).font(.caption).foregroundStyle(.secondary)
+            if GPSVersionTarget.ports(for: choice).isEmpty {
+              if let identity = candidate.identification {
+                Text(
+                  "\(identity["application"]?.string ?? "Device") \(identity["firmware_version"]?.string ?? "version unreported")"
+                )
+                .font(.callout)
+                if let board = identity["board"]?.string {
+                  Text(board).font(.caption).foregroundStyle(.secondary)
+                }
+              } else {
+                Text("Firmware / software version not reported.").font(.caption).foregroundStyle(
+                  .secondary)
               }
-            } else {
-              Text("Firmware / software version not reported.").font(.caption).foregroundStyle(
-                .secondary)
             }
+            GPSVersionAction(session: session, choice: choice)
             Text(candidate.evidence.joined(separator: "\n")).font(.caption)
               .foregroundStyle(.secondary).textSelection(.enabled)
             ForEach(Array(candidate.requirements.enumerated()), id: \.offset) { _, requirement in
