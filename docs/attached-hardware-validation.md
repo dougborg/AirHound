@@ -29,8 +29,13 @@ The Flipper UI and live-source builds are delivered in the installed `07c7142`
 preview described below. Its newly verified native reception and the separately
 delivered GUI update do not establish actual GUI control acceptance.
 
-The M5 reappeared after a cable change and passed current firmware identification,
-WiFi/BLE reception and host Pause/Resume/Finish as detailed below. Physical CatSniffer
+The M5 reappeared after a cable change and passed identification, WiFi/BLE reception
+and host Pause/Resume/Finish on firmware `0.1.1`. Its subsequent reviewed update to
+`0.2.0` passed flash verification and a bounded boot/memory check, but the later
+recording received no BLE observations and failed before Pause/Resume. Continuous
+BLE reporting is under investigation in [#317](https://github.com/dougborg/AirHound/issues/317);
+the earlier success does not establish lifecycle acceptance of the updated image.
+Physical CatSniffer
 unplug/replug, physical USB transport loss, actual GUI capture controls and
 longer-duration recovery checks remain open. Bounded host burst handling after
 the eight output drops is tracked in
@@ -101,7 +106,7 @@ Actual GUI Identify/Load/Validate/Start/Pause/Resume/Finish controls and observa
 presentation remain unaccepted. Earlier `33a5e93` native reception and private
 Flipper/combined results below retain their original artifact scope.
 
-### Current M5 revalidation
+### M5 revalidation before the firmware update
 
 On 2026-11-23 UTC, the reconnected M5 was tested through a private `07c7142`
 backend at 460800 baud. The first attempt retained 67 WiFi observations but no
@@ -127,6 +132,50 @@ These counters do not establish zero RF loss. Independent checks verified source
 clock and identity provenance, database integrity, clean private-service exit and
 unchanged default-service data and saved setups. This is individual M5 acceptance,
 not the complete current rig, physical recovery, endurance or GUI acceptance.
+
+### M5 firmware update and continuity gap — 2026-11-23 UTC
+
+A complete 8 MiB flash backup was read and checked against a same-session device
+digest, with a second verified copy and an application-sector rollback image
+preserved. The old application, bootloader and partition bytes matched the
+historical `7739926` artifact, closing the old build-provenance gap. The first
+backup attempt had failed before reading or writing flash because the procedure
+omitted the tool's required flash-attach step; that failure was retained and the
+corrected procedure was independently reviewed before the successful read.
+
+The selected `0.2.0` application came from official CI source `07c7142`, with
+firmware inputs equivalent to the reviewed current source. Its 943,728-byte
+application image was written only at the existing application offset. Full-flash
+device digest verification matched the reconstructed expected image, including
+the erased-sector tail, unchanged bootloader, partition table, NVS and PHY data.
+The linked stack reservation was 7,292 bytes, above the 7,168-byte build gate;
+this is not a runtime stack high-water measurement. Rollback artifacts and a
+reviewed restore procedure are prepared; an actual rollback was not exercised.
+
+One 180.170-second boot observation reported `0.2.0` / `m5stickc_plus2`, one boot,
+1,395 WiFi and 90 BLE observations, successful 2 MiB PSRAM initialization, and five
+periodic samples with stable internal free heap (3,672 bytes) and external free
+memory (2,068,472 bytes). All four sampled producer drop/error counters were zero;
+no panic or error was observed. These are bounded samples, not an endurance or
+zero-RF-loss claim. Button/display behavior and audible buzzer confirmation remain
+pending.
+
+The subsequent private recording on the same boot retained 234 WiFi observations
+and no BLE observations in 251 records over 35.262374 seconds. Actual status at
+uptime 301 seconds confirmed the expected version and board, with zero reported
+producer and host loss/error counters. The strict both-media gate failed; Pause
+and Resume were not attempted. Receipt-owned Finish, private-service exit,
+database integrity, port/lease release and default-data preservation passed. The
+failed acceptance remains unchanged.
+
+The retained boot stream's last BLE report was at device time 109.260 seconds,
+while WiFi continued through 179.606 seconds. The pinned legacy BLE library enables
+controller duplicate filtering, and firmware retains that scan session indefinitely;
+the same configuration was present in the old image. This is a concrete source
+finding consistent with the observed pattern, not proof that the controller
+stalled or that ambient RF was quiet. The correction and continued-report/lifecycle
+validation are tracked in [#317](https://github.com/dougborg/AirHound/issues/317).
+Full-rig acceptance remains pending.
 
 ## Provenance and privacy
 
@@ -174,7 +223,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | Native Bluetooth | CoreBluetooth, OS-managed | Current signed `07c7142` retry: 1,273 observations alongside WiFi, clean finish; earlier `33a5e93` result retained below | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
 | Native WiFi | CoreWLAN, OS interface | Current signed `07c7142` retry: 321 observations alongside BLE after renewed permission approval, clean finish | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | Reconnected WCH `1a86:55d4`, UART at 460800 baud; current actual AirHound `0.1.1` / `m5stickc_plus2` status | Current private `07c7142` run: 86 WiFi + 24 BLE observations, 130 records, 18.683479 seconds; host Pause/Resume/Finish passed. Earlier 66-second run retained 407 WiFi + 71 BLE observations | Host errors/drops/reconnects 0; 12 intentional paused discards. Producer scan drops 9 cumulative since boot, timing unknown; RF loss unknown. Earlier short identity-window failure retained. Radios continue while host ingestion is paused/stopped; full current rig and physical recovery remain pending |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; current actual AirHound `0.2.0` / `m5stickc_plus2`, exact reviewed `07c7142` application update verified | Updated boot check: 1,395 WiFi + 90 BLE observations and five stable memory samples. Later same-boot recording: 234 WiFi / 0 BLE, 251 records; failed before Pause/Resume. Prior `0.1.1` run passed host lifecycle with 86 WiFi + 24 BLE; earlier 66-second result retained | Current continuous BLE/lifecycle acceptance blocked by #317; no retry or rollback inferred. Sampled current producer/host errors zero, RF loss unknown. Prior nine cumulative scan drops and twelve intentional paused discards retain their old-run scope. Radios remain autonomous; buttons/buzzer, full rig and physical recovery remain pending |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
