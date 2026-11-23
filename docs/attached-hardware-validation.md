@@ -442,7 +442,7 @@ Six milliseconds later it received 30 more bytes and emitted failure-related
 Stopping status with cause 6, evidence 3 and 33,083 UART bytes. The host retained
 that exact diagnostic clock/counters without accepting the transition. The bytes
 are not identified by this telemetry; malformed framing is not established.
-The queued tail drained, but quiet Pause was not sustained and **Resume was never
+The bridge briefly reported a completed drain, but quiet Pause was not sustained and **Resume was never
 dispatched**. All reported UART/RPC/host loss counters were zero; RF loss and final
 radio-stop completion remained unknown. The private process exited 1; after the
 bounded 6.2-second failure-settle interval, CLI/idle-loader, hashes, port/lease
