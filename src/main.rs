@@ -1115,36 +1115,43 @@ async fn status_task() {
             );
         }
 
-        let msg = DeviceMessage::Status {
+        #[cfg(feature = "m5stickc")]
+        airhound::health_output::publish_pair(|record| publish_health_record(record, uptime_secs))
+            .await;
+        #[cfg(not(feature = "m5stickc"))]
+        {
+            publish_health_record(airhound::health_output::Record::Status, uptime_secs);
+            publish_health_record(airhound::health_output::Record::StreamStats, uptime_secs);
+        }
+    }
+}
+
+/// Serialize and try-enqueue one health record synchronously. The caller may
+/// yield between records, but never retains MsgBuffer across that yield.
+fn publish_health_record(record: airhound::health_output::Record, uptime_secs: u32) {
+    use airhound::health_output::Record;
+    let msg = match record {
+        Record::Status => DeviceMessage::Status {
             scanning: SCANNING.load(Ordering::Relaxed),
             uptime: uptime_secs,
             heap_free: memory::internal_free() as u32,
             ble_clients: BLE_CLIENTS.load(Ordering::Relaxed),
             board: board::BOARD_NAME,
             version: VERSION,
-        };
-
-        let mut buf = MsgBuffer::new();
-        buf.resize_default(MAX_MSG_LEN).ok();
-        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-            buf.truncate(len);
-            if OUTPUT_CHANNEL.try_send(buf).is_err() {
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        let msg = DeviceMessage::StreamStats {
+        },
+        Record::StreamStats => DeviceMessage::StreamStats {
             scan_drops: SCAN_DROPS.load(Ordering::Relaxed),
             output_drops: OUTPUT_DROPS.load(Ordering::Relaxed),
             ble_output_drops: BLE_OUTPUT_DROPS.load(Ordering::Relaxed),
             serialize_errors: SERIALIZE_ERRORS.load(Ordering::Relaxed),
-        };
-        let mut buf = MsgBuffer::new();
-        buf.resize_default(MAX_MSG_LEN).ok();
-        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-            buf.truncate(len);
-            if OUTPUT_CHANNEL.try_send(buf).is_err() {
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
+        },
+    };
+    let mut buf = MsgBuffer::new();
+    buf.resize_default(MAX_MSG_LEN).ok();
+    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+        buf.truncate(len);
+        if OUTPUT_CHANNEL.try_send(buf).is_err() {
+            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

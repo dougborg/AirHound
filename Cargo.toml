@@ -125,6 +125,9 @@ embedded-hal-bus = { version = "~0.3.0", optional = true }
 [dev-dependencies]
 # Exercise the same encoded controller command on a host without ESP dependencies.
 bt-hci = "~0.8.0"
+# Exercise the real cooperative health publisher and bounded channel on host.
+embassy-futures = "~0.1.1"
+embassy-sync = "~0.7.0"
 
 [profile.dev]
 opt-level = "s"

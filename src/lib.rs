@@ -25,6 +25,8 @@ pub mod buttons;
 pub mod comm;
 pub mod defaults;
 pub mod filter;
+#[cfg(any(feature = "firmware", test))]
+pub mod health_output;
 pub mod mac_index;
 pub mod observations;
 pub mod odid;
