@@ -8,7 +8,7 @@ use crate::{
 use airhound_flipper::bridge::{Command, State};
 use flipper_rpc::proto::{self, app, main::Content};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     io::{self, Read, Write},
     time::{Duration, Instant},
 };
@@ -32,6 +32,7 @@ struct Link<'a, T> {
     io: &'a mut T,
     decoder: rpc::Decoder,
     correlation: rpc::Correlation,
+    pending_messages: VecDeque<proto::Main>,
 }
 impl<T: Read + Write> Link<'_, T> {
     fn send(&mut self, content: Content) -> io::Result<u32> {
@@ -43,7 +44,10 @@ impl<T: Read + Write> Link<'_, T> {
         )?;
         Ok(request.command_id)
     }
-    fn pump(&mut self, mut visit: impl FnMut(Received) -> io::Result<()>) -> io::Result<()> {
+    fn pump(&mut self, visit: impl FnMut(Received) -> io::Result<()>) -> io::Result<()> {
+        if !self.pending_messages.is_empty() {
+            return self.visit_pending(visit);
+        }
         let mut bytes = [0; rpc::MAX_READ];
         let n = match self.io.read(&mut bytes) {
             Ok(0) => {
@@ -65,7 +69,17 @@ impl<T: Read + Write> Link<'_, T> {
             }
             Err(e) => return Err(e),
         };
-        for message in self.decoder.feed(&bytes[..n])? {
+        self.pending_messages
+            .extend(self.decoder.feed(&bytes[..n])?);
+        // One <=512-byte read plus the decoder's bounded partial frame is the
+        // only producer of this queue. Never read again until it is drained.
+        self.visit_pending(visit)
+    }
+    fn visit_pending(
+        &mut self,
+        mut visit: impl FnMut(Received) -> io::Result<()>,
+    ) -> io::Result<()> {
+        while let Some(message) = self.pending_messages.pop_front() {
             visit(self.correlation.receive(message)?)?;
         }
         Ok(())
@@ -182,6 +196,7 @@ pub fn run<T: Read + Write>(
         io,
         decoder: rpc::Decoder::default(),
         correlation: rpc::Correlation::default(),
+        pending_messages: VecDeque::new(),
     };
     let mut session = Session::new(nonce)?;
     // Fixed app and RPC argument: this source is not a generic app launcher.
@@ -280,6 +295,18 @@ pub fn run<T: Read + Write>(
             link.pump(|event| bridge_event(event, &mut session, &mut output))?;
         }
     })();
+    if result.is_err() && session.diagnostic_pending() {
+        // Never renew the device lease or send a recovery control. This fixed
+        // deadline is set once at the first observed failure, not per status.
+        // 250ms accommodates wire/scheduling latency beyond the device 3s cap;
+        // it changes neither that producer deadline nor its heartbeat lease.
+        let _ = drain_failure(
+            &mut link,
+            &mut session,
+            &mut output,
+            Instant::now() + Duration::from_millis(3250),
+        );
+    }
     // SessionClose, not AppExit of an arbitrary current application. An error
     // remains an error even if this transport shutdown is acknowledged.
     let closed =
@@ -295,6 +322,31 @@ pub fn run<T: Read + Write>(
             },
         );
     result.and(closed)
+}
+
+fn drain_failure<T: Read + Write>(
+    link: &mut Link<'_, T>,
+    session: &mut Session,
+    output: &mut impl FnMut(Output) -> io::Result<()>,
+    deadline: Instant,
+) -> io::Result<()> {
+    while session.diagnostic_pending() {
+        if Instant::now() >= deadline {
+            return Err(timeout("Flipper failure diagnostic drain timed out"));
+        }
+        link.pump(|received| match received {
+            Received::ApplicationData(bytes) => {
+                if let Some(status) = session.receive_diagnostic(&bytes)? {
+                    output(Output::FailureStatus(status))?;
+                }
+                Ok(())
+            }
+            // Only a previously pending request can yield this correlated ACK.
+            Received::TransportAck { .. } => Ok(()),
+            _ => Err(invalid("Unexpected failure diagnostic RPC event")),
+        })?;
+    }
+    Ok(())
 }
 
 fn parse_device_info(bytes: &[u8]) -> io::Result<BTreeMap<String, String>> {
@@ -421,6 +473,18 @@ mod tests {
         MalformedHello,
         StateFirst,
         MissingAppStarted,
+        WatchdogTerminal,
+        WatchdogMissing,
+        WatchdogBadNonce,
+        WatchdogReplay,
+        WatchdogEof,
+        WatchdogLoss,
+        WatchdogRepeated,
+        WatchdogWrongRequest,
+        WatchdogWrongGeneration,
+        WatchdogWrongCause,
+        WatchdogCounterDecrease,
+        WatchdogUnread,
     }
 
     fn peer(mut io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
@@ -506,13 +570,20 @@ mod tests {
                             let mut send = |request_id: u32, body: Body<'_>| {
                                 sequence += 1;
                                 let mut frame = [0; bridge::MAX_MESSAGE];
+                                let terminal = matches!(body, Body::Status(status) if status.state == State::Failed && status.cause == 3);
+                                let mut nonce = message.header.nonce;
+                                if terminal && matches!(fault, Fault::WatchdogBadNonce) {
+                                    nonce[0] ^= 1;
+                                }
+                                let wire_sequence = sequence
+                                    - u32::from(terminal && matches!(fault, Fault::WatchdogReplay));
                                 let n = bridge::encode(
                                     Message {
                                         header: Header {
                                             request_id,
-                                            nonce: message.header.nonce,
+                                            nonce,
                                             app_instance: 42,
-                                            sequence,
+                                            sequence: wire_sequence,
                                         },
                                         body,
                                     },
@@ -605,6 +676,75 @@ mod tests {
                                         current.state = State::Failed;
                                     }
                                     send(message.header.request_id, Body::Status(current));
+                                    if matches!(
+                                        fault,
+                                        Fault::WatchdogTerminal
+                                            | Fault::WatchdogMissing
+                                            | Fault::WatchdogBadNonce
+                                            | Fault::WatchdogReplay
+                                            | Fault::WatchdogEof
+                                            | Fault::WatchdogLoss
+                                            | Fault::WatchdogRepeated
+                                            | Fault::WatchdogWrongRequest
+                                            | Fault::WatchdogWrongGeneration
+                                            | Fault::WatchdogWrongCause
+                                            | Fault::WatchdogCounterDecrease
+                                            | Fault::WatchdogUnread
+                                    ) {
+                                        let mut failed = status(State::Stopping, 3, 3, generation);
+                                        failed.app_uptime_ms = 3001;
+                                        failed.uart_rx_bytes = 10;
+                                        send(0, Body::Status(failed));
+                                        if matches!(fault, Fault::WatchdogEof) {
+                                            return commands;
+                                        }
+                                        if matches!(fault, Fault::WatchdogRepeated) {
+                                            for step in 1..=60 {
+                                                std::thread::sleep(Duration::from_millis(25));
+                                                failed.app_uptime_ms = 3001 + step * 25;
+                                                send(
+                                                    0,
+                                                    Body::Raw {
+                                                        generation,
+                                                        app_uptime_ms: failed.app_uptime_ms,
+                                                        bytes: b"not an observation",
+                                                    },
+                                                );
+                                                send(0, Body::Status(failed));
+                                            }
+                                        }
+                                        if !matches!(
+                                            fault,
+                                            Fault::WatchdogMissing | Fault::WatchdogRepeated
+                                        ) {
+                                            failed.state = State::Failed;
+                                            failed.evidence = 7;
+                                            failed.app_uptime_ms = 3101;
+                                            if matches!(fault, Fault::WatchdogLoss) {
+                                                failed.uart_dropped_bytes = 1;
+                                            }
+                                            if matches!(fault, Fault::WatchdogWrongGeneration) {
+                                                failed.generation += 1;
+                                            }
+                                            if matches!(fault, Fault::WatchdogWrongCause) {
+                                                failed.cause = 4;
+                                            }
+                                            if matches!(fault, Fault::WatchdogCounterDecrease) {
+                                                failed.uart_rx_bytes = 9;
+                                            }
+                                            if matches!(fault, Fault::WatchdogUnread) {
+                                                failed.unread_ring_bytes = 1;
+                                            }
+                                            send(
+                                                if matches!(fault, Fault::WatchdogWrongRequest) {
+                                                    99
+                                                } else {
+                                                    0
+                                                },
+                                                Body::Status(failed),
+                                            );
+                                        }
+                                    }
                                 }
                                 Command::Pause | Command::Stop => {
                                     let cause = if command == Command::Pause { 1 } else { 2 };
@@ -660,6 +800,143 @@ mod tests {
             .unwrap();
         (a, b)
     }
+    #[test]
+    fn autonomous_failure_drain_retains_terminal_evidence_but_never_recovers() {
+        for fault in [
+            Fault::WatchdogTerminal,
+            Fault::WatchdogMissing,
+            Fault::WatchdogBadNonce,
+            Fault::WatchdogReplay,
+            Fault::WatchdogEof,
+            Fault::WatchdogLoss,
+            Fault::WatchdogRepeated,
+            Fault::WatchdogWrongRequest,
+            Fault::WatchdogWrongGeneration,
+            Fault::WatchdogWrongCause,
+            Fault::WatchdogCounterDecrease,
+            Fault::WatchdogUnread,
+        ] {
+            let (mut io, other) = transport();
+            let peer = peer(other, fault);
+            let started = Instant::now();
+            let mut diagnostic = vec![];
+            let mut accepted_terminal = false;
+            let mut packet_count = 0;
+            let error = run(
+                &mut io,
+                [7; 16],
+                || Desired {
+                    enabled: true,
+                    shutdown: false,
+                },
+                |event| {
+                    match event {
+                        Output::FailureStatus(s) => diagnostic.push(s),
+                        Output::Bridge(Event::Raw { packets, .. }) => packet_count += packets.len(),
+                        Output::Bridge(Event::Status(s))
+                            if matches!(s.state, State::Failed | State::Stopped) =>
+                        {
+                            accepted_terminal = true
+                        }
+                        _ => (),
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            drop(io);
+            let commands = peer.join().unwrap();
+            assert_eq!(commands, [Command::Hello, Command::StartBeacon]);
+            assert_eq!(
+                error.to_string(),
+                "Bridge reported autonomous stop or failure"
+            );
+            assert!(!accepted_terminal);
+            assert_eq!(
+                packet_count, 1,
+                "diagnostic Raw must never become observations"
+            );
+            assert_eq!(diagnostic[0].state, State::Stopping);
+            assert_eq!(diagnostic[0].cause, 3);
+            if matches!(
+                fault,
+                Fault::WatchdogTerminal | Fault::WatchdogLoss | Fault::WatchdogUnread
+            ) {
+                assert_eq!(diagnostic.len(), 2);
+                assert_eq!(
+                    (
+                        diagnostic[1].state,
+                        diagnostic[1].cause,
+                        diagnostic[1].evidence
+                    ),
+                    (State::Failed, 3, 7)
+                );
+                assert_eq!(diagnostic[1].app_uptime_ms, 3101);
+                assert_eq!(
+                    diagnostic[1].uart_dropped_bytes,
+                    u64::from(matches!(fault, Fault::WatchdogLoss))
+                );
+                assert_eq!(
+                    diagnostic[1].unread_ring_bytes,
+                    u32::from(matches!(fault, Fault::WatchdogUnread))
+                );
+            } else if matches!(fault, Fault::WatchdogRepeated) {
+                assert_eq!(diagnostic.len(), 61);
+                assert!(diagnostic.iter().all(|s| s.state == State::Stopping));
+            } else {
+                assert_eq!(diagnostic.len(), 1);
+            }
+            if matches!(fault, Fault::WatchdogMissing | Fault::WatchdogRepeated) {
+                assert!(started.elapsed() >= Duration::from_millis(3250));
+            }
+            let limit = if matches!(fault, Fault::WatchdogRepeated) {
+                4500
+            } else {
+                5000
+            };
+            assert!(started.elapsed() < Duration::from_millis(limit));
+        }
+    }
+
+    #[test]
+    fn coalesced_rpc_messages_survive_visitor_failure_exactly_once() {
+        let frame = |state| {
+            rpc::encode(&proto::Main {
+                content: Some(Content::AppStateResponse(app::AppStateResponse { state })),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let mut bytes = frame(1);
+        bytes.extend(frame(0));
+        let mut io = io::Cursor::new(bytes);
+        let mut link = Link {
+            io: &mut io,
+            decoder: rpc::Decoder::default(),
+            correlation: rpc::Correlation::default(),
+            pending_messages: VecDeque::new(),
+        };
+        let mut seen = vec![];
+        assert!(link
+            .pump(|event| {
+                seen.push(event);
+                Err(invalid("initial failure"))
+            })
+            .is_err());
+        assert_eq!(link.pending_messages.len(), 1);
+        link.pump(|event| {
+            seen.push(event);
+            Ok(())
+        })
+        .unwrap();
+        assert!(link.pending_messages.is_empty());
+        assert_eq!(
+            seen,
+            [Received::ApplicationState(1), Received::ApplicationState(0)]
+        );
+        assert!(link.pump(|_| panic!("no replay")).is_err());
+    }
+
     #[test]
     fn actual_rpc_bytes_drive_pause_resume_finish_without_implicit_reconnect() {
         let (mut io, other) = transport();

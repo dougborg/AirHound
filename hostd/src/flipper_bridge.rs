@@ -19,6 +19,13 @@ pub struct Session {
     parser: Option<crate::marauder_stream::Decoder>,
     last_device_timestamp: Option<u32>,
     failed: bool,
+    diagnostic: Option<Diagnostic>,
+}
+
+struct Diagnostic {
+    request: u32,
+    initial: Status,
+    last: Status,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +72,7 @@ impl Session {
             parser: None,
             last_device_timestamp: None,
             failed: false,
+            diagnostic: None,
         })
     }
 
@@ -79,6 +87,71 @@ impl Session {
     pub fn last_reported_status(&self) -> Option<Status> {
         self.last_reported_status
     }
+    /// Read-only failure evidence is allowed only after a bound autonomous
+    /// stopping report. It never repairs the failed lifecycle or packet parser.
+    pub fn diagnostic_pending(&self) -> bool {
+        self.failed
+            && self
+                .diagnostic
+                .as_ref()
+                .is_some_and(|d| d.last.state == State::Stopping)
+    }
+
+    pub fn receive_diagnostic(&mut self, bytes: &[u8]) -> io::Result<Option<Status>> {
+        let result = self.receive_diagnostic_inner(bytes);
+        if result.is_err() {
+            self.diagnostic = None;
+        }
+        result
+    }
+
+    fn receive_diagnostic_inner(&mut self, bytes: &[u8]) -> io::Result<Option<Status>> {
+        if !self.diagnostic_pending() {
+            return Err(invalid("No bound failure drain is active"));
+        }
+        let message =
+            bridge::decode(bytes).map_err(|_| invalid("Invalid diagnostic wire message"))?;
+        self.binding
+            .accept(message)
+            .map_err(|_| invalid("Diagnostic identity or sequence mismatch"))?;
+        let d = self.diagnostic.as_mut().unwrap();
+        match message.body {
+            Body::Status(status) => {
+                if message.header.request_id != d.request
+                    || status.generation != d.initial.generation
+                    || status.cause != d.initial.cause
+                    || !matches!(status.state, State::Stopping | State::Failed)
+                    || status.evidence & d.last.evidence != d.last.evidence
+                    || status.app_uptime_ms.wrapping_sub(d.initial.app_uptime_ms) > 3250
+                    || status.app_uptime_ms.wrapping_sub(d.last.app_uptime_ms) > 3250
+                    || status.uart_rx_bytes < d.last.uart_rx_bytes
+                    || status.uart_dropped_bytes < d.last.uart_dropped_bytes
+                    || status.uart_error_events < d.last.uart_error_events
+                    || status.rpc_dropped_messages < d.last.rpc_dropped_messages
+                {
+                    return Err(invalid("Invalid or lossy failure diagnostic transition"));
+                }
+                d.last = status;
+                self.last_reported_status = Some(status);
+                Ok(Some(status))
+            }
+            Body::Raw { generation, .. }
+                if generation == d.initial.generation && message.header.request_id == 0 =>
+            {
+                Ok(None)
+            }
+            Body::Ack { command, .. }
+                if self.pending == Some((message.header.request_id, command)) =>
+            {
+                // An already submitted request may be rejected during failure.
+                // Retain correlation, but never submit another command here.
+                self.pending = None;
+                Ok(None)
+            }
+            _ => Err(invalid("Unexpected failure diagnostic payload")),
+        }
+    }
+
     pub fn awaiting_ack(&self) -> bool {
         self.pending.is_some()
     }
@@ -248,6 +321,17 @@ impl Session {
         // Autonomous failures may report their final evidence, but cannot promote
         // the source to a successful paused/stopped state.
         if status.cause >= 3 || status.state == State::Failed {
+            if status.cause >= 3
+                && status.state == State::Stopping
+                && status.generation == self.generation
+                && (request == 0 || self.lifecycle.is_some_and(|(id, _)| id == request))
+            {
+                self.diagnostic = Some(Diagnostic {
+                    request,
+                    initial: status,
+                    last: status,
+                });
+            }
             return Err(invalid(match status.cause {
                 6 => "Bridge reported malformed UART framing",
                 10 => "Bridge stop acknowledgment deadline expired",
