@@ -253,6 +253,8 @@ impl Session {
                 10 => "Bridge stop acknowledgment deadline expired",
                 11 => "Bridge stop drain ended with an incomplete frame",
                 12 => "Bridge stop drain deadline expired before quiet completion",
+                13 => "Bridge received unexpected UART input while paused",
+                14 => "Bridge stop deadline expired with outstanding acknowledgments",
                 _ => "Bridge reported autonomous stop or failure",
             }));
         }
