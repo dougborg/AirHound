@@ -308,3 +308,100 @@ fn late_ack_cannot_reopen_expired_ack_budget() {
     assert_eq!(c.cause, 10);
     assert_eq!(c.evidence, 7); // observed late text, not a valid bounded stop
 }
+
+#[test]
+fn retry_reply_after_first_quiet_boundary_cannot_become_late_paused_input() {
+    // Reproduce the observed timing, not the unknown contents of its 30 bytes.
+    for origin in [0u32, u32::MAX - 3000] {
+        let at = |n: u32| origin.wrapping_add(n);
+        let mut c = running(origin);
+        c.request(h(3, 42), Command::Pause, at(2300)).unwrap();
+        assert_eq!(c.poll(at(2800)), Some(UartAction::Stop));
+        c.feed(at(3036), b"Stopping WiFi tran/recv\r\n");
+        c.poll(at(3036));
+        c.feed(at(3436), &pcap_tail(100));
+        c.poll(at(3486));
+        assert_eq!(c.state, State::Stopping); // Old code prematurely Paused.
+        c.feed(at(3492), b"#stopscan\r\nStopping WiFi ");
+        c.poll(at(3542));
+        assert_eq!(c.state, State::Stopping); // A partial reply is no credit.
+        c.feed(at(3550), b"tran/recv\r\n> ");
+        c.poll(at(3599));
+        assert_eq!(c.state, State::Stopping);
+        c.poll(at(3600));
+        assert_eq!(c.state, State::Paused);
+        assert_eq!(c.evidence, 7);
+        // A duplicate completed reply observed before a later Stop is historical.
+        // Test the controller's accounting only; runtime rejects late Paused RX.
+        c.feed(at(3601), b"\r\nStopping WiFi tran/recv\r\n");
+        c.request(h(4, 42), Command::Stop, at(3610)).unwrap();
+        c.poll(at(3710));
+        assert_eq!(c.state, State::Stopping);
+        assert_eq!(c.evidence & 4, 0);
+        c.feed(at(3711), b"Stopping WiFi tran/recv\r\n");
+        c.poll(at(3761));
+        assert_eq!(c.state, State::Stopped);
+    }
+}
+
+#[test]
+fn missing_retry_reply_fails_at_original_fixed_drain_deadline() {
+    let mut c = running(0);
+    c.request(h(3, 42), Command::Pause, 100).unwrap();
+    assert_eq!(c.poll(600), Some(UartAction::Stop));
+    c.feed(725, b"Stopping WiFi tran/recv\r\n");
+    c.poll(725);
+    c.poll(775);
+    assert_eq!(c.state, State::Stopping);
+    c.request(h(4, 42), Command::Heartbeat, 2700).unwrap();
+    c.poll(2724);
+    assert_eq!(c.state, State::Stopping);
+    c.poll(2725);
+    assert_eq!(c.state, State::Failed);
+    assert_eq!(c.cause, 14);
+    assert_eq!(c.evidence & 4, 4); // One reply observed; completion still failed.
+}
+
+#[test]
+fn escalation_carries_outstanding_retries_and_needs_its_own_reply() {
+    for finish_reply in [false, true] {
+        let mut c = running(0);
+        c.request(h(3, 42), Command::Pause, 100).unwrap();
+        assert_eq!(c.poll(600), Some(UartAction::Stop));
+        c.feed(725, b"Stopping WiFi tran/recv\r\n");
+        c.poll(725);
+        c.request(h(4, 42), Command::Stop, 800).unwrap();
+        assert_eq!(c.evidence & 4, 0);
+        // This reply can belong to the old retry. It cannot alone complete Finish.
+        c.feed(850, b"Stopping WiFi tran/recv\r\n");
+        c.poll(850);
+        c.poll(900);
+        assert_eq!(c.state, State::Stopping);
+        assert!(c.request(h(5, 42), Command::Stop, 901).is_err());
+        if finish_reply {
+            c.feed(950, b"Stopping WiFi tran/recv\r\n");
+            c.poll(1000);
+            assert_eq!(c.state, State::Stopped);
+        } else {
+            c.request(h(6, 42), Command::Heartbeat, 2800).unwrap();
+            c.poll(2850);
+            assert_eq!(c.state, State::Failed);
+            assert_eq!(c.cause, 14);
+        }
+    }
+}
+
+#[test]
+fn cancelled_preflight_cannot_credit_old_stop_reply_to_new_stop() {
+    let mut c = ready(0);
+    c.request(h(2, 42), Command::StartBeacon, 0).unwrap();
+    c.request(h(3, 42), Command::Stop, 100).unwrap();
+    c.feed(101, b"Stopping WiFi tran/recv\r\n");
+    c.poll(200);
+    assert_eq!(c.state, State::Stopping);
+    assert_eq!(c.evidence & 2, 0);
+    c.feed(201, b"Stopping WiFi tran/recv\r\n");
+    c.poll(251);
+    assert_eq!(c.state, State::Stopped);
+    assert_eq!(c.evidence & 2, 0); // No Start ever issued.
+}

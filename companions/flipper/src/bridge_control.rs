@@ -33,6 +33,9 @@ pub struct Controller {
     pub evidence: u16,
     start_sent: bool,
     stop_baseline: u32,
+    // Cumulative exact text replies required for every issued Stop in this
+    // witness epoch. Wider than Witness::stops so saturation cannot pass.
+    stop_expected: u64,
     stop_attempts: u8,
     pause_target: bool,
     witness: Witness,
@@ -56,6 +59,7 @@ impl Controller {
             evidence: 0,
             start_sent: false,
             stop_baseline: 0,
+            stop_expected: 0,
             stop_attempts: 0,
             pause_target: false,
             witness: Witness::new(),
@@ -109,6 +113,7 @@ impl Controller {
                 self.evidence = 0;
                 self.start_sent = false;
                 self.witness = Witness::new();
+                self.stop_expected = 1; // The explicit preflight Stop.
                 self.since = now;
                 self.last_rx = now;
                 self.lifecycle_request = h.request_id;
@@ -150,6 +155,16 @@ impl Controller {
             };
             return None;
         }
+        // An escalation (or cancellation during preflight) must wait for
+        // earlier queued Stop commands as well as its new command. A reply
+        // seen before this request cannot be credited to the new command.
+        let prior_pending =
+            self.state == State::Stopping || (self.state == State::Preflight && !self.start_sent);
+        self.stop_expected = if prior_pending {
+            self.stop_expected.max(u64::from(self.witness.stops)) + 1
+        } else {
+            u64::from(self.witness.stops) + 1
+        };
         self.state = State::Stopping;
         self.since = now;
         self.stop_ack_since = now;
@@ -215,6 +230,7 @@ impl Controller {
                     self.start_sent = true;
                     self.since = now;
                     self.witness = Witness::new();
+                    self.stop_expected = 0;
                     return Some(UartAction::StartBeacon);
                 }
             }
@@ -235,7 +251,9 @@ impl Controller {
                 }
                 let quiet = now.wrapping_sub(self.last_rx) >= 50;
                 let complete = self.witness.outside();
+                let all_stop_replies = u64::from(self.witness.stops) >= self.stop_expected;
                 let acknowledged = self.stop_ack_at.is_some()
+                    && all_stop_replies
                     && complete
                     && quiet
                     && now.wrapping_sub(self.since) >= 100;
@@ -269,6 +287,8 @@ impl Controller {
                                 6
                             } else if ack_expired || self.stop_ack_at.is_none() {
                                 10
+                            } else if !all_stop_replies {
+                                14
                             } else if !complete {
                                 11
                             } else {
@@ -281,6 +301,7 @@ impl Controller {
                     && now.wrapping_sub(self.stop_ack_since) >= 500
                 {
                     self.stop_attempts = 2;
+                    self.stop_expected += 1;
                     return Some(UartAction::Stop);
                 }
             }

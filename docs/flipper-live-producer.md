@@ -160,6 +160,51 @@ cannot extend that ceiling. Quiet, complete framing and loss checks remain
 required. Specific terminal causes distinguish late/missing text, malformed
 framing, incomplete framing and drain expiry. Synthetic delayed-ack tests cover
 valid 6 KiB and 16 KiB tails, tick wrap, missing/late acknowledgments, malformed or
-endless tails and escalation. This follow-up requires independent review, a new
-artifact audit and separate device acceptance; the installed `40652e` artifact
-and both hardware results remain unchanged.
+endless tails and escalation. Independent source review and all 52 companion
+tests passed. The new clean `1a5ce78` ARM artifact passed API87.1 import, DWARF,
+code/data and debuglink audits, including four artifact-corruption checks.
+Earlier hardware results remain tied to their original `40652e` artifact.
+
+The reviewed replacement installed new FAP SHA-256
+`3e0143e50f302e784919b3e6dffaac79b8acb631a2f37af939d4149c0a170d68`
+only after verifying the existing image and staging the new one. The prior bridge
+was retained in a separate on-device backup and local artifact archive; the
+third-party companion remained unchanged. Installation did not launch an app or
+open UART.
+
+A separate production Rust transport check with clean host `c7f890d` then passed
+Hello/Ready/explicit Stop/SessionClose in 0.916 seconds. The actual producer
+reported `1a5ce78`, generation zero, zero UART bytes and no stop-text evidence;
+this proves app cleanup without claiming an AWOK radio stop. Postchecks found
+the loader idle, expected image hashes, released lease/USB ownership and unchanged
+default service. New passive Resume and fault-path acceptance remain pending.
+
+### Outstanding stop replies after the drain update
+
+The first new-artifact Resume-stage attempt again failed **before Resume**. It
+retained 65 packets / 183 records. The producer reported Paused at 3486 ms with
+33,053 UART bytes and complete stop evidence, then received 30 additional bytes
+at 3492 ms and failed closed. The bytes themselves were not retained; their
+contents and the exact device-side source remain unknown. The shared lease,
+loader/hash checks, USB release and default-service preservation passed after
+bounded cleanup; this attempt does not establish a completed radio stop.
+
+The deterministic controller defect is that its first stop command at 2300 ms
+was retried at 2800 ms, yet completion required only one acknowledgment. The
+first reply arrived at 3036 ms. Pinned upstream `CommandLine.cpp:73–89` consumes
+one newline per main-loop iteration; buffered writes occur later in the loop,
+and the screenless path then delays 50 ms (`esp32_marauder.ino:586–589`). Thus a
+queued second Stop can produce a later reply after the first drain/quiet window.
+This is a source-supported explanation, not identification of the missing bytes.
+
+The next correction requires observed exact replies to account for every issued
+Stop before completing Pause/Stop, including retries, preflight cancellation,
+and outstanding commands carried through Pause-to-Finish escalation. Replies
+already observed before a new command cannot satisfy it. The existing first-reply,
+drain and absolute deadlines remain unchanged, and reply counts cannot extend
+them. A missing outstanding reply becomes cause14; unexpected input after a
+completed Pause still fails closed as cause13, distinct from proven malformed
+framing (cause6). No late data is silently accepted as resumed capture. Tests
+reproduce the observed timing with a delayed split second reply, missing replies,
+clock wrap, escalation and historical duplicate replies. A new independent
+source/artifact review and matched-host device acceptance remain required.

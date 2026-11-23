@@ -244,7 +244,7 @@ fn stop_failure_causes_roundtrip_and_unknown_causes_fail_closed() {
         rpc_dropped_messages: 0,
         unread_ring_bytes: 0,
     };
-    for cause in 10..=12 {
+    for cause in 10..=14 {
         status.cause = cause;
         let message = Message {
             header: hello_message().header,
@@ -252,7 +252,7 @@ fn stop_failure_causes_roundtrip_and_unknown_causes_fail_closed() {
         };
         let len = encode(message, &mut out).unwrap();
         assert_eq!(decode(&out[..len]).unwrap(), message);
-        out[45] = 13;
+        out[45] = 15;
         assert!(decode(&out[..len]).is_err());
     }
 }

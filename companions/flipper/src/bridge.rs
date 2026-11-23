@@ -247,7 +247,7 @@ pub fn decode(data: &[u8]) -> Result<Message<'_>, Error> {
                 rpc_dropped_messages: u64le(p, 36),
                 unread_ring_bytes: u32le(p, 44),
             };
-            if status.cause > 12 || status.evidence & !7 != 0 {
+            if status.cause > 14 || status.evidence & !7 != 0 {
                 return Err(Error::Value);
             }
             Body::Status(status)
