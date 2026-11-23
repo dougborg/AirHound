@@ -508,7 +508,7 @@ mod tests {
     use std::{
         os::unix::net::UnixStream,
         sync::{
-            atomic::{AtomicU8, Ordering},
+            atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
             Arc,
         },
     };
@@ -561,7 +561,21 @@ mod tests {
         }
     }
 
-    fn peer(mut io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
+    #[derive(Default)]
+    struct PeerControl {
+        finished: AtomicBool,
+        repeated_pairs: AtomicUsize,
+    }
+
+    fn peer(io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
+        peer_with_control(io, fault, Arc::new(PeerControl::default()))
+    }
+
+    fn peer_with_control(
+        mut io: UnixStream,
+        fault: Fault,
+        control: Arc<PeerControl>,
+    ) -> std::thread::JoinHandle<Vec<Command>> {
         std::thread::spawn(move || {
             io.set_read_timeout(Some(Duration::from_millis(50)))
                 .unwrap();
@@ -582,7 +596,7 @@ mod tests {
             let mut generation = 0u32;
             let mut commands = vec![];
             let mut ready = true;
-            while Instant::now() < deadline {
+            while Instant::now() < deadline && !control.finished.load(Ordering::Acquire) {
                 let mut bytes = [0; rpc::MAX_READ];
                 let n = match io.read(&mut bytes) {
                     Ok(0) => break,
@@ -710,7 +724,9 @@ mod tests {
                                     )),
                                     ..Default::default()
                                 };
-                                io.write_all(&rpc::encode(&event).unwrap()).unwrap();
+                                io.write_all(&rpc::encode(&event).unwrap()).unwrap_or_else(|error| {
+                                    panic!("fixture event failed for {fault:?}, command {command:?}, request {request_id}, sequence {sequence}, body {body:?}: {error}")
+                                });
                             };
                             if command == Command::Hello {
                                 if matches!(fault, Fault::MissingHello) {
@@ -834,7 +850,12 @@ mod tests {
                                         }
                                         if matches!(fault, Fault::WatchdogRepeated) {
                                             for step in 1..=60 {
-                                                std::thread::sleep(Duration::from_millis(25));
+                                                // Keep offering input beyond the host's fixed
+                                                // drain deadline, even without scheduler delay.
+                                                std::thread::sleep(Duration::from_millis(75));
+                                                if control.finished.load(Ordering::Acquire) {
+                                                    return commands;
+                                                }
                                                 failed.app_uptime_ms = 3001 + step * 25;
                                                 send(
                                                     0,
@@ -844,7 +865,13 @@ mod tests {
                                                         bytes: b"not an observation",
                                                     },
                                                 );
+                                                if control.finished.load(Ordering::Acquire) {
+                                                    return commands;
+                                                }
                                                 send(0, Body::Status(failed));
+                                                control
+                                                    .repeated_pairs
+                                                    .fetch_add(1, Ordering::Release);
                                             }
                                         }
                                         if !matches!(
@@ -1073,7 +1100,8 @@ mod tests {
             Fault::WatchdogRawTail,
         ] {
             let (mut io, other) = transport();
-            let peer = peer(other, fault);
+            let control = Arc::new(PeerControl::default());
+            let peer = peer_with_control(other, fault, control.clone());
             let started = Instant::now();
             let mut diagnostic = vec![];
             let mut completion = vec![];
@@ -1107,8 +1135,12 @@ mod tests {
                 },
             )
             .unwrap_err();
-            drop(io);
+            // A bounded host drain may finish while a deliberately noisy peer
+            // is still sending. Cancel and join that test-owned sender before
+            // closing its transport; do not turn expected teardown into EPIPE.
+            control.finished.store(true, Ordering::Release);
             let commands = peer.join().unwrap();
+            drop(io);
             assert_eq!(commands, [Command::Hello, Command::StartBeacon]);
             assert_eq!(
                 error.to_string(),
@@ -1180,7 +1212,12 @@ mod tests {
                 assert_eq!(diagnostic[1].evidence, 15);
                 assert_eq!(diagnostic.last().unwrap(), &diagnostic[1]);
             } else if matches!(fault, Fault::WatchdogRepeated) {
-                assert!(diagnostic.len() >= 61);
+                let pairs = control.repeated_pairs.load(Ordering::Acquire);
+                assert!(
+                    (1..60).contains(&pairs),
+                    "host must time out before the noisy peer finishes"
+                );
+                assert!(diagnostic.len() >= 2);
                 assert!(diagnostic.iter().all(|s| s.state == State::Stopping));
             } else {
                 assert!(diagnostic.iter().all(|report| report == &diagnostic[0]));
