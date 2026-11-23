@@ -128,3 +128,19 @@ the ordinary shared WiFi observation/detection/storage path, with original
 Marauder clock values, explicit discontinuities, host receipt time and capture
 generation. Fresh receiver-location associations follow the shared live-source
 contract; saved Marauder replay never receives present-day GPS.
+
+After a session-bound autonomous failure report, the owner may continue reading
+that same RPC stream for at most 3.25 seconds from its first observed failure.
+The 250 ms margin accommodates host/wire scheduling beyond the unchanged device
+three-second stop cap. No heartbeat, capture control, recovery or ordinary packet
+output occurs during this diagnostic drain. Identity, sequence, request, cause,
+generation and nondecreasing counters remain checked; malformed or disconnected
+transport ends the drain. Coalesced RPC frames survive the initial failure
+exactly once in a bounded queue.
+
+Later bound failure reports retain their device clock, loss and unread-byte
+counters as `accepted_lifecycle: false`. They cannot make a failed run successful
+or restore receiver availability. Terminal Failed state and a stop-text bit do
+not alone prove complete quiet drain or receipt of every outstanding Stop reply.
+Absent or incomplete terminal evidence remains unverified; the original source
+error is returned even when later diagnostic evidence is received.
