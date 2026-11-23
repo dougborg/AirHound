@@ -29,16 +29,20 @@ The Flipper UI and live-source builds are delivered in the installed `07c7142`
 preview described below. Its newly verified native reception and the separately
 delivered GUI update do not establish actual GUI control acceptance.
 
-The M5 reappeared after a cable change and passed identification, WiFi/BLE reception
-and host Pause/Resume/Finish on firmware `0.1.1`. Its subsequent reviewed update to
-`0.2.0` passed flash verification and a bounded boot/memory check, but the later
-recording received no BLE observations and failed before Pause/Resume. Continuous
-BLE reporting is under investigation in [#317](https://github.com/dougborg/AirHound/issues/317);
-the earlier success does not establish lifecycle acceptance of the updated image.
-The reviewed correction in [#318](https://github.com/dougborg/AirHound/pull/318)
-remains a candidate: `3baaacc` passed the M5 and XIAO target builds, including the
-M5 stack-reservation gate. Remaining checks and continued-report/lifecycle hardware
-acceptance are pending at this checkpoint. It has not replaced the installed image.
+The M5's earlier host Pause/Resume/Finish success belongs to firmware `0.1.1`.
+The first `07c7142` / `0.2.0` update passed boot checks but later failed BLE
+readiness. The reviewed [#318](https://github.com/dougborg/AirHound/pull/318)
+correction, source `3baaacc`, is now installed: a 240-second observation received
+37,244 BLE and 1,430 WiFi reports, including repeated advertisers late in the run.
+After that observer closed, a production-reader lifecycle attempt received no
+device input and failed before Pause/Resume. A later explicit control-line
+open produced a new boot and both media, but did not establish button recovery.
+The user's unresponsive-button report remains unresolved. The separately reviewed
+`14d6085` host transport policy has 14 passing focused tests; its hardware
+validation is pending under [#175](https://github.com/dougborg/AirHound/issues/175).
+Neither the continuity pass nor that candidate establishes current M5 lifecycle
+or complete-rig acceptance. The earlier BLE-only failure in
+[#317](https://github.com/dougborg/AirHound/issues/317) remains preserved separately.
 Physical CatSniffer unplug/replug, physical USB transport loss, actual GUI capture
 controls and longer-duration recovery checks remain open. Bounded host burst handling after
 the eight output drops is tracked in
@@ -52,8 +56,10 @@ it does not establish actual GUI button acceptance.
 
 The Orbic still runs official Rayhunter `0.13.0`. The independently reviewed
 [raw-feed fork prototype](https://github.com/dougborg/rayhunter/pull/1) is separate:
-it has not been deployed or accepted as an AirHound live cellular source. Its
-bounded device experiment and ingestion work remain tracked in
+its helper preflight passed, but two staged attempts with an earlier candidate
+failed before full raw-feed runtime acceptance. The official daemon was restored.
+Neither the prototype nor helper preflight is an accepted AirHound live cellular
+source. Bounded runtime and ingestion work remain tracked in
 [#293](https://github.com/dougborg/AirHound/issues/293), outside current rig acceptance.
 
 The matrices below retain earlier successes and failures with their build and
@@ -173,8 +179,8 @@ One 180.170-second boot observation reported `0.2.0` / `m5stickc_plus2`, one boo
 periodic samples with stable internal free heap (3,672 bytes) and external free
 memory (2,068,472 bytes). All four sampled producer drop/error counters were zero;
 no panic or error was observed. These are bounded samples, not an endurance or
-zero-RF-loss claim. Button/display behavior and audible buzzer confirmation remain
-pending.
+zero-RF-loss claim. This earlier boot receipt did not establish physical
+button/display behavior or audible buzzer output.
 
 The subsequent private recording on the same boot retained 234 WiFi observations
 and no BLE observations in 251 records over 35.262374 seconds. Actual status at
@@ -197,9 +203,47 @@ acknowledgment. Its first target build failed the unchanged stack-reservation
 gate. Follow-up `3baaacc` reuses async storage across startup/configuration. Its
 M5 and XIAO target builds passed; the M5 linked stack reservation is 7,316 bytes,
 above the unchanged 7,168-byte threshold. This is not a runtime stack high-water
-measurement. Remaining checks, artifact audit and hardware acceptance are pending.
-No fix installation or successful continuous-BLE result is claimed. Full-rig
-acceptance remains pending.
+measurement. The audited application was subsequently installed and verified;
+the bootloader, partition table, NVS, PHY and all other flash bytes were preserved.
+The preceding application and rollback material remain available; no rollback was
+needed for this installation.
+
+The corrected image passed a 240.097-second serial observation: 37,244 BLE and
+1,430 WiFi reports, with 56 advertisers present in both early and late intervals.
+Both final 30-second intervals contained both media. Seven dedicated memory
+samples reported 3,448 bytes internal and 2,068,472 bytes external free; separate
+status samples reported 3,348–3,448 internal free bytes. All seven stream-statistics
+samples had zero scan/output/BLE-output drops and serialization errors. These
+sampled counters do not establish RF losslessness. Button events were logged
+while the observer was running, and the user temporarily reported working buttons;
+that does not establish reliable operation after the observer closes.
+
+After close, the user reported unresponsive buttons again. The subsequent
+production-reader attempt failed after 35.220412 seconds with no device input:
+no status, uptime, WiFi or BLE. Its 13 durable records were host-side records only.
+Pause/Resume were not attempted. Owned Finish, private-service exit, port release
+and preservation checks passed. This is a distinct failure from the earlier
+BLE-only result, not evidence of quiet RF.
+
+A separate 35.072-second diagnostic deasserted DTR/RTS before opening, without a
+deliberate reset pulse or UART writes. It produced a fresh boot, 6,098 BLE and 159
+WiFi reports, and status uptime 31 seconds. Its one stream-statistics sample had
+four scan drops and zero output/BLE-output drops or serialization errors. Owned-fd
+snapshots showed deasserted DTR/RTS and enabled `HUPCL` after open and before close.
+The user did not confirm button recovery and reported continued unresponsiveness.
+These results motivate a control-line investigation; they do not prove the
+physical reset-line state or a fixed firmware/UI fault.
+
+The scoped host candidate `14d6085` clears and verifies Unix close-time hangup,
+restores the configured baud through the platform serial API, and atomically
+deasserts/verifies DTR/RTS before ingestion. Fourteen focused tests and independent
+review passed, including macOS custom-baud handling, unsupported-control refusal,
+and close-before-lease cleanup. It has not passed hardware acceptance or replaced
+the installed backend. Passive discovery and other receiver transports are
+unchanged. Opening may still reset the board; Pause/Resume must not toggle lines.
+Current lifecycle, physical buttons and full-rig acceptance remain pending under
+[#175](https://github.com/dougborg/AirHound/issues/175) and
+[#269](https://github.com/dougborg/AirHound/issues/269).
 
 ## Provenance and privacy
 
@@ -247,16 +291,16 @@ configuration; rediscover the current endpoint and select it explicitly.
 | Native Bluetooth | CoreBluetooth, OS-managed | Current signed `07c7142` retry: 1,273 observations alongside WiFi, clean finish; earlier `33a5e93` result retained below | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
 | Native WiFi | CoreWLAN, OS interface | Current signed `07c7142` retry: 321 observations alongside BLE after renewed permission approval, clean finish | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; current actual AirHound `0.2.0` / `m5stickc_plus2`, exact reviewed `07c7142` application update verified | Updated boot check: 1,395 WiFi + 90 BLE observations and five stable memory samples. Later same-boot recording: 234 WiFi / 0 BLE, 251 records; failed before Pause/Resume. Prior `0.1.1` run passed host lifecycle with 86 WiFi + 24 BLE; earlier 66-second result retained | Current continuous BLE/lifecycle acceptance blocked by [#317](https://github.com/dougborg/AirHound/issues/317); [#318](https://github.com/dougborg/AirHound/pull/318) is a reviewed candidate with target-build/memory gates passed, but remaining checks and hardware acceptance pending; no retry or rollback inferred. Sampled current producer/host errors zero, RF loss unknown. Prior nine cumulative scan drops and twelve intentional paused discards retain their old-run scope. Radios remain autonomous; buttons/buzzer, full rig and physical recovery remain pending |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; installed AirHound `0.2.0` / `m5stickc_plus2`, reviewed source `3baaacc` application verified | Corrected-image 240-second observation: 37,244 BLE + 1,430 WiFi, repeated late advertisers, seven zero reported producer drop/error samples. After close, production lifecycle failed with no device input. A separate line-state diagnostic produced a new boot and both media with four scan drops; buttons remained unresolved | Current host lifecycle, physical controls and full rig remain unaccepted. Reviewed `14d6085` transport policy awaits hardware validation in [#175](https://github.com/dougborg/AirHound/issues/175). Preserve earlier `07c7142` BLE-only failure in [#317](https://github.com/dougborg/AirHound/issues/317) and prior `0.1.1` lifecycle successes. Radios remain autonomous; RF loss unknown; physical recovery pending |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
 | AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; diagnostic import retained 85 packets. Latest external combined run retained 728 live packets across two Flipper capture generations | Prior 63- and 65-packet attempts failed before Resume. The bridge Hello does not establish downstream firmware, assigned channel, RSSI or RF loss; literal stop acknowledgments do not prove physical RF silence |
-| Orbic / Rayhunter | Official Rayhunter `0.13.0` upgrade verified; exact retail model remains unconfirmed | Original recordings/settings were preserved and official recording resumed | Separate raw-feed fork prototype has source/build tests, not device deployment or AirHound live-source acceptance. Raw diagnostic records are not I/Q or all cellular RF traffic; [#293](https://github.com/dougborg/AirHound/issues/293) tracks the experimental integration |
+| Orbic / Rayhunter | Official Rayhunter `0.13.0` upgrade verified; exact retail model remains unconfirmed | Original recordings/settings preserved; official daemon restored after two unsuccessful staged raw-feed attempts | Separate fork helper preflight passed; full raw-feed runtime and AirHound live-source acceptance remain pending. Raw diagnostic records are not I/Q or all cellular RF traffic; [#293](https://github.com/dougborg/AirHound/issues/293) tracks the experimental integration |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor; historical explicit REQ_VERSION on 2026-11-21 reported firmware 4.1.1 / UART protocol 3 | A bounded query and subsequent read-only window observed an already-streaming advertising feed; prior scan configuration and queued reports were unknown ([#188](https://github.com/dougborg/AirHound/issues/188)) | Current discovery is descriptor-only; current firmware remains unverified. No live AirHound source integration; historical reads do not establish capture rate, RF loss, extended/Coded support or a verified board model |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
 
-The M5's internal free heap was about 3.6 KiB; its prior startup diagnostic confirmed
+In the earlier `0.1.1` tests, M5 internal free heap was about 3.6 KiB; its startup diagnostic confirmed
 2 MiB PSRAM with about 2 MiB free external memory. Neither value describes total free
 memory by itself. The serial test's reported uptime progressed 61→91→121 seconds
 through pause/resume, with one connection and one boot generation. Earlier Python
@@ -717,10 +761,13 @@ internally unexplained; production readiness timeouts are unchanged.
 
 - Verify the complete compatible rig with current native and external receivers,
   including the updated M5 and Flipper. The signed `07c7142` native retry passed;
-  the M5 lifecycle success belongs to prior firmware `0.1.1`. Updated `0.2.0`
-  passed its boot check but failed same-boot BLE readiness before Pause/Resume.
-  Resolve and verify [#317](https://github.com/dougborg/AirHound/issues/317) before
-  claiming current full-rig acceptance. Preserve all earlier failed attempts.
+  the M5 lifecycle success belongs to prior firmware `0.1.1`. Installed `3baaacc`
+  passed continued both-media reporting, then failed production lifecycle with no
+  input after observer close; physical buttons remain unresolved. Validate the
+  reviewed host transport policy and close/reopen behavior in
+  [#175](https://github.com/dougborg/AirHound/issues/175) before claiming current
+  full-rig acceptance. Preserve the separate earlier BLE-only failure in
+  [#317](https://github.com/dougborg/AirHound/issues/317) and all later failures.
 - Exercise **Attached receiver rig (USB recovery)** through the native Load, Start Recording
   and Finish Recording controls. Actual GUI service launch and native observation
   presentation passed; the earlier native/M5 combined capture used CLI controls
