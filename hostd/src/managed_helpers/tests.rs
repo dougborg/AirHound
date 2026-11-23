@@ -210,7 +210,28 @@ fn dangling_current_pointer_requires_explicit_replacement() {
         install(&root, &source, false).unwrap_err().kind(),
         io::ErrorKind::AlreadyExists
     );
-    assert!(install(&root, &source, true).is_ok());
+    install(&root, &source, true).expect("explicit replacement of dangling pointer");
+}
+
+#[test]
+fn install_lock_releases_ownership_before_inherited_descriptor_closes() {
+    let t = Temp::new();
+    let owned = acquire_install_lock(&t.0).unwrap();
+    // dup and fork share the same open-file description and flock ownership.
+    // Keep that description alive after the owning scope exits.
+    let inherited = owned.0.try_clone().unwrap();
+    let competing = acquire_install_lock(&t.0).err().unwrap();
+    assert_eq!(competing.kind(), io::ErrorKind::WouldBlock);
+    drop(owned);
+    let replacement = acquire_install_lock(&t.0).unwrap();
+    drop(inherited);
+    // Closing the inherited descriptor must not unlock the new owner's flock.
+    assert_eq!(
+        acquire_install_lock(&t.0).err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    drop(replacement);
+    assert!(acquire_install_lock(&t.0).is_ok());
 }
 
 #[test]
