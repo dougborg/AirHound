@@ -30,6 +30,8 @@ pub mod health_output;
 pub mod mac_index;
 pub mod observations;
 pub mod odid;
+#[cfg(any(feature = "firmware", test))]
+pub mod output_pool;
 pub mod protocol;
 pub mod proximity;
 pub mod rules;

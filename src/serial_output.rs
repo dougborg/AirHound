@@ -94,6 +94,56 @@ pub enum DrainError<E> {
 pub enum LineError<E> {
     Timeout,
     Output(E),
+    InvalidProgress,
+}
+
+/// Bounded cooperative polling for a stable, externally owned payload. Only a
+/// 16-byte internal scratch buffer survives a yield, never a 512-byte record.
+/// The absolute deadline includes other executor work (including display SPI).
+#[cfg(any(feature = "firmware", test))]
+pub async fn drain_cooperative<E>(
+    line: &[u8],
+    mut output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
+    mut now_micros: impl FnMut() -> u64,
+    mut poll_gap: impl FnMut(u64),
+) -> Result<(), LineError<E>> {
+    let started = now_micros();
+    let mut previous = started;
+    let mut offset = 0;
+    let mut quantum = 0;
+    while offset < line.len() {
+        let now = now_micros();
+        poll_gap(now.wrapping_sub(previous));
+        previous = now;
+        if now.wrapping_sub(started) >= LINE_BUDGET_US {
+            return Err(LineError::Timeout);
+        }
+        let length = (line.len() - offset).min(FIFO_CHUNK);
+        let mut scratch = [0; FIFO_CHUNK];
+        // Outside the hardware critical section; line may reside in PSRAM.
+        scratch[..length].copy_from_slice(&line[offset..offset + length]);
+        let mut wrote = 0;
+        let step = output_step(&scratch[..length], &mut wrote).map_err(LineError::Output)?;
+        if wrote > length
+            || match step {
+                Step::Blocked => wrote != 0,
+                Step::Progress => wrote == 0 || wrote == length,
+                Step::Complete => wrote != length,
+            }
+        {
+            return Err(LineError::InvalidProgress);
+        }
+        offset += wrote;
+        quantum += 1;
+        if offset == line.len() {
+            return Ok(());
+        }
+        if step == Step::Blocked || quantum == 4 {
+            quantum = 0;
+            embassy_futures::yield_now().await;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -182,6 +232,184 @@ pub fn step<F: Fifo>(
 mod tests {
     use super::*;
     use std::vec::Vec;
+
+    #[test]
+    fn cooperative_writer_yields_after_bounded_quantum_and_preserves_full_frame() {
+        use core::{
+            cell::{Cell, RefCell},
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        let bytes = RefCell::new(Vec::new());
+        let now = Cell::new(0u64);
+        let gaps = Cell::new(0u64);
+        let line = [b'x'; 512];
+        let future = drain_cooperative(
+            &line,
+            |chunk, written| {
+                bytes.borrow_mut().extend_from_slice(chunk);
+                *written = chunk.len();
+                Ok::<_, ()>(Step::Complete)
+            },
+            || now.get(),
+            |gap| gaps.set(gaps.get().max(gap)),
+        );
+        // Captures references plus bounded state, never copies the 512B line.
+        assert!(core::mem::size_of_val(&future) < 256);
+        let mut future = pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut turns = 0;
+        loop {
+            let before = bytes.borrow().len();
+            let result = future.as_mut().poll(&mut cx);
+            assert!(bytes.borrow().len() - before <= 64);
+            if result == Poll::Ready(Ok(())) {
+                break;
+            }
+            assert_eq!(result, Poll::Pending);
+            // Independent work progresses at every bounded writer yield.
+            turns += 1;
+            now.set(now.get() + 1400);
+        }
+        assert_eq!((turns, gaps.get()), (7, 1400));
+        assert_eq!(*bytes.borrow(), line);
+    }
+
+    #[test]
+    fn cooperative_blocked_and_slow_output_keep_original_deadline() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for slow_progress in [false, true] {
+            let now = Cell::new(0u64);
+            let sent = Cell::new(0usize);
+            let line = [b'x'; 512];
+            let future = drain_cooperative(
+                &line,
+                |_, written| {
+                    if slow_progress {
+                        *written = 1;
+                        sent.set(sent.get() + 1);
+                        Ok::<_, ()>(Step::Progress)
+                    } else {
+                        Ok(Step::Blocked)
+                    }
+                },
+                || now.get(),
+                |_| {},
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            loop {
+                match future.as_mut().poll(&mut cx) {
+                    Poll::Pending => now.set(now.get() + 1000),
+                    Poll::Ready(result) => {
+                        assert_eq!(result, Err(LineError::Timeout));
+                        break;
+                    }
+                }
+            }
+            assert_eq!(now.get(), LINE_BUDGET_US);
+            assert!(sent.get() < 512);
+        }
+    }
+
+    #[test]
+    fn ordinary_blocking_display_overlap_is_included_and_can_fail_deadline() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        let now = Cell::new(0u64);
+        let max_gap = Cell::new(0u64);
+        let line = [b'x'; 512];
+        let future = drain_cooperative(
+            &line,
+            |chunk, written| {
+                *written = chunk.len();
+                Ok::<_, ()>(Step::Complete)
+            },
+            || now.get(),
+            |gap| max_gap.set(max_gap.get().max(gap)),
+        );
+        let mut future = pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut turns = 0;
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Pending => {
+                    turns += 1;
+                    // The actual display has ~8.64ms row-wire cost plus
+                    // formatting/commands. A 12ms model is deliberately allowed
+                    // to fail; this is not a claimed hardware latency bound.
+                    now.set(now.get() + 1400 + if turns == 2 { 12_000 } else { 0 });
+                }
+                Poll::Ready(result) => {
+                    assert_eq!(result, Err(LineError::Timeout));
+                    break;
+                }
+            }
+        }
+        assert_eq!(max_gap.get(), 13_400);
+        assert!(now.get() >= LINE_BUDGET_US);
+    }
+
+    #[test]
+    fn panic_handoff_or_invalid_adapter_progress_cannot_continue_normal_output() {
+        use core::{
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for fail_at in 0..32 {
+            let mut writes = 0;
+            let line = [b'x'; 512];
+            let future = drain_cooperative(
+                &line,
+                |chunk, written| {
+                    if writes == fail_at {
+                        return Err("panic ownership");
+                    }
+                    writes += 1;
+                    *written = chunk.len();
+                    Ok(Step::Complete)
+                },
+                || 0,
+                |_| {},
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            loop {
+                if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
+                    assert_eq!(result, Err(LineError::Output("panic ownership")));
+                    break;
+                }
+            }
+        }
+        for wrote in [0, 17] {
+            let future = drain_cooperative(
+                b"0123456789abcdef",
+                |_, n| {
+                    *n = wrote;
+                    Ok::<_, ()>(Step::Complete)
+                },
+                || 0,
+                |_| {},
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(
+                future.as_mut().poll(&mut cx),
+                Poll::Ready(Err(LineError::InvalidProgress))
+            );
+        }
+    }
 
     #[derive(Default)]
     struct Sink {

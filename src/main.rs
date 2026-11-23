@@ -23,6 +23,8 @@ mod buzzer;
 mod display;
 mod memory;
 #[cfg(feature = "m5stickc")]
+mod psram_output;
+#[cfg(feature = "m5stickc")]
 mod serial_console;
 
 // Re-export library modules so binary submodules (display, buzzer) can use crate::*
@@ -90,11 +92,15 @@ type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 8>;
 // ESP32-S3 (XIAO): 16 slots — ample DRAM
 #[cfg(not(feature = "esp32"))]
 type ScanChannel = Channel<CriticalSectionRawMutex, ScanEvent, 16>;
-#[cfg(feature = "m5stickc")]
-const OUTPUT_CAPACITY: usize = 4;
 #[cfg(not(feature = "m5stickc"))]
 const OUTPUT_CAPACITY: usize = 8;
+#[cfg(not(feature = "m5stickc"))]
 type OutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, OUTPUT_CAPACITY>;
+#[cfg(not(feature = "m5stickc"))]
+type OutputSender<'a> =
+    embassy_sync::channel::Sender<'a, CriticalSectionRawMutex, MsgBuffer, OUTPUT_CAPACITY>;
+#[cfg(feature = "m5stickc")]
+struct OutputSender<'a>(core::marker::PhantomData<&'a ()>);
 type BleOutputChannel = Channel<CriticalSectionRawMutex, MsgBuffer, 4>;
 type CommandChannel = Channel<CriticalSectionRawMutex, Option<HostCommand>, 4>;
 
@@ -111,7 +117,10 @@ pub(crate) static DISPLAY_READY: Signal<CriticalSectionRawMutex, bool> = Signal:
 pub(crate) static SCAN_CHANNEL: ScanChannel = Channel::new();
 
 /// Static channel for serialized output messages
+#[cfg(not(feature = "m5stickc"))]
 static OUTPUT_CHANNEL: OutputChannel = Channel::new();
+#[cfg(feature = "m5stickc")]
+static LOG_CHANNEL: Channel<CriticalSectionRawMutex, MsgBuffer, 4> = Channel::new();
 
 /// Static channel for host commands
 static CMD_CHANNEL: CommandChannel = Channel::new();
@@ -340,7 +349,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     // Spawn non-BLE tasks
     spawner.spawn(filter_task()).unwrap();
     #[cfg(feature = "m5stickc")]
-    spawner.spawn(output_serial_task(serial)).unwrap();
+    {
+        spawner.spawn(diagnostic_pump()).unwrap();
+        spawner.spawn(output_serial_task(serial)).unwrap();
+    }
     #[cfg(not(feature = "m5stickc"))]
     spawner.spawn(output_serial_task()).unwrap();
     spawner.spawn(status_task()).unwrap();
@@ -655,7 +667,7 @@ async fn filter_task() {
     log::info!("Filter task started");
 
     let scan_rx = SCAN_CHANNEL.receiver();
-    let output_tx = OUTPUT_CHANNEL.sender();
+    let output_tx = output_sender();
     FILTER_READY.signal(());
 
     loop {
@@ -735,6 +747,41 @@ fn update_last_match_and_buzz(result: &filter::FilterResult) {
     }
 }
 
+#[cfg(feature = "m5stickc")]
+fn output_sender() -> OutputSender<'static> {
+    OutputSender(core::marker::PhantomData)
+}
+#[cfg(not(feature = "m5stickc"))]
+fn output_sender() -> OutputSender<'static> {
+    OUTPUT_CHANNEL.sender()
+}
+
+fn publish_device(
+    msg: &DeviceMessage<'_>,
+    output_tx: &OutputSender<'_>,
+    kind: airhound::output_pool::Kind,
+) {
+    #[cfg(feature = "m5stickc")]
+    {
+        let _ = output_tx;
+        psram_output::publish(msg, kind);
+    }
+    #[cfg(not(feature = "m5stickc"))]
+    {
+        let _ = kind;
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(msg, &mut buf) {
+            buf.truncate(len);
+            if output_tx.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Emit a DroneSighting message from parsed ODID data.
 fn emit_drone_sighting(
     frame: &odid::OdidFrame,
@@ -742,12 +789,7 @@ fn emit_drone_sighting(
     rssi: i8,
     source: &'static str,
     rule_name: Option<&'static str>,
-    output_tx: &embassy_sync::channel::Sender<
-        '_,
-        CriticalSectionRawMutex,
-        MsgBuffer,
-        OUTPUT_CAPACITY,
-    >,
+    output_tx: &OutputSender<'_>,
 ) {
     ODID_MATCH_COUNT.fetch_add(1, Ordering::Relaxed);
 
@@ -784,28 +826,10 @@ fn emit_drone_sighting(
         ts,
     };
 
-    let mut buf = MsgBuffer::new();
-    buf.resize_default(MAX_MSG_LEN).ok();
-    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-        buf.truncate(len);
-        if output_tx.try_send(buf).is_err() {
-            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-        }
-    } else {
-        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
-    }
+    publish_device(&msg, output_tx, airhound::output_pool::Kind::Detection);
 }
 
-fn handle_wifi_event(
-    wifi: &WiFiEvent,
-    config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<
-        '_,
-        CriticalSectionRawMutex,
-        MsgBuffer,
-        OUTPUT_CAPACITY,
-    >,
-) {
+fn handle_wifi_event(wifi: &WiFiEvent, config: &FilterConfig, output_tx: &OutputSender<'_>) {
     if !config.wifi_enabled {
         return;
     }
@@ -865,16 +889,7 @@ fn handle_wifi_event(
         ts,
     };
 
-    let mut buf = MsgBuffer::new();
-    buf.resize_default(MAX_MSG_LEN).ok();
-    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-        buf.truncate(len);
-        if output_tx.try_send(buf).is_err() {
-            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-        }
-    } else {
-        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
-    }
+    publish_device(&msg, output_tx, airhound::output_pool::Kind::Observation);
     if result.matched {
         let msg = DeviceMessage::Detection {
             id: mac_str.as_str(),
@@ -882,29 +897,11 @@ fn handle_wifi_event(
             ts,
             detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
         };
-        let mut buf = MsgBuffer::new();
-        buf.resize_default(MAX_MSG_LEN).ok();
-        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-            buf.truncate(len);
-            if output_tx.try_send(buf).is_err() {
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-        } else {
-            SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
-        }
+        publish_device(&msg, output_tx, airhound::output_pool::Kind::Detection);
     }
 }
 
-fn handle_ble_event(
-    ble: &BleEvent,
-    config: &FilterConfig,
-    output_tx: &embassy_sync::channel::Sender<
-        '_,
-        CriticalSectionRawMutex,
-        MsgBuffer,
-        OUTPUT_CAPACITY,
-    >,
-) {
+fn handle_ble_event(ble: &BleEvent, config: &FilterConfig, output_tx: &OutputSender<'_>) {
     if !config.ble_enabled {
         return;
     }
@@ -959,16 +956,7 @@ fn handle_ble_event(
         ts,
     };
 
-    let mut buf = MsgBuffer::new();
-    buf.resize_default(MAX_MSG_LEN).ok();
-    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-        buf.truncate(len);
-        if output_tx.try_send(buf).is_err() {
-            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-        }
-    } else {
-        SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
-    }
+    publish_device(&msg, output_tx, airhound::output_pool::Kind::Observation);
     if result.matched {
         let msg = DeviceMessage::Detection {
             id: mac_str.as_str(),
@@ -976,16 +964,7 @@ fn handle_ble_event(
             ts,
             detection: result.detection(airhound::evidence::AlertPolicy::RulesAndWatchlist),
         };
-        let mut buf = MsgBuffer::new();
-        buf.resize_default(MAX_MSG_LEN).ok();
-        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-            buf.truncate(len);
-            if output_tx.try_send(buf).is_err() {
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-        } else {
-            SERIALIZE_ERRORS.fetch_add(1, Ordering::Relaxed);
-        }
+        publish_device(&msg, output_tx, airhound::output_pool::Kind::Detection);
     }
 }
 
@@ -1018,44 +997,84 @@ async fn output_serial_task() {
     }
 }
 
-/// Runtime M5 output has one UART writer for both diagnostics and observations.
-/// It never waits for wire transmission while interrupts are masked. Polling
-/// each line is bounded to 20ms; yielding between lines avoids retaining another
-/// 512-byte message in the task's static future storage.
+/// Global logging is staged only in DRAM. This normal task transfers complete
+/// diagnostics to PSRAM without retaining a MsgBuffer across an await.
+#[cfg(feature = "m5stickc")]
+#[embassy_executor::task]
+async fn diagnostic_pump() {
+    loop {
+        embassy_futures::yield_now().await;
+        let line = LOG_CHANNEL.receive().await;
+        psram_output::publish_bytes(&line, airhound::output_pool::Kind::Diagnostic);
+    }
+}
+
+#[cfg(feature = "m5stickc")]
+fn forward_ble(line: &[u8]) -> bool {
+    if !airhound::serial_output::is_observation(line) || BLE_CLIENTS.load(Ordering::Relaxed) == 0 {
+        return false;
+    }
+    let mut copy = MsgBuffer::new();
+    if copy.extend_from_slice(line).is_err() || BLE_OUTPUT_CHANNEL.try_send(copy).is_err() {
+        serial_console::increment(&BLE_OUTPUT_DROPS);
+        return false;
+    }
+    true
+}
+
+/// Sole runtime writer. The PSRAM lease, cursor and small scratch survive yields;
+/// no full line is stored in the future. Ordinary display work counts against
+/// the original absolute 20ms line budget.
 #[cfg(feature = "m5stickc")]
 #[embassy_executor::task]
 async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Blocking>) {
-    use airhound::serial_output::{is_observation, WriteOutcome, Writer};
-
+    use airhound::{
+        output_pool::Reason,
+        serial_output::{drain_cooperative, LineError},
+    };
+    let pool = psram_output::pool();
+    let _owner = pool.writer_owner().expect("output task already owned");
     serial_console::take_runtime_ownership();
-    let output_rx = OUTPUT_CHANNEL.receiver();
     OUTPUT_READY.signal(());
-    let mut writer = Writer::default();
-    loop {
-        embassy_futures::yield_now().await;
-        let msg = output_rx.receive().await;
-        if is_observation(&msg)
-            && BLE_CLIENTS.load(Ordering::Relaxed) > 0
-            && BLE_OUTPUT_CHANNEL.try_send(msg.clone()).is_err()
-        {
-            BLE_OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+    while let Some(mut line) = pool.receive(|| Instant::now().as_micros()).await {
+        if forward_ble(line.bytes()) {
+            line.mark_ble_enqueued();
         }
-        match writer.write(
-            &msg,
-            |line, offset| serial_console::step(&mut uart, line, offset),
+        if pool.stats().closed {
+            line.fail(Reason::Disabled);
+            embassy_futures::yield_now().await;
+            continue;
+        }
+        let result = drain_cooperative(
+            line.bytes(),
+            |chunk, offset| serial_console::step(&mut uart, chunk, offset),
             || Instant::now().as_micros(),
-        ) {
-            WriteOutcome::Sent => {}
-            WriteOutcome::Failed => {
-                // Do not splice a later record onto a partially written line.
-                // BLE forwarding can still carry cumulative failure counters.
-                serial_console::WRITE_ERRORS.fetch_add(1, Ordering::Relaxed);
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
-            }
-            WriteOutcome::Disabled => {
-                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            |gap| pool.poll_gap(gap),
+        )
+        .await;
+        match result {
+            Ok(()) => line.complete(),
+            Err(error) => {
+                serial_console::increment(&serial_console::WRITE_ERRORS);
+                line.fail(match error {
+                    LineError::Timeout => Reason::Timeout,
+                    _ => Reason::Write,
+                });
             }
         }
+        embassy_futures::yield_now().await;
+    }
+}
+
+fn output_drop_count() -> u32 {
+    let base = OUTPUT_DROPS.load(Ordering::Relaxed);
+    #[cfg(feature = "m5stickc")]
+    {
+        base.saturating_add(psram_output::pool().stats().drops)
+    }
+    #[cfg(not(feature = "m5stickc"))]
+    {
+        base
     }
 }
 
@@ -1070,7 +1089,12 @@ async fn status_task() {
         #[cfg(feature = "m5stickc")]
         log::info!(
             "Serial output stats: log_drops={} format_errors={} write_errors={}",
-            serial_console::LOG_DROPS.load(Ordering::Relaxed),
+            serial_console::LOG_DROPS
+                .load(Ordering::Relaxed)
+                .saturating_add(
+                    psram_output::pool().stats().by_kind
+                        [airhound::output_pool::Kind::Diagnostic as usize]
+                ),
             serial_console::FORMAT_ERRORS.load(Ordering::Relaxed),
             serial_console::WRITE_ERRORS.load(Ordering::Relaxed),
         );
@@ -1116,6 +1140,12 @@ async fn status_task() {
         }
 
         #[cfg(feature = "m5stickc")]
+        {
+            psram_output::report();
+            embassy_futures::yield_now().await;
+        }
+
+        #[cfg(feature = "m5stickc")]
         airhound::health_output::publish_pair(|record| publish_health_record(record, uptime_secs))
             .await;
         #[cfg(not(feature = "m5stickc"))]
@@ -1141,17 +1171,39 @@ fn publish_health_record(record: airhound::health_output::Record, uptime_secs: u
         },
         Record::StreamStats => DeviceMessage::StreamStats {
             scan_drops: SCAN_DROPS.load(Ordering::Relaxed),
-            output_drops: OUTPUT_DROPS.load(Ordering::Relaxed),
+            output_drops: output_drop_count(),
             ble_output_drops: BLE_OUTPUT_DROPS.load(Ordering::Relaxed),
             serialize_errors: SERIALIZE_ERRORS.load(Ordering::Relaxed),
         },
     };
-    let mut buf = MsgBuffer::new();
-    buf.resize_default(MAX_MSG_LEN).ok();
-    if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-        buf.truncate(len);
-        if OUTPUT_CHANNEL.try_send(buf).is_err() {
-            OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+    #[cfg(feature = "m5stickc")]
+    psram_output::publish(&msg, airhound::output_pool::Kind::Health);
+    #[cfg(not(feature = "m5stickc"))]
+    {
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+            buf.truncate(len);
+            if OUTPUT_CHANNEL.try_send(buf).is_err() {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+async fn publish_command(msg: &DeviceMessage<'_>, output_tx: &OutputSender<'_>) {
+    #[cfg(feature = "m5stickc")]
+    {
+        let _ = output_tx;
+        psram_output::command(msg).await;
+    }
+    #[cfg(not(feature = "m5stickc"))]
+    {
+        let mut buf = MsgBuffer::new();
+        buf.resize_default(MAX_MSG_LEN).ok();
+        if let Some(len) = comm::serialize_message(msg, &mut buf) {
+            buf.truncate(len);
+            output_tx.send(buf).await;
         }
     }
 }
@@ -1161,18 +1213,13 @@ fn publish_health_record(record: airhound::health_output::Record, uptime_secs: u
 #[embassy_executor::task]
 async fn command_task() {
     let cmd_rx = CMD_CHANNEL.receiver();
-    let output_tx = OUTPUT_CHANNEL.sender();
+    let output_tx = output_sender();
 
     loop {
         let cmd = cmd_rx.receive().await;
         let Some(cmd) = cmd else {
             let msg = comm::command_response(None, Err(protocol::CommandError::InvalidCommand));
-            let mut buf = MsgBuffer::new();
-            buf.resize_default(MAX_MSG_LEN).ok();
-            if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-                buf.truncate(len);
-                output_tx.send(buf).await;
-            }
+            publish_command(&msg, &output_tx).await;
             continue;
         };
         let is_status_request = matches!(cmd, HostCommand::GetStatus);
@@ -1198,12 +1245,7 @@ async fn command_task() {
         SCANNING.store(scanning, Ordering::Relaxed);
 
         let msg = comm::command_response(Some(&cmd), result.map(|_| ()));
-        let mut buf = MsgBuffer::new();
-        buf.resize_default(MAX_MSG_LEN).ok();
-        if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-            buf.truncate(len);
-            output_tx.send(buf).await;
-        }
+        publish_command(&msg, &output_tx).await;
 
         // GetStatus: build and send a live status response
         if is_status_request {
@@ -1217,12 +1259,17 @@ async fn command_task() {
                 version: VERSION,
             };
 
-            let mut buf = MsgBuffer::new();
-            buf.resize_default(MAX_MSG_LEN).ok();
-            if let Some(len) = comm::serialize_message(&msg, &mut buf) {
-                buf.truncate(len);
-                if output_tx.try_send(buf).is_err() {
-                    OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "m5stickc")]
+            psram_output::publish(&msg, airhound::output_pool::Kind::Health);
+            #[cfg(not(feature = "m5stickc"))]
+            {
+                let mut buf = MsgBuffer::new();
+                buf.resize_default(MAX_MSG_LEN).ok();
+                if let Some(len) = comm::serialize_message(&msg, &mut buf) {
+                    buf.truncate(len);
+                    if output_tx.try_send(buf).is_err() {
+                        OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }

@@ -55,6 +55,17 @@ pub fn init(psram: esp_hal::peripherals::PSRAM<'static>) {
     // Intentionally retained for the firmware lifetime; never deallocated.
     let table = Table::init_in(unsafe { &mut *allocation.cast::<core::mem::MaybeUninit<Table>>() });
     critical_section::with(|cs| *OBSERVATIONS.borrow(cs).borrow_mut() = Some(table));
+    // One fixed external output allocation, never a large stack temporary.
+    let layout = core::alloc::Layout::new::<crate::psram_output::OutputPool>();
+    let allocation =
+        unsafe { EXTERNAL.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout) };
+    assert!(!allocation.is_null(), "PSRAM output allocation failed");
+    let pool = unsafe {
+        crate::psram_output::OutputPool::init_in(
+            &mut *allocation.cast::<core::mem::MaybeUninit<crate::psram_output::OutputPool>>(),
+        )
+    };
+    crate::psram_output::initialize(pool);
     log::info!(
         "PSRAM ready: bytes={} tested=true observation_capacity={}",
         size,
