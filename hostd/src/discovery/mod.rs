@@ -56,6 +56,9 @@ pub struct Candidate {
     pub capabilities: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identification: Option<identify::Identification>,
+    /// Explicit query eligibility; passive discovery never executes this protocol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identification_protocol: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_identity: Option<crate::external_identity::Identity>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,6 +394,7 @@ fn candidate(
             _ => json!({"scope":"unknown"}),
         },
         identification: None,
+        identification_protocol: None,
         external_identity: None,
         bridge_identity: None,
         configuration_hint: None,
@@ -514,6 +518,7 @@ fn classify(raw: &RawDevice, platform: &str, options: &Options) -> Vec<Candidate
         }
         (Some(0x1546), Some(0x01a8)) => {
             let mut c = candidate("gps", "u-blox GNSS candidate", "available", "needs_configuration", "u-blox GNSS USB ID; use an explicitly configured gpsd server; direct protocol/fix not probed");
+            c.identification_protocol = (serial_count > 0 && identify::supports_ublox_identification()).then_some("ublox");
             c.location_configuration_hint = Some(json!({"kind":"gpsd","endpoint":"127.0.0.1:2947","device":selected_serial.map(|e| &e.path)}));
             c.requirements.push(Requirement {name:"gpsd_server".into(),state:"unknown",detail:"Start gpsd separately in read-only mode and confirm its endpoint and device path. Discovery does not open the serial port or connect to gpsd.".into()});
             result.push(c);

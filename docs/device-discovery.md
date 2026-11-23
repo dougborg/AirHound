@@ -302,3 +302,44 @@ Pausing host ingestion retains the owner and its reported identity. Firmware doe
 not report a protocol API version; discovery leaves it unknown, and current
 receiver health remains the source of reception readiness. Enriched inventories
 use `passive_with_active_metadata`; otherwise the mode remains `passive`.
+
+### Explicit u-blox version query
+
+On macOS and Linux, a recognized u-blox GNSS USB candidate with a serial endpoint
+advertises `identification_protocol: "ublox"`. This is permission to offer an
+explicit identification action, not proof of receiver readiness. Inventory never
+opens the port or performs this query. Multiple endpoints require an explicit
+selection; no first-port or baud guessing occurs.
+
+```json
+{"protocol":"ublox","device_id":"<current device id>","port":"<selected serial endpoint>"}
+```
+
+Submit this object through the existing `devices.identify` action (or `client
+identify --config probe.json`). No Python/helper settings are accepted. The Rust
+backend verifies the current recognized USB device and endpoint, refuses active
+capture, checks external ownership, and holds the shared serial lease until its
+transport is restored/closed and the post-query attachment is revalidated.
+Unknown external ownership fails closed. Linux uses `/proc` and can report a
+permission error when other process descriptors cannot be inspected.
+
+The only transmitted command is the eight-byte, zero-payload UBX-MON-VER poll.
+The nonblocking worker has a fixed three-second query deadline, a 64 KiB input
+budget, checksum/length/string validation, and cancellation checks. It sends no
+CFG/reset/time/firmware commands and does not change baud rates or modem lines.
+Host binary-input settings are restored before close. On Darwin only, the
+kernel's transient PENDIN input-retyping state may differ after canonical-mode
+restoration; all configuration fields and speeds must match. See the official
+[u-blox V14 protocol, sections 29 and 38.8](https://content.u-blox.com/sites/default/files/products/documents/u-blox7-V14_ReceiverDescriptionProtocolSpec_%28GPS.G7-SW-12001%29_Public.pdf).
+
+The additive result fields are `software_version`, `hardware_version`,
+`protocol_version`, and `model`; existing `firmware_version` comes only from a
+reported `FWVER=` extension. Model comes only from `MOD=`. Missing values remain
+null: a ROM software string or hardware version is never substituted for either.
+Successful results use `application: "u-blox"`,
+`provenance: "explicit_ublox_mon_ver"`, and `state: "identified"`.
+`compatible` remains null and `reception` remains `not_tested`. Timeout,
+permission, busy, malformed, cancellation, or changed attachment cannot yield a
+successful version result. The existing Sniffle request and result fields retain
+their meaning. No profile, scan plan, GPS driver, PPS/NTP configuration, or saved
+recording is changed (#309).

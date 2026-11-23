@@ -1,4 +1,9 @@
-//! Explicit, bounded Sniffle identity query. Passive inventory never calls this.
+//! Explicit, bounded firmware queries. Passive inventory never calls these.
+mod ublox;
+/// Platforms with reviewed ownership inspection and terminal restoration.
+pub const fn supports_ublox_identification() -> bool {
+    cfg!(any(target_os = "macos", target_os = "linux"))
+}
 use super::{discover, Inventory, Options};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,7 +23,9 @@ pub struct Request {
     pub protocol: String,
     pub device_id: String,
     pub port: String,
+    #[serde(default)]
     pub python: PathBuf,
+    #[serde(default)]
     pub helper: PathBuf,
     pub module_path: Option<PathBuf>,
 }
@@ -65,6 +72,10 @@ pub struct Identification {
     pub message: String,
     pub application: Option<&'static str>,
     pub firmware_version: Option<String>,
+    pub software_version: Option<String>,
+    pub hardware_version: Option<String>,
+    pub protocol_version: Option<String>,
+    pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board: Option<String>,
     pub protocol_api: Option<u16>,
@@ -85,11 +96,19 @@ impl Identification {
                 .as_millis()
                 .try_into()
                 .unwrap_or(u64::MAX),
-            provenance: "explicit_sniffle_query",
+            provenance: if request.protocol == "ublox" {
+                "explicit_ublox_mon_ver"
+            } else {
+                "explicit_sniffle_query"
+            },
             state,
             message: message.into(),
             application: None,
             firmware_version: None,
+            software_version: None,
+            hardware_version: None,
+            protocol_version: None,
+            model: None,
             board: None,
             protocol_api: None,
             compatible: None,
@@ -105,6 +124,9 @@ impl Identification {
             "busy",
             "Capture is active; no extra device endpoint was opened",
         );
+        if request.protocol != "sniffle" {
+            return result;
+        }
         result.provenance = "active_owner_metadata";
         if status["active"] != true {
             return result;
@@ -144,17 +166,15 @@ fn invalid(message: &str) -> io::Error {
 
 impl Request {
     pub fn validate(&self, inventory: &Inventory) -> io::Result<()> {
-        if self.protocol != "sniffle" {
-            return Err(invalid(
-                "only explicit Sniffle identification is implemented",
-            ));
+        if !matches!(self.protocol.as_str(), "sniffle" | "ublox") {
+            return Err(invalid("identification protocol must be sniffle or ublox"));
         }
         if self.device_id.is_empty()
             || self.device_id.len() > 512
             || self.port.is_empty()
             || self.port.len() > 4096
-            || self.python.as_os_str().is_empty()
-            || self.helper.as_os_str().is_empty()
+            || (self.protocol == "sniffle"
+                && (self.python.as_os_str().is_empty() || self.helper.as_os_str().is_empty()))
         {
             return Err(invalid(
                 "identity query needs a device, endpoint, Python and helper",
@@ -167,7 +187,32 @@ impl Request {
             .ok_or_else(|| {
                 invalid("device is no longer in the current inventory; refresh discovery")
             })?;
-        if !device
+        if self.protocol == "ublox" {
+            if !supports_ublox_identification() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "explicit u-blox identification is unavailable on this platform",
+                ));
+            }
+            if !self.python.as_os_str().is_empty()
+                || !self.helper.as_os_str().is_empty()
+                || self.module_path.is_some()
+            {
+                return Err(invalid(
+                    "u-blox identification does not accept helper or Python settings",
+                ));
+            }
+            if !device
+                .usb
+                .as_ref()
+                .is_some_and(|usb| usb.vid == "1546" && usb.pid == "01a8")
+                || !device.candidates.iter().any(|c| c.kind == "gps")
+            {
+                return Err(invalid(
+                    "u-blox identification requires the recognized GNSS USB candidate",
+                ));
+            }
+        } else if !device
             .candidates
             .iter()
             .any(|candidate| candidate.kind == "sniffle")
@@ -193,6 +238,9 @@ pub async fn query(request: &Request) -> Identification {
     let inventory = discover(&Options::default()).await;
     if let Err(error) = request.validate(&inventory) {
         return Identification::new(request, "unavailable", error.to_string());
+    }
+    if request.protocol == "ublox" {
+        return ublox::query(request).await;
     }
     let mut command = Command::new(&request.python);
     command
