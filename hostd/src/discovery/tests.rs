@@ -480,3 +480,84 @@ fn active_flipper_hello_identifies_bridge_not_downstream_radio_and_never_stale_o
     stale.reuse_active_metadata(&status);
     assert!(stale.devices[0].candidates[0].bridge_identity.is_none());
 }
+
+#[test]
+fn ublox_explicit_contract_requires_current_recognized_usb_and_selected_endpoint() {
+    let mut raw = raw(0x1546, 0x01a8);
+    raw.endpoints.push(Endpoint {
+        kind: "serial".into(),
+        path: "/dev/cu.gps-test".into(),
+    });
+    let inventory = assemble(vec![raw], vec![], "macos", &Options::default());
+    let request: identify::Request = serde_json::from_value(
+        json!({"protocol":"ublox","device_id":"usb:1","port":"/dev/cu.gps-test"}),
+    )
+    .unwrap();
+    request.validate(&inventory).unwrap();
+    assert_eq!(
+        inventory.devices[0].candidates[0].identification_protocol,
+        Some("ublox")
+    );
+    assert!(inventory.devices[0].candidates[0].identification.is_none());
+    let mut wrong = request.clone();
+    wrong.port = "/dev/cu.other".into();
+    assert!(wrong.validate(&inventory).is_err());
+    wrong = request.clone();
+    wrong.device_id = "stale".into();
+    assert!(wrong.validate(&inventory).is_err());
+    wrong = request.clone();
+    wrong.helper = "helper.py".into();
+    assert!(wrong.validate(&inventory).is_err());
+    let mut changed = inventory.clone();
+    changed.devices[0].usb.as_mut().unwrap().vid = "1234".into();
+    assert!(request.validate(&changed).is_err());
+    changed = inventory.clone();
+    changed.devices[0].endpoints.clear();
+    assert!(request.validate(&changed).is_err());
+    let busy = identify::Identification::from_active_owner(
+        &request,
+        &json!({"active":true,"run_id":"active","receiver_health":{"location":{"state":"fix","firmware":"unverified"}}}),
+    );
+    assert_eq!(busy.state, "busy");
+    assert_eq!(busy.compatible, None);
+    assert_eq!(busy.firmware_version, None);
+    assert_eq!(busy.reception, "not_tested");
+    let json = serde_json::to_value(busy).unwrap();
+    for field in [
+        "firmware_version",
+        "software_version",
+        "hardware_version",
+        "protocol_version",
+        "model",
+    ] {
+        assert!(json[field].is_null())
+    }
+}
+
+#[test]
+fn ublox_inventory_capability_does_not_probe_or_guess_missing_endpoint() {
+    let mut gps = raw(0x1546, 0x01a8);
+    assert_eq!(
+        classify(&gps, "macos", &Options::default())[0].identification_protocol,
+        None
+    );
+    gps.endpoints = vec![
+        Endpoint {
+            kind: "serial".into(),
+            path: "/dev/one".into(),
+        },
+        Endpoint {
+            kind: "serial".into(),
+            path: "/dev/two".into(),
+        },
+    ];
+    let candidate = classify(&gps, "macos", &Options::default()).remove(0);
+    assert_eq!(candidate.identification_protocol, Some("ublox"));
+    assert!(candidate.location_configuration_hint.unwrap()["device"].is_null());
+    assert!(candidate.identification.is_none());
+    gps.vid = Some(0x1a86);
+    gps.pid = Some(0x55d4);
+    assert!(classify(&gps, "macos", &Options::default())
+        .iter()
+        .all(|c| c.identification_protocol.is_none()));
+}
