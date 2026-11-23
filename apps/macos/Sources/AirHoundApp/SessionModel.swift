@@ -6,11 +6,16 @@ import SwiftUI
 final class SessionModel: ObservableObject {
   @Published var socketPath = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/AirHound/control.sock").path
-  @Published var connected = false
+  @Published var connected = false {
+    didSet { if !connected { gpsIdentifications = [:] } }
+  }
   @Published var captureEnabled = false
   @Published var busy = false
   @Published var message = "Connect to the local service to set up a scan."
-  @Published var inventory: Inventory?
+  @Published var inventory: Inventory? {
+    didSet { gpsIdentifications = [:] }
+  }
+  @Published var gpsIdentifications: [GPSVersionTarget: JSONValue] = [:]
   @Published var selected = Set<String>()
   @Published var sourceOverrides: [String: JSONValue] = [:]
   @Published var configText = ""
@@ -392,6 +397,44 @@ final class SessionModel: ObservableObject {
       let inventory = try await client.inventory()
       try self.requireCurrent(client, epoch: connection)
       self.inventory = inventory
+    }
+  }
+
+  func canReadGPSVersion(_ target: GPSVersionTarget) -> Bool {
+    canSubmitAction && captureEnabled && !isActive && !hasPendingStart
+      && target.isCurrent(in: inventory)
+  }
+
+  func gpsVersion(for target: GPSVersionTarget) -> JSONValue? {
+    guard connected, target.isCurrent(in: inventory) else { return nil }
+    return gpsIdentifications[target]
+  }
+
+  func readGPSVersion(_ target: GPSVersionTarget) {
+    guard canReadGPSVersion(target), let client else { return }
+    let connection = connectionEpoch
+    submitUserAction {
+      try self.requireCurrent(client, epoch: connection)
+      self.gpsIdentifications = [:]
+      self.inventory = try await client.inventory()
+      try self.requireCurrent(client, epoch: connection)
+      let capture = try await client.status()
+      try self.requireCurrent(client, epoch: connection)
+      guard self.captureEnabled, capture["active"] == .bool(false), !self.hasPendingStart,
+        target.isCurrent(in: self.inventory)
+      else {
+        throw ModelError.invalid(
+          "The GPS connection or recording changed. Refresh devices and try again when idle.")
+      }
+      let result = try await client.identifyDevice(config: target.request.data())
+      try self.requireCurrent(client, epoch: connection)
+      self.inventory = try await client.inventory()
+      try self.requireCurrent(client, epoch: connection)
+      guard target.isCurrent(in: self.inventory), target.matches(result) else {
+        throw ModelError.invalid(
+          "The GPS connection changed. Its previous version result was discarded.")
+      }
+      self.gpsIdentifications[target] = result
     }
   }
 
