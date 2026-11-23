@@ -169,7 +169,7 @@ fn late_paused_input_requests_stop_and_fails_before_emitting_raw() {
     assert_eq!(out.events[0], Event::Status(State::Stopping, 3));
     assert_eq!(out.events[1], Event::Uart(UartAction::Stop));
     assert!(matches!(out.events[2], Event::Raw(_)));
-    assert_eq!(c.cause, 6);
+    assert_eq!(c.cause, 13);
     assert_eq!(c.request_id(), 0);
     c.feed(301, b"\r\nStopping WiFi tran/recv\r\n");
     c.poll(400);

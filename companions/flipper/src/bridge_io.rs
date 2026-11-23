@@ -34,7 +34,7 @@ pub fn received(c: &mut Controller, now: u32, bytes: &[u8], out: &mut impl Outpu
     if c.state == State::Paused && !bytes.is_empty() {
         // Late producer input after the acknowledged quiet boundary is an
         // explicit session failure, not silently resumed capture.
-        if let Some(stop) = c.fail(now, 6) {
+        if let Some(stop) = c.fail(now, 13) {
             dispatch(c, now, stop, out);
         }
     }
