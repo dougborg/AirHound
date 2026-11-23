@@ -1,5 +1,5 @@
 //! Task-only PSRAM output adapter. The runtime logger never calls this module.
-use crate::{comm, protocol::DeviceMessage, serial_console::increment, SERIALIZE_ERRORS};
+use crate::{protocol::DeviceMessage, serial_console::increment, SERIALIZE_ERRORS};
 use airhound::output_pool::{Kind, Pool, Reason, Unavailable};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -32,22 +32,16 @@ fn reason(error: Unavailable) -> Reason {
     }
 }
 pub fn publish(message: &DeviceMessage<'_>, kind: Kind) {
-    let pool = pool();
-    let mut slot = match pool.reserve(kind) {
-        Ok(slot) => slot,
-        Err(error) => {
-            pool.rejected(kind, reason(error));
-            return;
-        }
-    };
-    match comm::serialize_message(message, slot.buffer()) {
-        Some(length) => {
-            let _ = slot.commit(length, embassy_time::Instant::now().as_micros());
-        }
-        None => {
-            slot.discard_unpublished();
-            increment(&SERIALIZE_ERRORS);
-        }
+    if pool()
+        .publish_message(
+            message,
+            kind,
+            || embassy_time::Instant::now().as_micros(),
+            crate::forward_ble,
+        )
+        .is_err()
+    {
+        increment(&SERIALIZE_ERRORS);
     }
 }
 pub fn publish_bytes(bytes: &[u8], kind: Kind) {
@@ -65,21 +59,21 @@ pub fn publish_bytes(bytes: &[u8], kind: Kind) {
 }
 pub async fn command(message: &DeviceMessage<'_>) {
     let pool = pool();
-    let mut slot = match pool.reserve_command().await {
-        Ok(slot) => slot,
-        Err(error) => {
-            pool.rejected(Kind::Command, reason(error));
-            return;
-        }
+    let result = match pool.reserve_command().await {
+        Ok(slot) => slot.publish_message(
+            message,
+            || embassy_time::Instant::now().as_micros(),
+            crate::forward_ble,
+        ),
+        Err(_) => pool.publish_message(
+            message,
+            Kind::Command,
+            || embassy_time::Instant::now().as_micros(),
+            crate::forward_ble,
+        ),
     };
-    match comm::serialize_message(message, slot.buffer()) {
-        Some(length) => {
-            let _ = slot.commit(length, embassy_time::Instant::now().as_micros());
-        }
-        None => {
-            slot.discard_unpublished();
-            increment(&SERIALIZE_ERRORS);
-        }
+    if result.is_err() {
+        increment(&SERIALIZE_ERRORS);
     }
 }
 
