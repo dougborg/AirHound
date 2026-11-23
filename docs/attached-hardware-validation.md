@@ -20,14 +20,19 @@ recording failed while retaining backend-validated stop completion. A subsequent
 CatSniffer/ALFA/Flipper session with managed GPS finished with 3,106 observations
 and 2,957 fresh receiver-location associations. Its original harness rejected a
 valid Cat packet classification; independent saved-evidence revalidation passed
-without recapturing. Earlier acquisition, drain and watchdog failures remain below.
+without recapturing. A later active-host suspension with host `07c7142` retained
+147 packets and backend-validated producer stop completion, but strict fault
+acceptance failed because the host reported eight output drops. Physical USB
+loss/reconnect remains untested, and producer completion does not prove physical
+RF silence. Earlier acquisition, drain and watchdog failures remain below.
 The Flipper UI and live-source builds are delivered in the installed `07c7142`
 preview described below. The earlier native reception result does not establish
 permission or reception acceptance for this newly signed application.
 
 The M5 remains absent from the latest passive inventory. Physical CatSniffer
-unplug/replug, active-capture transport loss, actual GUI capture controls and
-longer-duration recovery checks remain open. The matrices below
+unplug/replug, strict active-host fault acceptance, physical USB transport loss,
+actual GUI capture controls and longer-duration recovery checks remain open. The
+matrices below
 retain earlier successes and failures with their build and test scope; they do
 not imply that every tested device is currently attached or enabled.
 
@@ -129,7 +134,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; actual AirHound 0.1.1 status | Earlier 66-second durable serial run: 407 WiFi + 71 BLE observations, 512 total stored records; pause/resume/finish passed | Currently absent; reconnect and revalidate. The earlier eight-second host pause discarded 47 observations and retained port/boot; zero observations recorded during pause. All host errors/drop counters and reported producer counters were 0. Autonomous radios continue while host ingestion is paused/stopped |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and included in installed `07c7142`; native button acceptance remains open |
-| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active transport loss, physical reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
+| Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
 | AWOK Dual Touch v3 | No directly attached CP2102 endpoint; Flipper GPIO USART route | Independent GPIO `info` reported Marauder 1.21.0/Dev Board Pro; diagnostic import retained 85 packets. Latest external combined run retained 728 live packets across two Flipper capture generations | Prior 63- and 65-packet attempts failed before Resume. The bridge Hello does not establish downstream firmware, assigned channel, RSSI or RF loss; literal stop acknowledgments do not prove physical RF silence |
 | Nordic BLE sniffer | `1915:522a`, USB CDC, nRF Sniffer product descriptor; historical explicit REQ_VERSION on 2026-11-21 reported firmware 4.1.1 / UART protocol 3 | A bounded query and subsequent read-only window observed an already-streaming advertising feed; prior scan configuration and queued reports were unknown ([#188](https://github.com/dougborg/AirHound/issues/188)) | Current discovery is descriptor-only; current firmware remains unverified. No live AirHound source integration; historical reads do not establish capture rate, RF loss, extended/Coded support or a verified board model |
 | CSR-compatible Bluetooth dongle | `0a12:0001`, CSR8510A10 product descriptor | Recognized prototype/research target only | No verified macOS live USB-HCI path; product name does not establish genuine silicon or capabilities |
@@ -156,6 +161,7 @@ that opening the port is nondisruptive.
 | Updated installed `33a5e93` service after permission approval, native WiFi + BLE, 20.196328 seconds | 483 WiFi + 1,233 BLE observations; 1,721 total records; finished | Both native scanners running, zero invalid source associations; nine prior recordings and saved setups preserved. Same signed backend and service throughout; no GUI capture-control claim |
 | Private Flipper `c7e72ae` / host `306d24a`, normal lifecycle, 8.984887 seconds | 129 packets: 65 in generation 1, 64 in generation 2; 377 records; finished | Quiet Pause for 1.207 seconds, explicit Resume, fresh Finish evidence 15 → 3 → 15; cleanup and default-service preservation passed |
 | Same Flipper / host `58239fa`, paused-host watchdog | 67 packets, 212 records; recording correctly **failed**; fault acceptance passed | Exact private host suspended for 6.559710 seconds after quiet Pause. No later packets; final cause 3, evidence 15 and backend-derived completion true, zero known loss/unread input. This covers paused-host heartbeat expiry only |
+| Same Flipper producer `c7e72ae` / host `07c7142`, active-host suspension | 147 durable packets, 303 records over 9.660146 seconds; recording **failed** and strict fault acceptance **failed** | Exact private host was suspended with SIGSTOP for 6.523048875 seconds while capture was active. Final cause 3, evidence 15 and backend-derived `stop_complete: true`; reported producer UART/RPC losses and unread input were zero, but eight host output drops failed the loss gate. Cleanup and default data preservation passed. Physical RF silence remains unverified; this was not physical USB loss/reconnect |
 | Private CatSniffer + ALFA + Flipper + managed GPS, host `58239fa`, 27.544530 seconds | 3,106 observations: Cat 945, ALFA 1,433, Flipper 728; 4,183 records; 2,957 fresh receiver-location associations; finished | All sources quiet during Pause and received after Resume; ALFA 1/6/11; Flipper generations 370 + 358 with fresh Finish. Original harness false result retained; corrected offline validation and all-record shared-client pagination passed without recapture |
 | Native BLE + CatSniffer, 45 seconds | 2,536 native BLE  + 2,961 Cat observations; 5,513 total records, finished | Concurrent BLE sources, attribution and orderly finish worked; Cat host drops/reconnects 0 |
 | Native WiFi + native BLE + CatSniffer + ALFA, 45 seconds, separately permitted backend app | 987 native WiFi  + 3,193 Cat  + 2,497 ALFA observations; 6,706 total records; **failed** terminal state | The three receiving sources worked concurrently, but native BLE initialization timed out. Do not call this four-receiver acceptance |
@@ -602,9 +608,10 @@ internally unexplained; production readiness timeouts are unchanged.
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
   cover the M5 reader; they do not replace hardware fault injection.
-- Extend Flipper fault acceptance beyond the passed paused-host watchdog case to
-  active-capture transport loss and physical USB removal/re-enumeration. The
-  accepted external concurrent session does not establish the full native/M5 rig
+- Resolve the eight host output drops from the active-host suspension before
+  claiming strict fault acceptance. That failed attempt retained producer stop
+  completion; it does not establish physical RF silence. Physical USB
+  removal/re-enumeration remains untested. The accepted external concurrent session does not establish the full native/M5 rig
   or endurance. The native setup UI from #297 is included in installed `07c7142`,
   but its actual capture controls remain unaccepted. Preserve prior failure
   evidence and do not retry the crashing third-party acquisition path without a
