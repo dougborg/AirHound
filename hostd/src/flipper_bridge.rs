@@ -27,6 +27,7 @@ struct Diagnostic {
     initial: Status,
     last: Status,
     fresh_stop_boundary: bool,
+    completion_revoked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +105,7 @@ impl Session {
         self.failed
             && self.diagnostic.as_ref().is_some_and(|d| {
                 d.fresh_stop_boundary
+                    && !d.completion_revoked
                     && d.last.state == State::Failed
                     && d.last.evidence & bridge::STOP_REQUEST_EVIDENCE
                         == bridge::STOP_REQUEST_EVIDENCE
@@ -161,12 +163,28 @@ impl Session {
                 {
                     return Err(invalid("Invalid or lossy failure diagnostic transition"));
                 }
+                if status.state == State::Failed
+                    && (status.evidence & bridge::STOP_REQUEST_EVIDENCE
+                        != bridge::STOP_REQUEST_EVIDENCE
+                        || status.uart_dropped_bytes != 0
+                        || status.uart_error_events != 0
+                        || status.rpc_dropped_messages != 0
+                        || status.unread_ring_bytes != 0)
+                {
+                    d.completion_revoked = true;
+                }
                 d.last = status;
                 self.last_reported_status = Some(status);
                 Ok(Some(status))
             }
-            Body::Raw { generation, .. }
-                if generation == d.initial.generation && message.header.request_id == 0 =>
+            Body::Raw {
+                generation,
+                app_uptime_ms,
+                ..
+            } if d.last.state == State::Stopping
+                && generation == d.initial.generation
+                && message.header.request_id == 0
+                && app_uptime_ms.wrapping_sub(d.initial.app_uptime_ms) <= 3250 =>
             {
                 Ok(None)
             }
@@ -362,6 +380,7 @@ impl Session {
                     initial: status,
                     last: status,
                     fresh_stop_boundary: status.evidence & bridge::STOP_REQUEST_EVIDENCE == 0,
+                    completion_revoked: false,
                 });
             }
             return Err(invalid(match status.cause {

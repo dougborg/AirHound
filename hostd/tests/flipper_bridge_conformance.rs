@@ -470,6 +470,43 @@ fn paired_watchdog_completion_distinguishes_deadline_and_retains_final_loss_revo
 }
 
 #[test]
+fn paired_unread_only_completion_revocation_cannot_be_reasserted() {
+    for revoked_flags in [7, 15] {
+        let mut p = Pair::new();
+        p.start(10);
+        p.poll(3010);
+        assert!(p.drain().is_err());
+        p.producer.feed(3011, b"Stopping WiFi tran/recv\r\n");
+        p.producer.poll(3110);
+        let mut terminal = p.producer.status(3110);
+        p.queue(0, Body::Status(terminal));
+        p.host
+            .receive_diagnostic(&p.queued.pop_front().unwrap())
+            .unwrap();
+        assert!(p.host.diagnostic_stop_complete());
+        // Even a producer that incorrectly keeps bit8 set must not repair a
+        // terminal unread-byte failure into later accepted completion.
+        terminal.evidence = revoked_flags;
+        terminal.unread_ring_bytes = 1;
+        terminal.app_uptime_ms = 3111;
+        p.queue(0, Body::Status(terminal));
+        p.host
+            .receive_diagnostic(&p.queued.pop_front().unwrap())
+            .unwrap();
+        assert!(!p.host.diagnostic_stop_complete());
+        terminal.evidence = 15;
+        terminal.unread_ring_bytes = 0;
+        terminal.app_uptime_ms = 3112;
+        p.queue(0, Body::Status(terminal));
+        p.host
+            .receive_diagnostic(&p.queued.pop_front().unwrap())
+            .unwrap();
+        assert_eq!(p.host.last_reported_status(), Some(terminal));
+        assert!(!p.host.diagnostic_stop_complete());
+    }
+}
+
+#[test]
 fn paired_normal_pause_without_explicit_completion_is_rejected() {
     let mut p = Pair::new();
     p.start(10);

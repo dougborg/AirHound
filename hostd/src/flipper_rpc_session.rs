@@ -502,7 +502,7 @@ mod tests {
         },
     };
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     enum Fault {
         None,
         Loss,
@@ -527,6 +527,7 @@ mod tests {
         WatchdogInitialWrongRequest,
         WatchdogMissingBoundary,
         WatchdogBadTail,
+        WatchdogRawTail,
     }
 
     fn peer(mut io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
@@ -580,7 +581,37 @@ mod tests {
                         content: Some(Content::Empty(proto::Empty {})),
                         ..Default::default()
                     };
-                    io.write_all(&rpc::encode(&response).unwrap()).unwrap();
+                    if let Err(error) = io.write_all(&rpc::encode(&response).unwrap()) {
+                        // A peer rejecting queued invalid diagnostics may close
+                        // immediately after its best-effort StopSession. Only
+                        // that teardown ACK may race the intentional close.
+                        if matches!(request.content, Some(Content::StopSession(_)))
+                            && matches!(
+                                fault,
+                                Fault::WatchdogBadNonce
+                                    | Fault::WatchdogReplay
+                                    | Fault::WatchdogWrongRequest
+                                    | Fault::WatchdogWrongGeneration
+                                    | Fault::WatchdogWrongCause
+                                    | Fault::WatchdogCounterDecrease
+                                    | Fault::WatchdogInitialWrongGeneration
+                                    | Fault::WatchdogInitialWrongRequest
+                                    | Fault::WatchdogMissingBoundary
+                                    | Fault::WatchdogBadTail
+                                    | Fault::WatchdogRawTail
+                            )
+                            && matches!(
+                                error.kind(),
+                                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                            )
+                        {
+                            return commands;
+                        }
+                        panic!(
+                            "fixture ACK failed for {fault:?} request {}: {error}",
+                            request.command_id
+                        );
+                    }
                     match request.content.unwrap() {
                         Content::AppStartRequest(app) => {
                             assert_eq!(app.name, APPLICATION);
@@ -741,6 +772,7 @@ mod tests {
                                             | Fault::WatchdogInitialWrongRequest
                                             | Fault::WatchdogMissingBoundary
                                             | Fault::WatchdogBadTail
+                                            | Fault::WatchdogRawTail
                                     ) {
                                         let mut failed = status(State::Stopping, 3, 3, generation);
                                         failed.app_uptime_ms = 3001;
@@ -823,6 +855,16 @@ mod tests {
                                                 failed.uart_dropped_bytes = 1;
                                                 send(0, Body::Status(failed));
                                             }
+                                            if matches!(fault, Fault::WatchdogRawTail) {
+                                                send(
+                                                    0,
+                                                    Body::Raw {
+                                                        generation,
+                                                        app_uptime_ms: 3102,
+                                                        bytes: b"late input",
+                                                    },
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -900,6 +942,7 @@ mod tests {
             Fault::WatchdogInitialWrongRequest,
             Fault::WatchdogMissingBoundary,
             Fault::WatchdogBadTail,
+            Fault::WatchdogRawTail,
         ] {
             let (mut io, other) = transport();
             let peer = peer(other, fault);
@@ -946,7 +989,10 @@ mod tests {
             assert!(!accepted_terminal);
             if matches!(fault, Fault::WatchdogTerminal) {
                 assert_eq!(completion, [false, true]);
-            } else if matches!(fault, Fault::WatchdogRevoked | Fault::WatchdogBadTail) {
+            } else if matches!(
+                fault,
+                Fault::WatchdogRevoked | Fault::WatchdogBadTail | Fault::WatchdogRawTail
+            ) {
                 assert!(completion.starts_with(&[false, true, false]));
                 assert!(completion[2..].iter().all(|proof| !proof));
             } else {
@@ -1001,7 +1047,7 @@ mod tests {
                 assert_eq!(diagnostic[2].evidence, 7);
                 assert_eq!(diagnostic[2].uart_dropped_bytes, 1);
                 assert_eq!(diagnostic[2].state, State::Failed);
-            } else if matches!(fault, Fault::WatchdogBadTail) {
+            } else if matches!(fault, Fault::WatchdogBadTail | Fault::WatchdogRawTail) {
                 assert!(diagnostic.len() >= 3);
                 assert_eq!(diagnostic[1].evidence, 15);
                 assert_eq!(diagnostic.last().unwrap(), &diagnostic[1]);
