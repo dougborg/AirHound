@@ -62,6 +62,24 @@ fields. Decoders may process a specific available service-data record with its
 source/freshness limits; temporal deduplication and reassembly are separate work.
 Any future reassembly must be bounded by source/session/set, bytes and time.
 
+### Firmware continuous legacy reports
+
+The no_std firmware keeps one legacy scan session alive across host recordings.
+trouble-host 0.6.0 initially enables controller duplicate filtering; firmware then
+awaits `LE Set Scan Enable(enable=true, filter_duplicates=false)` through the
+existing stack command owner before enabling Wi-Fi capture or reporting capture
+readiness. A rejected command fails startup and drops the scan session. Active
+scanning, interval/window, advertising and bounded output queues are unchanged.
+
+[Bluetooth Core, Vol 4 Part E §7.8.11](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html#UUID-10327f75-4024-80df-14bc-68fe1e42b9e0)
+permits changing duplicate filtering while scanning remains enabled. This avoids
+restarting the radio to obtain fresh observations of previously seen advertisers.
+Host Pause still controls ingestion, not device radios. Repeated reports do not
+establish lossless RF reception; queue counters and device timestamps retain
+their existing scopes. The command regression is software evidence; continued
+late BLE reception and same-boot recording lifecycle require separate hardware
+acceptance tracked in #317.
+
 ## Matching and output compatibility
 
 New byte patterns explicitly identify manufacturer/company or service/UUID

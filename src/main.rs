@@ -480,21 +480,28 @@ async fn main(spawner: embassy_executor::Spawner) {
             let mut scanner = trouble_host::scan::Scanner::new(central);
             let config = ScanConfig::default();
 
-            let result = scanner.scan(&config).await;
+            // The library's legacy scan enables controller duplicate filtering.
+            // Keep reporting repeated advertisements for fresh RSSI/time evidence
+            // across recordings without restarting the autonomous radio session.
+            let _session = match airhound::ble_scan_control::start_continuous_scan(
+                scanner.scan(&config),
+                |command| stack.command(command),
+            )
+            .await
+            {
+                Ok(session) => session,
+                Err(e) => {
+                    log::error!("BLE continuous scan failed to start: {:?}", e);
+                    return;
+                }
+            };
+
             sniffer
                 .set_promiscuous_mode(true)
                 .expect("Promiscuous mode failed");
             spawner.spawn(wifi_channel_hop_task()).unwrap();
             log::info!("WiFi sniffer initialized in promiscuous mode");
-            let _session = match result {
-                Ok(session) => session,
-                Err(e) => {
-                    log::error!("BLE scan failed to start: {:?}", e);
-                    return;
-                }
-            };
-
-            log::info!("BLE scan started (active, continuous)");
+            log::info!("BLE scan started (active, continuous, duplicate filtering disabled)");
             log::info!("Radio capture ready: ms={}", Instant::now().as_millis());
             // Session stays alive as long as _session exists.
             // Reports flow through ScanEventHandler on the runner.
