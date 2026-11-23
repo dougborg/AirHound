@@ -5,7 +5,7 @@ use airhound_hostd::{
     storage::{self, output::Completion, writer::Writer, RecordingMode},
 };
 use serde_json::{json, Value};
-use std::{io, path::PathBuf, sync::atomic::Ordering};
+use std::{io, path::PathBuf, sync::atomic::Ordering, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -49,10 +49,27 @@ fn spawn_with_active(
     let task = tokio::spawn(async move {
         let mut active = initial;
         let mut last: Option<Value> = None;
-        while let Some(request) = rx.recv().await {
-            if active.as_ref().is_some_and(|run| run.task.is_finished()) {
-                last = Some(active.take().expect("active run").complete().await);
-            }
+        // Capture-enabled service startup already reconciles orphans before IPC.
+        let mut recovery = StorageRecovery::default();
+        let mut maintenance = tokio::time::interval(Duration::from_secs(2));
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        maintenance.reset();
+        loop {
+            let request = tokio::select! {
+                // Recovery writes occur only on this background timer,
+                // never as a side effect of Status/history requests.
+                biased;
+                _ = maintenance.tick() => {
+                    collect_finished(&mut active, &mut last, &mut recovery).await;
+                    if active.is_none() { recovery.attempt(database.clone()).await; }
+                    // Fixed delay after completion: a slow/busy SQLite retry
+                    // must not make the next tick immediately ready and starve requests.
+                    maintenance.reset();
+                    continue;
+                }
+                request = rx.recv() => match request { Some(request) => request, None => break },
+            };
+            collect_finished(&mut active, &mut last, &mut recovery).await;
             let shutdown = matches!(request.action, Action::Shutdown);
             let paused = matches!(request.action, Action::Pause(_));
             let result = match request.action {
@@ -84,6 +101,8 @@ fn spawn_with_active(
                         Err(error)
                     } else if active.is_some() {
                         Err(invalid("a recording is already active"))
+                    } else if recovery.pending {
+                        Err(io::Error::other(recovery.start_error()))
                     } else {
                         match start(database.clone(), request_id, config).await {
                             Ok(run) => {
@@ -91,7 +110,13 @@ fn spawn_with_active(
                                 active = Some(run);
                                 Ok(status)
                             }
-                            Err(error) => Err(error),
+                            Err(error) => {
+                                if error.kind() != io::ErrorKind::InvalidInput {
+                                    recovery.pending = true;
+                                    recovery.error = Some(error.to_string());
+                                }
+                                Err(error)
+                            }
                         }
                     }
                 }
@@ -108,10 +133,9 @@ fn spawn_with_active(
                     };
                     serde_json::to_value(result).map_err(io::Error::other)
                 }
-                Action::Status => Ok(active
-                    .as_ref()
-                    .map(Active::status)
-                    .unwrap_or_else(|| json!({"active":false,"last":last}))),
+                Action::Status => Ok(active.as_ref().map(Active::status).unwrap_or_else(
+                    || json!({"active":false,"last":last,"storage_recovery":recovery.status()}),
+                )),
                 Action::Pause(id) | Action::Resume(id) => {
                     match active.as_ref().filter(|run| run.id == id) {
                         Some(run) => run.transition(paused).await,
@@ -122,11 +146,15 @@ fn spawn_with_active(
                     if active.as_ref().is_some_and(|run| run.id == id) {
                         let run = active.take().expect("active run");
                         run.control.shutdown();
-                        let result = run.complete().await;
+                        let mut result = run.complete().await;
+                        recovery.note(&result);
                         last = Some(result.clone());
+                        result["storage_recovery"] = recovery.status();
                         Ok(result)
                     } else if last.as_ref().is_some_and(|run| run["run_id"] == id) {
-                        Ok(last.clone().expect("last run"))
+                        let mut result = last.clone().expect("last run");
+                        result["storage_recovery"] = recovery.status();
+                        Ok(result)
                     } else {
                         Err(invalid("recording is not active in this service"))
                     }
@@ -134,13 +162,18 @@ fn spawn_with_active(
                 Action::Shutdown => {
                     if let Some(run) = active.take() {
                         run.control.shutdown();
-                        last = Some(run.complete().await);
+                        let result = run.complete().await;
+                        recovery.note(&result);
+                        last = Some(result);
                     }
-                    Ok(json!({"active":false,"last":last}))
+                    Ok(json!({"active":false,"last":last,"storage_recovery":recovery.status()}))
                 }
             };
             let _ = request.reply.send(result);
             if shutdown {
+                if recovery.pending {
+                    return Err(io::Error::other("recording storage recovery remains pending; free disk space and restart the capture service to reconcile unfinished history"));
+                }
                 if last.as_ref().is_some_and(|run| run["state"] == "failed") {
                     return Err(io::Error::other(
                         "capture ended with a failure; inspect recording history",
@@ -156,9 +189,79 @@ fn spawn_with_active(
                 return Err(io::Error::other("capture cleanup failed"));
             }
         }
+        if recovery.pending {
+            return Err(io::Error::other(
+                "recording storage recovery remains pending",
+            ));
+        }
         Ok(())
     });
     (Handle(tx), task)
+}
+/// A failed terminal write can outlive its writer thread. Keep its exact run
+/// identity/reason until an idle, exclusively locked recovery transaction commits.
+/// A restart loses in-memory causality, so ordinary Store recovery uses interrupted.
+#[derive(Default)]
+struct StorageRecovery {
+    pending: bool,
+    failed: Option<(String, String)>,
+    error: Option<String>,
+}
+impl StorageRecovery {
+    fn note(&mut self, result: &Value) {
+        if result["state"] == "failed" {
+            if let (Some(id), Some(reason)) = (result["run_id"].as_str(), result["error"].as_str())
+            {
+                self.failed = Some((id.to_owned(), reason.to_owned()));
+                self.pending = true;
+                self.error = None;
+            }
+        }
+    }
+    fn status(&self) -> Value {
+        json!({"pending":self.pending,"error":self.error})
+    }
+    fn start_error(&self) -> String {
+        format!("Recording storage recovery is pending; free disk space or resolve the storage error before starting another recording. {}", self.error.as_deref().unwrap_or("The service will retry automatically while idle."))
+    }
+    async fn attempt(&mut self, database: PathBuf) {
+        if !self.pending {
+            return;
+        }
+        let failed = self.failed.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            storage::Store::recover(
+                &database,
+                failed
+                    .as_ref()
+                    .map(|(id, reason)| (id.as_str(), reason.as_str())),
+            )
+        })
+        .await
+        .map_err(io::Error::other)
+        .and_then(|result| result);
+        match result {
+            Ok(()) => {
+                self.pending = false;
+                self.failed = None;
+                self.error = None;
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+}
+async fn collect_finished(
+    active: &mut Option<Active>,
+    last: &mut Option<Value>,
+    recovery: &mut StorageRecovery,
+) {
+    if active.as_ref().is_some_and(|run| run.task.is_finished()) {
+        let result = active.take().expect("active run").complete().await;
+        recovery.note(&result);
+        *last = Some(result);
+    }
 }
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -634,5 +737,124 @@ mod tests {
         );
         handle.request(Action::Shutdown).await.unwrap();
         assert!(actor.await.unwrap().is_err());
+    }
+    #[tokio::test]
+    async fn terminal_storage_failure_retries_in_background_and_blocks_new_start() {
+        let f = Fixture::new();
+        let (release, wait) = oneshot::channel::<()>();
+        let receiver = session_runtime::ReceiverTask::fixture(move |_tx, _control| async move {
+            wait.await.map_err(io::Error::other)?;
+            Err(io::Error::other("fixture receiver ended"))
+        });
+        let (handle, actor, id) = f.actor(receiver);
+        // A deterministic terminal-write failure, without disk filling or a
+        // long-lived read transaction that could grow the writer's WAL.
+        {
+            let connection = rusqlite::Connection::open(f.path()).unwrap();
+            connection.execute_batch("CREATE TRIGGER refuse_terminal BEFORE UPDATE OF state ON runs WHEN NEW.state IN ('failed','interrupted') BEGIN SELECT RAISE(FAIL,'fixture terminal storage unavailable'); END;").unwrap();
+        }
+        release.send(()).unwrap();
+        let failed = handle.request(Action::Finish(id.clone())).await.unwrap();
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["storage_recovery"]["pending"], true);
+        let original_reason = failed["error"].as_str().unwrap().to_owned();
+        let saved = storage::Reader::open(&f.path())
+            .unwrap()
+            .runs(1)
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.state, "recording");
+        assert!(saved.ended_at_us.is_none());
+        let count = saved.record_count;
+        let error = handle
+            .request(Action::Start {
+                request_id: "next-recording".into(),
+                config: json!({}),
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("storage recovery is pending"));
+        // Status exposes the pending condition; the independent timer owns writes.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = handle.request(Action::Status).await.unwrap();
+                assert_eq!(status["last"]["state"], "failed");
+                if status["storage_recovery"]["error"].is_string() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let connection = rusqlite::Connection::open(f.path()).unwrap();
+            connection
+                .execute_batch("DROP TRIGGER refuse_terminal;")
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                // Poll only a short-lived read-only SQLite query. No actor
+                // Status/Finish request may drive this terminal repair.
+                let saved = storage::Reader::open(&f.path()).unwrap().runs(1).unwrap();
+                if saved[0].state == "failed" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let saved = storage::Reader::open(&f.path())
+            .unwrap()
+            .runs(1)
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.state, "failed");
+        assert!(saved.ended_at_us.is_some());
+        assert_eq!(saved.record_count, count);
+        let connection = rusqlite::Connection::open(f.path()).unwrap();
+        let reason: String = connection
+            .query_row(
+                "SELECT reason FROM transitions WHERE run_id=?1 AND state='failed'",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(reason, original_reason);
+        drop(connection);
+        let repeated = handle.request(Action::Finish(id)).await.unwrap();
+        assert_eq!(repeated["state"], "failed");
+        assert_eq!(repeated["storage_recovery"]["pending"], false);
+        let replay_path = f.0.join("next.pcap");
+        std::fs::write(&replay_path, crate::marauder_replay::tests::fixture_bytes()).unwrap();
+        let config = json!({"version":1,"receivers":[{"id":"next-file","source":{"kind":"marauder_capture","path":replay_path,"format":"pcap"}}]});
+        let next = handle
+            .request(Action::Start {
+                request_id: "next-recording".into(),
+                config,
+            })
+            .await
+            .unwrap();
+        assert_eq!(next["active"], true);
+        assert_ne!(next["run_id"], failed["run_id"]);
+        let finished = handle
+            .request(Action::Finish(next["run_id"].as_str().unwrap().to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(finished["state"], "finished");
+        let history = storage::Reader::open(&f.path()).unwrap().runs(10).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history
+                .iter()
+                .find(|r| r.id == failed["run_id"].as_str().unwrap())
+                .unwrap()
+                .state,
+            "failed"
+        );
+        handle.request(Action::Shutdown).await.unwrap();
+        actor.await.unwrap().unwrap();
     }
 }
