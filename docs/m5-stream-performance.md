@@ -31,15 +31,55 @@ intervals and queue/drop accounting are unchanged.
 The internal heap remains 64 KiB and the existing observation table remains in
 PSRAM. The queue allocation trades relatively large 512-byte serialized slots for
 smaller parsed events, rather than expanding internal-memory use indiscriminately.
-Startup-stack reservation is 7,396 bytes, above the strengthened 7,168-byte gate.
+The earlier startup-order image reserved 7,396 bytes for the stack. Every new
+M5 image must independently pass the unchanged 7,168-byte linked-reservation
+gate; this is not a runtime high-water measurement.
 
-UART configuration is applied once; its hardware ownership guards are retained
-for firmware lifetime without retaining the driver handle in the main async task.
-The ROM diagnostic writer remains synchronous, so this is a measured mitigation,
-not an asynchronous UART implementation. The new line rate shortens those stalls.
-XIAO and ESP-IDF console rates remain unchanged. Flash/boot-ROM traffic remains
-115200; only the no_std M5 application console changes rate. Cargo/just M5 flash
-recipes select the correct monitor rate.
+UART configuration is applied once at 460800 baud. XIAO and ESP-IDF console
+rates remain unchanged. Flash/boot-ROM traffic remains 115200.
+
+## Bounded M5 UART output candidate (#320)
+
+An observed controller assertion in `lld_evt.c` stopped firmware while the host
+reader remained open. Its cause remains unproven. Pinned `esp-println` holds an
+interrupt-masking lock around a complete synchronous UART log line; BLE
+interrupts are lower priority than that mask. Actual masked duration was not
+measured. The output candidate removes this known scheduling hazard without
+changing scan mode, intervals, or duplicate filtering. It is not yet hardware
+acceptance or a proven fix for [#320](https://github.com/dougborg/AirHound/issues/320).
+
+After startup, all ordinary M5 diagnostics and JSON records share the existing
+four output slots and a single UART owner. Formatting and bounded try-enqueue
+do not wait for the UART. Diagnostics flatten CR/LF and escape opening braces: the
+legacy host looks for JSON after a log prefix, so the prefix alone cannot prevent
+a diagnostic containing JSON from being parsed as an observation. Diagnostics
+are not forwarded to BLE subscribers. No additional queue or heap is allocated.
+
+The UART task checks FIFO readiness and copies at most 16 bytes in one short
+ownership critical section. It polls with interrupts enabled between these steps,
+with an absolute 20 ms deadline per line that never renews on partial progress.
+A maximum 512-byte line takes about 11.1 ms on the wire at 460800/8N1. This is
+bounded polling, not fully asynchronous output: cooperative application tasks
+can be delayed for one line, while interrupts can run during FIFO waits. The task
+yields before the next record. It does not retain a fifth 512-byte record across
+an await, shrink the queue, enlarge the heap, or relax the stack gate. Target
+build, linked-memory audit, and runtime button/reception tests remain required.
+
+Boot diagnostics are synchronous only before the runtime ownership handoff and
+radio readiness barrier. The panic pre-backtrace hook permanently takes the same
+ownership lock before the existing newline/backtrace output. An interrupted
+ordinary line is abandoned and never resumed. Controller-blob assertion text
+written before that hook is outside normal framing guarantees and remains fatal
+diagnostic evidence. XIAO keeps its existing console implementation.
+
+A UART error or line timeout permanently disables normal serial writes until
+reboot; subsequent records cannot be joined to a partial line. BLE forwarding may
+continue and carry aggregate failure counts. No error path logs recursively.
+The periodic `Serial output stats` diagnostic distinguishes logger queue drops,
+format failures and UART failures; it is itself best-effort. These causes also
+increment the existing strict `output_drops` or `serialize_errors` counters, so
+legacy consumers do not silently lose failure evidence. A stopped UART cannot
+promise a final serial counter report.
 
 ## What the loss counters mean
 
@@ -50,7 +90,11 @@ unique devices: repeated advertisements from one device can each be dropped.
 A subsequent advertisement may still identify the device; a brief observation
 may be lost entirely.
 
-`output_drops` counts records that could not enter the serialized-output queue.
+`output_drops` counts records rejected by the serialized-output queue and, in the
+M5 bounded-output candidate, records rejected after UART failure or timeout.
+Runtime diagnostic queue drops are included; this is no longer exclusively an
+observation count. Diagnostic formatting failures also increment
+`serialize_errors`.
 `ble_output_drops` counts records rejected by the BLE notification queue when a
 subscriber is connected. These counters identify different stages and should not
 be added to estimate the number of unique devices missed. None counts packets

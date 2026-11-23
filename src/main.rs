@@ -22,6 +22,8 @@ mod buzzer;
 #[cfg(feature = "m5stickc")]
 mod display;
 mod memory;
+#[cfg(feature = "m5stickc")]
+mod serial_console;
 
 // Re-export library modules so binary submodules (display, buzzer) can use crate::*
 pub(crate) use airhound::{
@@ -268,6 +270,9 @@ impl EventHandler for ScanEventHandler {
 
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) {
+    #[cfg(feature = "m5stickc")]
+    serial_console::init();
+    #[cfg(not(feature = "m5stickc"))]
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default();
@@ -278,19 +283,18 @@ async fn main(spawner: embassy_executor::Spawner) {
     });
     let peripherals = esp_hal::init(config);
     #[cfg(feature = "m5stickc")]
-    {
-        // Configure the console once. Retain clock/pin ownership for firmware
-        // lifetime without storing a UART handle in the main async task.
+    let serial = {
+        // Configure once; transfer the handle to the sole runtime writer.
         let serial = esp_hal::uart::UartTx::new(
             peripherals.UART0,
             esp_hal::uart::Config::default().with_baudrate(460_800),
         )
         .expect("UART0 configuration failed")
         .with_tx(peripherals.GPIO1);
-        core::mem::forget(serial);
         // Separate any boot-ROM bytes sent at 115200 from application logs.
         esp_println::println!();
-    }
+        serial
+    };
 
     #[cfg(feature = "m5stickc")]
     memory::init(peripherals.PSRAM);
@@ -335,6 +339,9 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     // Spawn non-BLE tasks
     spawner.spawn(filter_task()).unwrap();
+    #[cfg(feature = "m5stickc")]
+    spawner.spawn(output_serial_task(serial)).unwrap();
+    #[cfg(not(feature = "m5stickc"))]
     spawner.spawn(output_serial_task()).unwrap();
     spawner.spawn(status_task()).unwrap();
     spawner.spawn(command_task()).unwrap();
@@ -984,6 +991,7 @@ fn handle_ble_event(
 
 /// Serial output task — reads from output channel, logs to serial,
 /// and forwards a clone to the BLE output channel.
+#[cfg(not(feature = "m5stickc"))]
 #[embassy_executor::task]
 async fn output_serial_task() {
     log::info!("Serial output task started");
@@ -1010,6 +1018,47 @@ async fn output_serial_task() {
     }
 }
 
+/// Runtime M5 output has one UART writer for both diagnostics and observations.
+/// It never waits for wire transmission while interrupts are masked. Polling
+/// each line is bounded to 20ms; yielding between lines avoids retaining another
+/// 512-byte message in the task's static future storage.
+#[cfg(feature = "m5stickc")]
+#[embassy_executor::task]
+async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Blocking>) {
+    use airhound::serial_output::{is_observation, WriteOutcome, Writer};
+
+    serial_console::take_runtime_ownership();
+    let output_rx = OUTPUT_CHANNEL.receiver();
+    OUTPUT_READY.signal(());
+    let mut writer = Writer::default();
+    loop {
+        embassy_futures::yield_now().await;
+        let msg = output_rx.receive().await;
+        if is_observation(&msg)
+            && BLE_CLIENTS.load(Ordering::Relaxed) > 0
+            && BLE_OUTPUT_CHANNEL.try_send(msg.clone()).is_err()
+        {
+            BLE_OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+        }
+        match writer.write(
+            &msg,
+            |line, offset| serial_console::step(&mut uart, line, offset),
+            || Instant::now().as_micros(),
+        ) {
+            WriteOutcome::Sent => {}
+            WriteOutcome::Failed => {
+                // Do not splice a later record onto a partially written line.
+                // BLE forwarding can still carry cumulative failure counters.
+                serial_console::WRITE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+            WriteOutcome::Disabled => {
+                OUTPUT_DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 /// Periodic status reporting task
 #[embassy_executor::task]
 async fn status_task() {
@@ -1018,11 +1067,23 @@ async fn status_task() {
 
         let uptime_secs = (Instant::now().as_millis() / 1000) as u32;
 
+        #[cfg(feature = "m5stickc")]
+        log::info!(
+            "Serial output stats: log_drops={} format_errors={} write_errors={}",
+            serial_console::LOG_DROPS.load(Ordering::Relaxed),
+            serial_console::FORMAT_ERRORS.load(Ordering::Relaxed),
+            serial_console::WRITE_ERRORS.load(Ordering::Relaxed),
+        );
+        #[cfg(feature = "m5stickc")]
+        embassy_futures::yield_now().await;
+
         log::info!(
             "Memory stats: internal_free={} external_free={}",
             memory::internal_free(),
             memory::external_free()
         );
+        #[cfg(feature = "m5stickc")]
+        embassy_futures::yield_now().await;
         let counts = memory::counts();
         log::info!(
             "Observed addresses: aps={} wifi_other={} ble={} wifi_hits={} ble_hits={} limited={}",
@@ -1033,6 +1094,8 @@ async fn status_task() {
             counts.ble_hits,
             counts.limited
         );
+        #[cfg(feature = "m5stickc")]
+        embassy_futures::yield_now().await;
         log::info!(
             "WiFi stats: rx={} parsed={} queue_drops={} hop_errors={} matches={}",
             WIFI_RX_COUNT.load(Ordering::Relaxed),
@@ -1041,6 +1104,8 @@ async fn status_task() {
             WIFI_HOP_ERRORS.load(Ordering::Relaxed),
             WIFI_MATCH_COUNT.load(Ordering::Relaxed),
         );
+        #[cfg(feature = "m5stickc")]
+        embassy_futures::yield_now().await;
 
         if SCAN_DROPS.load(Ordering::Relaxed) != 0 {
             log::info!(
