@@ -24,6 +24,28 @@ pub struct Options {
     pub fixture_script: Option<PathBuf>,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    hello: Option<crate::test_support::TimerWitness>,
+    stop: Option<crate::test_support::TimerWitness>,
+    observation: Option<mpsc::UnboundedSender<u64>>,
+}
+
+async fn lifecycle_timeout<F: std::future::Future>(
+    duration: Duration,
+    future: F,
+    #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
+) -> Result<F::Output, tokio::time::error::Elapsed> {
+    let deadline = Instant::now() + duration;
+    let future = tokio::time::timeout_at(deadline, future);
+    #[cfg(test)]
+    if let Some(witness) = witness {
+        return witness.observe(deadline, future, Result::is_err).await;
+    }
+    future.await
+}
+
 fn publish_identity(
     control: &ScanControl,
     identity: &airhound_hostd::external_identity::Identity,
@@ -238,6 +260,8 @@ pub async fn scan_loop(
         control,
         Duration::from_secs(10),
         Duration::from_secs(15),
+        #[cfg(test)]
+        TestHooks::default(),
     )
     .await
 }
@@ -248,6 +272,7 @@ async fn scan_loop_with_timeouts(
     control: ScanControl,
     hello_timeout: Duration,
     stop_timeout: Duration,
+    #[cfg(test)] hooks: TestHooks,
 ) -> io::Result<()> {
     let mut state = control.subscribe();
     if !crate::control::wait_running(&mut state, &tx).await {
@@ -307,7 +332,7 @@ async fn scan_loop_with_timeouts(
     // startup must also cross the verified pause/resume barrier.
     let mut generation = state.borrow().generation;
     let result = async {
-        let hello = timeout(hello_timeout, lines.next()).await
+        let hello = lifecycle_timeout(hello_timeout, lines.next(), #[cfg(test)] hooks.hello.clone()).await
             .map_err(|_| error("companion hello timed out"))??.ok_or_else(|| error("companion exited before hello"))?;
         let hello = json(&hello)?;
         if hello["type"] != "hello" || hello["protocol_version"] != 1 { return Err(error("unsupported companion handshake")); }
@@ -355,6 +380,10 @@ async fn scan_loop_with_timeouts(
                                     Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
                                     Err(mpsc::error::TrySendError::Full(_)) => drops = drops.saturating_add(1),
                                 }
+                            }
+                            #[cfg(test)]
+                            if let Some(observation) = &hooks.observation {
+                                let _ = observation.send(message["sequence"].as_u64().expect("validated sequence"));
                             }
                         }
                         Some("status") => {
@@ -418,6 +447,8 @@ async fn scan_loop_with_timeouts(
         stopped,
         stop_timeout,
         next_request,
+        #[cfg(test)]
+        hooks.stop.clone(),
     )
     .await
     .and_then(|message| {
@@ -476,44 +507,50 @@ async fn shutdown_child<R: AsyncRead + Unpin>(
     mut stopped: Option<serde_json::Value>,
     stop_timeout: Duration,
     request_id: u64,
+    #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
 ) -> io::Result<serde_json::Value> {
-    let graceful = timeout(stop_timeout, async {
-        if stopped.is_none() {
-            command(input, "stop", request_id).await?;
-            loop {
-                // A malformed observation is fatal to the scan but must not
-                // prevent a later verified shutdown acknowledgement. Resync
-                // only at bounded line boundaries; the overall grace applies.
-                let line = match lines.next().await {
-                    Ok(Some(line)) => line,
-                    Ok(None) => break,
-                    Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                        tokio::task::yield_now().await;
+    let graceful = lifecycle_timeout(
+        stop_timeout,
+        async {
+            if stopped.is_none() {
+                command(input, "stop", request_id).await?;
+                loop {
+                    // A malformed observation is fatal to the scan but must not
+                    // prevent a later verified shutdown acknowledgement. Resync
+                    // only at bounded line boundaries; the overall grace applies.
+                    let line = match lines.next().await {
+                        Ok(Some(line)) => line,
+                        Ok(None) => break,
+                        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                            tokio::task::yield_now().await;
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    let Ok(message) = json(&line) else {
                         continue;
+                    };
+                    if message["type"] == "stopped"
+                        && message["request_id"].as_u64() == Some(request_id)
+                    {
+                        stopped = Some(message);
+                        break;
                     }
-                    Err(e) => return Err(e),
-                };
-                let Ok(message) = json(&line) else {
-                    continue;
-                };
-                if message["type"] == "stopped"
-                    && message["request_id"].as_u64() == Some(request_id)
-                {
-                    stopped = Some(message);
-                    break;
                 }
             }
-        }
-        let stopped = stopped
-            .take()
-            .filter(|message| message["cleanup_verified"] == true)
-            .ok_or_else(|| error("companion did not verify radio cleanup"))?;
-        let status = child.wait().await?;
-        if !status.success() {
-            return Err(error("companion exited unsuccessfully"));
-        }
-        Ok(stopped)
-    })
+            let stopped = stopped
+                .take()
+                .filter(|message| message["cleanup_verified"] == true)
+                .ok_or_else(|| error("companion did not verify radio cleanup"))?;
+            let status = child.wait().await?;
+            if !status.success() {
+                return Err(error("companion exited unsuccessfully"));
+            }
+            Ok(stopped)
+        },
+        #[cfg(test)]
+        witness,
+    )
     .await;
     match graceful {
         Ok(Ok(stopped)) => Ok(stopped),
@@ -538,6 +575,7 @@ async fn shutdown_child<R: AsyncRead + Unpin>(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use std::future::Future;
     use std::{
         io::Write,
         os::unix::fs::PermissionsExt,
@@ -551,12 +589,8 @@ mod tests {
     impl Fake {
         fn new(body: &str) -> Self {
             let directory = std::env::temp_dir().join(format!(
-                "airhound-child-{}-{}-{}",
+                "airhound-child-{}-{}",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos(),
                 SEQUENCE.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir(&directory).unwrap();
@@ -665,6 +699,7 @@ mod tests {
 
     #[tokio::test]
     async fn selected_usb_is_forwarded_and_reported_without_shell_interpolation() {
+        crate::test_support::manual_time(async {
         let body = LIFECYCLE
             .replace(
                 "\"type\":\"status\"",
@@ -680,17 +715,13 @@ mod tests {
         let control = ScanControl::new(true);
         let (tx, mut rx) = mpsc::channel(8);
         let worker = tokio::spawn(scan_loop(options, tx, control.clone()));
-        let status = timeout(Duration::from_secs(3), rx.recv())
-            .await
-            .unwrap()
+        let status = (rx.recv()).await
             .unwrap();
         assert!(
             matches!(status, ScanEvent::ExternalStatus { usb_selector: Some(id), state, .. } if id == "usb:1:2.3" && state == "running")
         );
         control.shutdown();
-        timeout(Duration::from_secs(3), worker)
-            .await
-            .unwrap()
+        (worker).await
             .unwrap()
             .unwrap();
         let arguments = std::fs::read_to_string(fake.executable.with_extension("args")).unwrap();
@@ -699,55 +730,54 @@ mod tests {
             .windows(2)
             .any(|a| a == ["--usb-selector", "usb:1:2.3"]));
         fake.assert_exited();
+        }).await;
     }
 
     #[tokio::test]
     async fn mismatched_pause_identity_never_triggers_resume() {
-        let body = LIFECYCLE
-            .replace(
-                "\"state\":\"running\"",
-                "\"state\":\"running\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
-            )
-            .replace(
-                "\"state\":\"paused\"",
-                "\"state\":\"paused\",\"usb_device\":{\"selector\":\"usb:1:3\"}",
-            )
-            .replace(
-                "\"type\":\"stopped\"",
-                "\"type\":\"stopped\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
-            )
-            .replace(
-                "case \"$command\" in",
-                "printf '%s\\n' \"$command\" >> \"$0.commands\"\ncase \"$command\" in",
+        crate::test_support::manual_time(async {
+            let body = LIFECYCLE
+                .replace(
+                    "\"state\":\"running\"",
+                    "\"state\":\"running\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
+                )
+                .replace(
+                    "\"state\":\"paused\"",
+                    "\"state\":\"paused\",\"usb_device\":{\"selector\":\"usb:1:3\"}",
+                )
+                .replace(
+                    "\"type\":\"stopped\"",
+                    "\"type\":\"stopped\",\"usb_device\":{\"selector\":\"usb:1:2\"}",
+                )
+                .replace(
+                    "case \"$command\" in",
+                    "printf '%s\\n' \"$command\" >> \"$0.commands\"\ncase \"$command\" in",
+                );
+            let fake = Fake::new(&body);
+            let control = ScanControl::new(true);
+            let (tx, mut rx) = mpsc::channel(8);
+            let worker = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+            (rx.recv()).await.unwrap();
+            control.store(false, std::sync::atomic::Ordering::Relaxed);
+            control.store(true, std::sync::atomic::Ordering::Relaxed);
+            let error = (worker).await.unwrap().unwrap_err();
+            assert!(
+                error.to_string().contains("USB selector")
+                    || error.to_string().contains("USB identity"),
+                "{error}"
             );
-        let fake = Fake::new(&body);
-        let control = ScanControl::new(true);
-        let (tx, mut rx) = mpsc::channel(8);
-        let worker = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        timeout(Duration::from_secs(3), rx.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        control.store(false, std::sync::atomic::Ordering::Relaxed);
-        control.store(true, std::sync::atomic::Ordering::Relaxed);
-        let error = timeout(Duration::from_secs(3), worker)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("USB selector")
-                || error.to_string().contains("USB identity"),
-            "{error}"
-        );
-        let commands = std::fs::read_to_string(fake.executable.with_extension("commands")).unwrap();
-        assert!(commands.contains("pause"));
-        assert!(!commands.contains("resume"));
-        fake.assert_exited();
+            let commands =
+                std::fs::read_to_string(fake.executable.with_extension("commands")).unwrap();
+            assert!(commands.contains("pause"));
+            assert!(!commands.contains("resume"));
+            fake.assert_exited();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn mismatched_stopped_identity_is_not_a_verified_selected_stop() {
+        crate::test_support::manual_time(async {
         let body = LIFECYCLE
             .replace(
                 "\"state\":\"running\"",
@@ -761,14 +791,10 @@ mod tests {
         let control = ScanControl::new(true);
         let (tx, mut rx) = mpsc::channel(8);
         let worker = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        timeout(Duration::from_secs(3), rx.recv())
-            .await
-            .unwrap()
+        (rx.recv()).await
             .unwrap();
         control.shutdown();
-        assert!(timeout(Duration::from_secs(3), worker)
-            .await
-            .unwrap()
+        assert!((worker).await
             .unwrap()
             .is_err());
         let status = rx.recv().await.unwrap();
@@ -776,6 +802,7 @@ mod tests {
             matches!(status, ScanEvent::ExternalStatus {state, usb_selector:Some(id), ..} if state == "failed" && id == "usb:1:2")
         );
         fake.assert_exited();
+        }).await;
     }
 
     const LIFECYCLE: &str = r#"
@@ -793,36 +820,35 @@ exit 3
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn writable_fixture_descriptor_does_not_prevent_receiver_lifecycle() {
-        let fake = Fake::new(LIFECYCLE);
-        let writer = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&fake.executable)
-            .unwrap();
-        // Reproduce the exact CI error deterministically, without timing or
-        // relaxing supervision/handshake deadlines.
-        let error = std::process::Command::new(&fake.executable)
-            .spawn()
-            .expect_err("Linux must reject exec of a writable script inode");
-        assert_eq!(error.raw_os_error(), Some(26)); // ETXTBSY
-        let (tx, mut rx) = mpsc::channel(4);
-        let control = ScanControl::new(true);
-        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        status(&mut rx, "running", &mut task).await;
-        control.shutdown();
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        fake.assert_exited();
-        drop(writer);
+        crate::test_support::manual_time(async {
+            let fake = Fake::new(LIFECYCLE);
+            let writer = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&fake.executable)
+                .unwrap();
+            // Reproduce the exact CI error deterministically, without timing or
+            // relaxing supervision/handshake deadlines.
+            let error = std::process::Command::new(&fake.executable)
+                .spawn()
+                .expect_err("Linux must reject exec of a writable script inode");
+            assert_eq!(error.raw_os_error(), Some(26)); // ETXTBSY
+            let (tx, mut rx) = mpsc::channel(4);
+            let control = ScanControl::new(true);
+            let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+            status(&mut rx, "running", &mut task).await;
+            control.shutdown();
+            (task).await.unwrap().unwrap();
+            fake.assert_exited();
+            drop(writer);
+        })
+        .await;
     }
     async fn status(
         rx: &mut mpsc::Receiver<ScanEvent>,
         expected: &str,
         task: &mut tokio::task::JoinHandle<io::Result<()>>,
     ) {
-        timeout(Duration::from_secs(3), async {
+        (async {
             loop {
                 let event = match rx.recv().await {
                     Some(event) => event,
@@ -838,11 +864,11 @@ exit 3
                 }
             }
         })
-        .await
-        .unwrap();
+        .await;
     }
     #[tokio::test]
     async fn helper_build_survives_as_current_owner_metadata_but_firmware_does_not() {
+        crate::test_support::manual_time(async {
         let body = LIFECYCLE.replace("\"protocol_version\":1", "\"protocol_version\":1,\"helper_build\":{\"component\":\"mt7610u-lab\",\"package_version\":\"0.1.0\",\"display_version\":\"git fixture\",\"git_revision\":null,\"source_tag\":null,\"tracked_source_modified\":null}");
         let fake = Fake::new(&body);
         let (tx, mut rx) = mpsc::channel(4);
@@ -862,10 +888,12 @@ exit 3
             "stopped"
         );
         fake.assert_exited();
+        }).await;
     }
 
     #[tokio::test]
     async fn explicit_child_pauses_resumes_stops_and_is_reaped() {
+        crate::test_support::manual_time(async {
         let fake = Fake::new(LIFECYCLE);
         let (tx, mut rx) = mpsc::channel(4);
         let control = ScanControl::new(true);
@@ -876,9 +904,7 @@ exit 3
         control.store(true, Ordering::Relaxed);
         status(&mut rx, "running", &mut task).await;
         control.shutdown();
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
+        (task).await
             .unwrap()
             .unwrap();
         fake.assert_exited();
@@ -886,88 +912,106 @@ exit 3
         assert!(
             matches!(final_status, ScanEvent::ExternalStatus {state,producer_dropped:17,reconnect_attempts:2,..} if state == "stopped")
         );
+        }).await;
     }
     #[tokio::test]
     async fn malformed_handshake_and_unexpected_eof_fail_and_reap() {
+        crate::test_support::manual_time(async {
         for body in ["printf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":2}'; while read -r line; do exit 0; done", "exit 0"] {
             let fake = Fake::new(body);
             let (tx, _rx) = mpsc::channel(4);
-            assert!(timeout(Duration::from_secs(3), scan_loop(fake.options(), tx, ScanControl::new(true))).await.unwrap().is_err());
+            assert!((scan_loop(fake.options(), tx, ScanControl::new(true))).await.is_err());
             fake.assert_exited();
         }
+        }).await;
     }
     #[tokio::test]
     async fn stderr_flood_does_not_block_handshake_or_shutdown() {
-        let fake = Fake::new(&format!("head -c 131072 /dev/zero >&2\n{LIFECYCLE}"));
-        let (tx, mut rx) = mpsc::channel(4);
-        let control = ScanControl::new(true);
-        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        status(&mut rx, "running", &mut task).await;
-        control.shutdown();
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        fake.assert_exited();
+        crate::test_support::manual_time(async {
+            let fake = Fake::new(&format!("head -c 131072 /dev/zero >&2\n{LIFECYCLE}"));
+            let (tx, mut rx) = mpsc::channel(4);
+            let control = ScanControl::new(true);
+            let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+            status(&mut rx, "running", &mut task).await;
+            control.shutdown();
+            (task).await.unwrap().unwrap();
+            fake.assert_exited();
+        })
+        .await;
     }
     #[tokio::test]
     async fn framing_survives_cancellation_and_enforces_limits_and_eof() {
-        let (mut writer, reader) = tokio::io::duplex(65536);
-        let mut lines = Lines::new(reader);
-        writer.write_all(b"{\"partial\":").await.unwrap();
-        assert!(timeout(Duration::from_millis(5), lines.next())
-            .await
-            .is_err());
-        writer.write_all(b"1}\n").await.unwrap();
-        assert_eq!(lines.next().await.unwrap().unwrap(), b"{\"partial\":1}");
-        writer
-            .write_all(&vec![b'x'; MAX_LINE_BYTES + 1])
-            .await
-            .unwrap();
-        assert!(lines.next().await.is_err());
-        let mut truncated = Lines::new(&b"unfinished"[..]);
-        assert!(truncated.next().await.is_err());
+        crate::test_support::manual_time(async {
+            let (mut writer, reader) = tokio::io::duplex(65536);
+            let mut lines = Lines::new(reader);
+            writer.write_all(b"{\"partial\":").await.unwrap();
+            {
+                let pending = lines.next();
+                tokio::pin!(pending);
+                assert!(matches!(
+                    std::future::poll_fn(|cx| std::task::Poll::Ready(pending.as_mut().poll(cx)))
+                        .await,
+                    std::task::Poll::Pending
+                ));
+            }
+            writer.write_all(b"1}\n").await.unwrap();
+            assert_eq!(lines.next().await.unwrap().unwrap(), b"{\"partial\":1}");
+            writer
+                .write_all(&vec![b'x'; MAX_LINE_BYTES + 1])
+                .await
+                .unwrap();
+            assert!(lines.next().await.is_err());
+            let mut truncated = Lines::new(&b"unfinished"[..]);
+            assert!(truncated.next().await.is_err());
+        })
+        .await;
     }
     #[tokio::test]
     async fn hello_timeout_and_uncooperative_stop_force_reap_and_report_failure() {
-        let fake = Fake::new("while IFS= read -r line; do :; done");
-        let (tx, _rx) = mpsc::channel(4);
-        let error = timeout(
-            Duration::from_secs(4),
-            scan_loop_with_timeouts(
+        crate::test_support::manual_time(async {
+            let fake = Fake::new("while IFS= read -r line; do :; done");
+            let (tx, _rx) = mpsc::channel(4);
+            let (hello, mut hello_events) = crate::test_support::TimerWitness::channel();
+            let (stop, mut stop_events) = crate::test_support::TimerWitness::channel();
+            let task = tokio::spawn(scan_loop_with_timeouts(
                 fake.options(),
                 tx,
                 ScanControl::new(true),
                 Duration::from_millis(250),
                 Duration::from_millis(250),
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap_err();
-        assert!(error.to_string().contains("hello timed out"));
-        assert!(error.to_string().contains("forced termination"));
-        fake.assert_exited();
+                TestHooks {
+                    hello: Some(hello),
+                    stop: Some(stop),
+                    ..Default::default()
+                },
+            ));
+            crate::test_support::advance_registered_timer(&mut hello_events).await;
+            crate::test_support::advance_registered_timer(&mut stop_events).await;
+            let error = task.await.unwrap().unwrap_err();
+            assert!(error.to_string().contains("hello timed out"));
+            assert!(error.to_string().contains("forced termination"));
+            fake.assert_exited();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn closed_consumer_still_requests_verified_cleanup() {
-        let fake = Fake::new(LIFECYCLE);
-        let (tx, mut rx) = mpsc::channel(4);
-        let mut task = tokio::spawn(scan_loop(fake.options(), tx, ScanControl::new(true)));
-        status(&mut rx, "running", &mut task).await;
-        drop(rx);
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        fake.assert_exited();
+        crate::test_support::manual_time(async {
+            let fake = Fake::new(LIFECYCLE);
+            let (tx, mut rx) = mpsc::channel(4);
+            let mut task = tokio::spawn(scan_loop(fake.options(), tx, ScanControl::new(true)));
+            status(&mut rx, "running", &mut task).await;
+            drop(rx);
+            (task).await.unwrap().unwrap();
+            fake.assert_exited();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn saturated_observation_queue_drops_data_without_blocking_pause_or_stop() {
+        crate::test_support::manual_time(async {
         let beacon = |sequence| serde_json::json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","session_id":"burst","sequence":sequence,"bssid":"02:00:00:00:00:01","ssid_bytes":[255],"advertised_channel":1,"receive_channel":1,"elapsed_ms":sequence,"observed_at_unix_ms":1,"dwell_elapsed_ms":sequence,"channel_epoch":0,"rssi_dbm":null,"estimated_rssi_dbm":-80,"rssi_validated":false,"rssi_estimate_basis":"mt76_eeprom_formula","raw_rssi":[186,0,0,0],"full_calibration":false});
         let mut body = String::from("printf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":1}' '{\"type\":\"status\",\"state\":\"running\"}'\n");
         for sequence in 0..200 {
@@ -982,35 +1026,17 @@ exit 3
                 .unwrap()
                 .as_str(),
         );
-        // A marker after the burst replaces a scheduler-dependent fixed sleep.
-        body = body.replacen(
-            "while IFS=",
-            ": > \"${0%/*}/burst-complete\"\nwhile IFS=",
-            1,
-        );
         let fake = Fake::new(&body);
         let (tx, mut rx) = mpsc::channel(1);
         let control = ScanControl::new(true);
-        let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
-        // Keep the initial status queued while the burst is emitted. Process
-        // startup on a loaded runner is not part of the pause/stop latency
-        // assertion below; allow the production handshake budget plus burst I/O.
-        timeout(Duration::from_secs(15), async {
-            while !fake.directory.join("burst-complete").exists() {
-                if task.is_finished() {
-                    panic!(
-                        "supervisor exited before the burst completed: {:?}",
-                        (&mut task).await
-                    );
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        let (observed, mut observations) = mpsc::unbounded_channel();
+        let mut task = tokio::spawn(scan_loop_with_timeouts(fake.options(), tx, control.clone(), Duration::from_secs(10), Duration::from_secs(15), TestHooks {observation:Some(observed), ..Default::default()}));
+        // Keep initial status queued until every actual beacon has passed the
+        // host queue admission/drop path. Child stdout flush is not this proof.
+        for expected in 0..200 { assert_eq!(observations.recv().await, Some(expected)); }
         status(&mut rx, "running", &mut task).await;
         control.store(false, Ordering::Relaxed);
-        let drops = timeout(Duration::from_secs(3), async {
+        let drops = (async {
             loop {
                 if let Some(ScanEvent::ExternalStatus { state, dropped, .. }) = rx.recv().await {
                     if state == "paused" {
@@ -1018,36 +1044,33 @@ exit 3
                     }
                 }
             }
-        })
-        .await
-        .unwrap();
+        }).await;
         assert!(drops > 0);
         control.shutdown();
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
+        (task).await
             .unwrap()
             .unwrap();
         fake.assert_exited();
+        }).await;
     }
     #[tokio::test]
     async fn malformed_observation_still_allows_verified_graceful_shutdown() {
-        let body = LIFECYCLE.replace("while IFS=", "printf '%s\\n' 'not-json'\nwhile IFS=");
-        let fake = Fake::new(&body);
-        let (tx, _rx) = mpsc::channel(4);
-        let failure = timeout(
-            Duration::from_secs(3),
-            scan_loop(fake.options(), tx, ScanControl::new(true)),
-        )
-        .await
-        .unwrap()
-        .unwrap_err();
-        assert!(failure.to_string().contains("invalid JSON"));
-        assert!(!failure.to_string().contains("forced termination"));
-        fake.assert_exited();
+        crate::test_support::manual_time(async {
+            let body = LIFECYCLE.replace("while IFS=", "printf '%s\\n' 'not-json'\nwhile IFS=");
+            let fake = Fake::new(&body);
+            let (tx, _rx) = mpsc::channel(4);
+            let failure = (scan_loop(fake.options(), tx, ScanControl::new(true)))
+                .await
+                .unwrap_err();
+            assert!(failure.to_string().contains("invalid JSON"));
+            assert!(!failure.to_string().contains("forced termination"));
+            fake.assert_exited();
+        })
+        .await;
     }
     #[tokio::test]
     async fn coalesced_pause_resume_requires_correlated_barrier_and_discards_stale_records() {
+        crate::test_support::manual_time(async {
         let beacon = |session: &str, sequence| serde_json::json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","session_id":session,"sequence":sequence,"bssid":"02:00:00:00:00:01","ssid_bytes":[],"advertised_channel":1,"receive_channel":1,"elapsed_ms":sequence,"observed_at_unix_ms":1,"dwell_elapsed_ms":sequence,"channel_epoch":0,"rssi_dbm":null,"estimated_rssi_dbm":null,"rssi_validated":false,"rssi_estimate_basis":"mt76_eeprom_formula","raw_rssi":[0,0,0,0],"full_calibration":false});
         let old0 = beacon("old", 0);
         let old1 = beacon("old", 1);
@@ -1073,7 +1096,7 @@ done
         // No yield: watch coalesces these transitions into latest enabled=true.
         control.store(false, Ordering::Relaxed);
         control.store(true, Ordering::Relaxed);
-        let event = timeout(Duration::from_secs(3), async {
+        let event = (async {
             loop {
                 match rx.recv().await.unwrap() {
                     ScanEvent::ExternalWiFi { event, generation } => break (event, generation),
@@ -1081,18 +1104,15 @@ done
                     _ => panic!("unexpected event"),
                 }
             }
-        })
-        .await
-        .unwrap();
+        }).await;
         assert_eq!(event.0.session_id, "new");
         assert_eq!(event.0.sequence, 0);
         assert_eq!(event.1, 2);
         control.shutdown();
-        timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
+        (task).await
             .unwrap()
             .unwrap();
         fake.assert_exited();
+        }).await;
     }
 }
