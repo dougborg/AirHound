@@ -1,5 +1,4 @@
 import importlib.util
-from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -19,6 +18,25 @@ SUPPORT = Path(__file__).resolve().parents[4] / "scripts/test-process-support.py
 support_spec = importlib.util.spec_from_file_location("test_process_support", SUPPORT)
 support = importlib.util.module_from_spec(support_spec)
 support_spec.loader.exec_module(support)
+
+
+def cross_group_fixture_code(ready):
+    return "\n".join([
+        "import os,signal,subprocess,sys,json",
+        # EOF still releases the descendant if the fixture parent is killed.
+        "child=subprocess.Popen([sys.executable,'-c','import sys; print(\"READY\",flush=True); sys.stdin.buffer.read()'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,start_new_session=True)",
+        # Popen completion proves exec, not completion of interpreter startup.
+        # The test controller's ReadyPipe watchdog bounds this fixture handshake.
+        "assert child.stdout.readline()==b'READY\\n', 'descendant did not initialize'",
+        "child.stdout.close()",
+        "def stop(*_):",
+        " child.wait()",
+        " " + ready.write_code("{'state':'reaped'}"),
+        " raise SystemExit(0)",
+        "signal.signal(signal.SIGTERM,stop)",
+        ready.write_code("{'state':'ready','pids':[os.getpid(),child.pid]}"),
+        "signal.pause()",
+    ])
 
 
 class TestRunnerTests(unittest.TestCase):
@@ -151,6 +169,25 @@ class TestRunnerTests(unittest.TestCase):
     def test_diagnostic_io_and_later_snapshot_failure_do_not_skip_known_cleanup(self):
         self.check_cross_group_cleanup(diagnostics_failure=True)
 
+    def test_parent_readiness_requires_descendant_startup_event(self):
+        # Force the interleaving: Popen returns while the child has not completed
+        # startup. Only consuming its actual readiness event may advance it.
+        from types import SimpleNamespace
+        initialized, published = [], []
+        def child_ready():
+            self.assertEqual(published, [])
+            initialized.append(True)
+            return b'READY\n'
+        def publish(message):
+            self.assertEqual(initialized, [True], 'parent announced ready before descendant')
+            published.append(message)
+        child = SimpleNamespace(pid=42, stdout=SimpleNamespace(readline=child_ready, close=lambda: None))
+        ready = SimpleNamespace(write_code=lambda expression: 'publish(' + expression + ')')
+        with patch.object(subprocess, 'Popen', return_value=child), \
+             patch.object(runner.signal, 'signal'), patch.object(runner.signal, 'pause'):
+            exec(cross_group_fixture_code(ready), {'publish': publish})
+        self.assertEqual(published, [{'state':'ready','pids':[os.getpid(),42]}])
+
     def check_cross_group_cleanup(self, diagnostics_failure=False, grace_failure=False):
         self.require_inventory()
         with tempfile.TemporaryDirectory() as directory:
@@ -158,32 +195,33 @@ class TestRunnerTests(unittest.TestCase):
             ready = support.ReadyPipe(root)
             self.addCleanup(ready.close)
             pids = []
-            code = "\n".join([
-                "import os,signal,subprocess,sys,time,json,pathlib",
-                # If ownership enumeration unexpectedly fails and the parent
-                # is killed, EOF still terminates this exact descendant.
-                "child=subprocess.Popen([sys.executable,'-c','import sys; sys.stdin.buffer.read()'],stdin=subprocess.PIPE,start_new_session=True)",
-                "def stop(*_):",
-                " child.wait()",
-                " " + ready.write_code("{'state':'reaped'}"),
-                " raise SystemExit(0)",
-                "signal.signal(signal.SIGTERM,stop)",
-                ready.write_code("{'state':'ready','pids':[os.getpid(),child.pid]}"),
-                "signal.pause()",
-            ])
+            code = cross_group_fixture_code(ready)
             destination = root
             original_snapshot = runner.snapshot
             calls = []
-            def fail_second_snapshot(pid):
+            def checked_snapshot(pid):
                 calls.append(pid)
-                if len(calls) > 1:
+                if diagnostics_failure and len(calls) > 1:
                     raise OSError("controlled later snapshot failure")
-                return original_snapshot(pid)
+                rows = original_snapshot(pid)
+                if len(calls) == 1:
+                    # A missing process is a failed fixture precondition, not
+                    # permission to retry inventory until the test passes.
+                    evidence = {'expected_pids':pids,'rows':rows}
+                    (root/'initial-inventory.json').write_text(json.dumps(evidence,indent=2))
+                    self.assertEqual({row['pid'] for row in rows},set(pids),
+                        'Initial inventory incomplete after descendant readiness: '+json.dumps(evidence))
+                return rows
             if diagnostics_failure:
                 destination = root / "not-a-directory"
                 destination.write_text("diagnostic writes must fail")
-            context = (patch.object(runner, "snapshot", side_effect=fail_second_snapshot)
-                       if diagnostics_failure else nullcontext())
+            context = patch.object(runner, "snapshot", side_effect=checked_snapshot)
+            signal_results = []
+            original_signal = runner.signal_owned
+            def signal_and_record(row, action):
+                delivered = original_signal(row, action)
+                signal_results.append({'pid':row['pid'],'action':action,'delivered':delivered})
+                return delivered
             def deadline(process, timeout):
                 self.own_fixture(process)
                 self.assertEqual(timeout, 15)
@@ -193,11 +231,14 @@ class TestRunnerTests(unittest.TestCase):
                 pids.extend(message['pids'])
                 raise subprocess.TimeoutExpired(process.args, timeout)
             def grace():
+                self.assertEqual({r['pid'] for r in signal_results
+                    if r['action']==runner.signal.SIGTERM and r['delivered']},set(pids),
+                    'Owned TERM was refused: '+json.dumps(signal_results))
                 # The actual parent confirms it reaped the descendant before
                 # cleanup proceeds; no grace-period speed assumption.
                 self.assertEqual(ready.receive(), {'state':'reaped'})
                 if grace_failure: raise AssertionError('injected grace failure')
-            with context, patch.object(runner, "signal_owned", wraps=runner.signal_owned) as signalled:
+            with context, patch.object(runner, "signal_owned", side_effect=signal_and_record) as signalled:
                 if grace_failure:
                     with self.assertRaisesRegex(AssertionError, 'injected grace failure'):
                         runner.run([sys.executable, "-c", code], 15, destination,
