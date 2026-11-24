@@ -1392,16 +1392,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
     },
-    "5a57193adc582cca30f7b310eecae922adbfdac2a1ca98d1e20760fc781ff1ea": {
-      "path": "hostd/tests/support/mod.rs",
-      "scope": "spawn",
-      "rule": "delay-or-deadline",
-      "context_sha256": "ee74e2eda917e59e49d6f6812eab357af715619f6a933f6b9e5b049fa3ca5113",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
-      "category": "outer-hang-guard",
-      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
-    },
     "5b03a75a283925b877a7a5ddd404f78c58c432b06a3ce830bf630a9578fc9657": {
       "path": "scripts/receiver-soak.py",
       "scope": "fixture-file",
@@ -2908,16 +2898,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
-    "aceaf48f703180417234a51882fd8ff4df4d4547594df06469a1717b54b07740": {
-      "path": "hostd/tests/marauder_session.rs",
-      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
-      "rule": "client-deadline-seam",
-      "context_sha256": "eb16652c57ad6e91a815b4177399dac82945a2555d79b7e6166ef059b7883681",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
-      "category": "virtual-time",
-      "reason": "This SDK connect and later calls execute in start_paused with ManualTime held until all client operations finish. Real child readiness is post-listen diagnostic; terminal replay is a durable SQLite write predicate witnessed through OS events. Client3s policy budget is frozen; ManualTime separate120s watchdog bounds hangs. Does not claim child server production budgets are virtualized."
-    },
     "ad778f574965e6c744341a9aceb7426ecd595b49c83ec57f2630a4854286d29d": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
@@ -3611,16 +3591,6 @@
       "reason": "Shared stop_scanners timer uses unchanged production budget. All async main tests enter manual_time; forced-stop tests observe real scanner Pending/backpressure and actual TimerWitness registration before explicit virtual expiry. Cooperative shutdown uses completion events. No scheduler elapsed bound determines success.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
-    },
-    "d62dd624466550ba4290c3f299c8d7add2e091d3e274bda4636bb8403d9f323e": {
-      "path": "hostd/tests/support/mod.rs",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "6d1528e3300e939b1108b5310714c0036549a032f901228b23a508974d7fa178",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
-      "category": "outer-hang-guard",
-      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
     },
     "d77600af437578d25136c0a01c8cb001f19d710dceb4b5dc683ffd8a513e660b": {
       "path": "scripts/tests/test_receiver_soak.py",
@@ -4414,16 +4384,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
     },
-    "fda7e895b28ef523c890ba86b7fbedecf30eaef344eb45cf31c1659c71916834": {
-      "path": "hostd/tests/marauder_session.rs",
-      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
-      "rule": "client-deadline-seam",
-      "context_sha256": "eb16652c57ad6e91a815b4177399dac82945a2555d79b7e6166ef059b7883681",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
-      "category": "virtual-time",
-      "reason": "This SDK connect and later calls execute in start_paused with ManualTime held until all client operations finish. Real child readiness is post-listen diagnostic; terminal replay is a durable SQLite write predicate witnessed through OS events. Client3s policy budget is frozen; ManualTime separate120s watchdog bounds hangs. Does not claim child server production budgets are virtualized."
-    },
     "fe61063303fa860d20094608c347e552a777aa3d60cae6c2d890435ef5208664": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
@@ -4543,6 +4503,86 @@
       "reason": "Physical optimized offscreen benchmark duration, reported as a metric only. Cursor/page/selection/viewport checks are structural and do not compare elapsed time. Small-data unexercised checks are explicitly null.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root source review approved these four exact physical measurement contexts with benchmark4053743; reviewed code remains byte-identical. No elapsed-time correctness gate."
+    },
+    "019d577561a7d17522705ff62bd27bda18ddcee5ca8c101d881c4e2c919361dc": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_for_line",
+      "rule": "clock-read",
+      "context_sha256": "c37373cc98b4345b6594bc1d9cd3bd49725edad457a9b00da009db116ed4c3c2",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "3477953128a9a033194dfceebdd201a8e3b6d03f66d0e34714b41186fb5d33cc": {
+      "path": "hostd/tests/marauder_session.rs",
+      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
+      "rule": "client-deadline-seam",
+      "context_sha256": "969dc1a5b5a88b3f7e0fc2f6ddc4fb02e50338941bd2e5a815756b6863eee6d7",
+      "category": "virtual-time",
+      "reason": "Both actual protocol client calls execute while the test holds ManualTime on its paused Tokio clock. No wall-clock scheduling or elapsed-time success criterion is introduced by replacing the WAL predicate with a retained run-bound commit event. The separate child service remains real integration coverage; its production timers are not classified by this entry.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "52d5495480a1893261e6e8c2321e57c132473a30c60edf4b809f49674b3f66cd": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_for_line",
+      "rule": "clock-reference",
+      "context_sha256": "c37373cc98b4345b6594bc1d9cd3bd49725edad457a9b00da009db116ed4c3c2",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "5f4fba87c1ffe4946add6def9e888d04a72bf3505ce08547f5608d87420fd750": {
+      "path": "hostd/tests/marauder_session.rs",
+      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
+      "rule": "client-deadline-seam",
+      "context_sha256": "969dc1a5b5a88b3f7e0fc2f6ddc4fb02e50338941bd2e5a815756b6863eee6d7",
+      "category": "virtual-time",
+      "reason": "Both actual protocol client calls execute while the test holds ManualTime on its paused Tokio clock. No wall-clock scheduling or elapsed-time success criterion is introduced by replacing the WAL predicate with a retained run-bound commit event. The separate child service remains real integration coverage; its production timers are not classified by this entry.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "7412938a3b80807a3a6026dbd1d2440a69bbadb89ec13bf6c74c00fd96242717": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "578d968cb5a1f50b8346560e489a224269248b8eb4554c24eb9e5646a70ca0e1",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "7722d19fa1d8dd951325ef1cd55d9e00abd0eb702c9e04a07e07d55f67a1f968": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_for_line",
+      "rule": "clock-reference",
+      "context_sha256": "c37373cc98b4345b6594bc1d9cd3bd49725edad457a9b00da009db116ed4c3c2",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "b516cd768bcc38e06eed87730d66deba1539f07c5a0326c9a9965889a2ab3359": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_for_line",
+      "rule": "delay-or-deadline",
+      "context_sha256": "c37373cc98b4345b6594bc1d9cd3bd49725edad457a9b00da009db116ed4c3c2",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "d5ba4803b2af7befe752a136d0f98024708350eeb8450d8e587314c5cf401278": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_for_line",
+      "rule": "clock-read",
+      "context_sha256": "c37373cc98b4345b6594bc1d9cd3bd49725edad457a9b00da009db116ed4c3c2",
+      "category": "outer-hang-guard",
+      "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
     }
   },
   "migration_baseline": {
