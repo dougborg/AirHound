@@ -40,6 +40,29 @@ fn marker(n: usize) -> ScanEvent {
         serde_json::json!({"type":"test_packet","n":n,"source":"original","ts":123}),
     )
 }
+
+#[test]
+fn explicit_ingress_location_cannot_be_replaced_by_filter_time_evidence() {
+    for snapshot in [
+        serde_json::Value::Null,
+        serde_json::json!({"latitude":10.0,"association":"host_source_ingress"}),
+    ] {
+        let mut bytes = Vec::new();
+        let mut output = SourceWriter::new(&mut bytes, None);
+        output.preserve_ingress_location = true;
+        output.receiver_location = Some(serde_json::json!({"latitude":11.0}));
+        observation::write_json(
+            &mut output,
+            &serde_json::json!({
+                "type":"cellular_observation", "receiver_location":snapshot,
+            }),
+        )
+        .unwrap();
+        drop(output);
+        let written: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(written["receiver_location"], snapshot);
+    }
+}
 async fn execute(receivers: Vec<ReceiverTask>, output: RecordingWriter) -> io::Result<()> {
     tokio::time::timeout(
         Duration::from_secs(3),

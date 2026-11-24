@@ -63,6 +63,7 @@ pub(crate) async fn scan(
     let origin = Instant::now();
     let mut connection = 0u64;
     let mut attempts = 0u8;
+    let mut previous_subscription = None;
     loop {
         if !wait_running(&mut state, &tx).await {
             break;
@@ -80,6 +81,34 @@ pub(crate) async fn scan(
             continue;
         }
         let generation = state.borrow().generation;
+        // A quick Pause/Resume may coalesce into one watch notification. The
+        // generation boundary still proves that this subscription was interrupted.
+        // Emit under the resumed generation so the filter does not discard it as
+        // a stale paused event, and before any new helper record.
+        if let Some((previous, previous_connection)) =
+            previous_subscription.filter(|(previous, _)| *previous != generation)
+        {
+            let record = serde_json::json!({
+                "type":"cellular_source_gap", "schema_version":1,
+                "reason":"subscription_pause_resume", "deliberate":true,
+                "previous_session_generation":previous, "session_generation":generation,
+                "previous_connection_generation":previous_connection,
+                "connection_generation":connection, "lost_records":null,
+                "rf_loss":"unknown", "receiver_location":null,
+                "host_received_at":chrono::Utc::now().to_rfc3339()
+            });
+            tokio::select! {
+                result = tx.send(ScanEvent::Cellular { record, generation }) =>
+                    if result.is_err() { break; },
+                _ = state.changed() => continue,
+            }
+        }
+        if state.borrow().shutdown
+            || !state.borrow().enabled
+            || state.borrow().generation != generation
+        {
+            continue;
+        }
         control.set_health(
             Scanner::Cellular,
             Phase::Initializing,
@@ -92,6 +121,7 @@ pub(crate) async fn scan(
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()?;
+        previous_subscription = Some((generation, connection));
         let mut input = BufReader::new(
             child
                 .stdout
@@ -120,12 +150,19 @@ pub(crate) async fn scan(
                 }
                 let wall = chrono::Utc::now().to_rfc3339();
                 let arrived = origin.elapsed().as_nanos().to_string();
+                // Snapshot before parser work or any bounded-queue await. Later
+                // GNSS fixes must not be paired with this earlier arrival time.
+                let location = control.external_location_evidence().map(|mut evidence| {
+                    evidence["association"] = "host_source_ingress".into();
+                    evidence
+                });
                 let mut record = parser.accept(&bytes)?;
                 record["host_received_at"] = wall.into();
                 record["host_read_monotonic_ns"] = serde_json::json!(arrived);
                 record["connection_generation"] = connection.into();
                 record["decoder_sha256"] = hash.clone().into();
                 record["location_time_basis"] = serde_json::json!("host_ingress_not_rf_capture");
+                record["receiver_location"] = location.unwrap_or(serde_json::Value::Null);
                 if !valid {
                     valid = true;
                     control.set_health(Scanner::Cellular, Phase::Running, "rayhunter_subscription");
@@ -206,8 +243,10 @@ mod tests {
             std::fs::write(&script,r#"#!/usr/bin/env python3
 import json,os,time
 print(json.dumps({'ipc_version':1,'kind':'hello','stream':{'version':1,'replay':False,'format':'u32le_json_length+json+exact_device_read','stream_epoch':'fixture','next_sequence':0}}),flush=True)
+tick=0
 while True:
- print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid()}),flush=True)
+ print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid(),'tick':tick}),flush=True)
+ tick+=1
  time.sleep(.02)
 "#).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -244,6 +283,94 @@ while True:
         })
         .await
         .unwrap();
+    }
+    #[tokio::test]
+    async fn ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing() {
+        use crate::gpsd::tests::{feed, ready, tpv};
+        use std::sync::{Arc, Mutex};
+        for initially_available in [false, true] {
+            let f = Fixture::new();
+            let gps = ready();
+            if initially_available {
+                feed(&gps, tpv(chrono::Utc::now()));
+            }
+            let control = ScanControl::new(true);
+            control.set_location_source(gps.clone());
+            let (tx, mut rx) = mpsc::channel(1);
+            let task = tokio::spawn(scan(
+                "ws://127.0.0.1:9/raw-diag".into(),
+                f.script.clone(),
+                tx,
+                control.clone(),
+            ));
+            let (child, _) = pid(&mut rx).await;
+            // One event occupies the channel; the following event has already
+            // reached host ingress and waits for that single slot to be freed.
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            let changed_at = chrono::Utc::now();
+            let mut later = tpv(changed_at);
+            later["lat"] = 11.0.into();
+            feed(&gps, later);
+            let ScanEvent::Cellular { record: queued, .. } = rx.recv().await.unwrap() else {
+                panic!()
+            };
+            let blocked = rx.recv().await.unwrap();
+            let ScanEvent::Cellular { ref record, .. } = blocked else {
+                panic!()
+            };
+            assert_eq!(
+                record["event"]["tick"].as_u64().unwrap(),
+                queued["event"]["tick"].as_u64().unwrap() + 1
+            );
+            let arrived =
+                chrono::DateTime::parse_from_rfc3339(record["host_received_at"].as_str().unwrap())
+                    .unwrap();
+            assert!(
+                arrived < changed_at,
+                "must actually exercise a pre-change blocked event"
+            );
+            let snapshot = record["receiver_location"].clone();
+            if initially_available {
+                assert_eq!(snapshot["latitude"], 10.0);
+                assert_eq!(snapshot["association"], "host_source_ingress");
+                assert!(snapshot["fix_time"].is_string());
+                assert!(snapshot["host_fix_age_ms"].is_u64());
+                assert_eq!(snapshot["horizontal_accuracy_m"], 2.0);
+                assert_eq!(snapshot["capture_time_synchronized"], false);
+            } else {
+                assert!(snapshot.is_null());
+            }
+            assert_eq!(
+                control.external_location_evidence().unwrap()["latitude"],
+                11.0
+            );
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            gone(child).await;
+
+            let (tx, rx) = mpsc::channel(1);
+            tx.send(blocked).await.unwrap();
+            drop(tx);
+            let mut output = Vec::new();
+            crate::filter_task(
+                rx,
+                Arc::new(Mutex::new(crate::FilterConfig::new())),
+                Arc::new(crate::MacIndex::from_defaults()),
+                std::time::Instant::now(),
+                crate::WigleWriter::new(Vec::new()).unwrap(),
+                &mut output,
+                control,
+            )
+            .await
+            .unwrap();
+            let written = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .find(|record| record["event"]["tick"].is_u64())
+                .unwrap();
+            assert_eq!(written["receiver_location"], snapshot);
+        }
     }
     #[tokio::test]
     async fn pause_reaps_owned_helper_resume_new_generation_and_finish_no_orphan() {

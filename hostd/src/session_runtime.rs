@@ -521,6 +521,9 @@ pub(crate) struct SourceWriter<'a, W> {
     pending: Vec<u8>,
     pub replay: Option<&'a crate::wifi_pcap::Metadata>,
     pub receiver_location: Option<serde_json::Value>,
+    /// Typed live sources can carry an explicit location (including null)
+    /// snapshotted before queueing. Never replace it with filter-time evidence.
+    pub preserve_ingress_location: bool,
 }
 impl<'a, W: Write> SourceWriter<'a, W> {
     pub fn new(output: &'a mut W, source: Option<&'a EventSource>) -> Self {
@@ -530,6 +533,7 @@ impl<'a, W: Write> SourceWriter<'a, W> {
             pending: Vec::new(),
             replay: None,
             receiver_location: None,
+            preserve_ingress_location: false,
         }
     }
 }
@@ -565,6 +569,7 @@ impl<W: Write> Write for SourceWriter<'_, W> {
                 // A receiver position is not the transmitter's position or proof
                 // that producer timestamps are synchronized with the host.
                 if self.replay.is_none()
+                    && !self.preserve_ingress_location
                     && object.get("replay") != Some(&serde_json::Value::Bool(true))
                 {
                     if let Some(location) = &self.receiver_location {

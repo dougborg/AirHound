@@ -979,6 +979,7 @@ async fn filter_task<W: Write, O: Write>(
             get_location(&control)
         };
         if replay.is_none()
+            && !matches!(&event, ScanEvent::Cellular { .. })
             && !matches!(&event, ScanEvent::MarauderReplay { .. })
             && !matches!(&event, ScanEvent::BlePacket(packet) if packet.replay)
         {
@@ -988,6 +989,7 @@ async fn filter_task<W: Write, O: Write>(
         match event {
             ScanEvent::Cellular { record, generation } => {
                 if generation == control.subscribe().borrow().generation {
+                    output.preserve_ingress_location = true;
                     observation::write_json(&mut output, &record)?;
                 }
             }
