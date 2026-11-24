@@ -1,4 +1,6 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod support;
 use std::{
     path::PathBuf,
     process::{Command, Stdio},
@@ -54,24 +56,12 @@ fn capture() -> Vec<u8> {
     bytes
 }
 fn run(args: &[&std::ffi::OsStr]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let start = std::time::Instant::now();
-    loop {
-        if child.try_wait().unwrap().is_some() {
-            return child.wait_with_output().unwrap();
-        }
-        if start.elapsed() > std::time::Duration::from_secs(10) {
-            child.kill().unwrap();
-            panic!("replay did not finish at EOF")
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    support::output(
+        Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
+            .args(args)
+            .stdin(Stdio::null()),
+    )
+    .unwrap()
 }
 #[test]
 #[cfg_attr(coverage_nightly, coverage(off))]

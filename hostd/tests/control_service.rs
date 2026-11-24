@@ -1,25 +1,25 @@
 //! Exercises the real CLI adapter and shared client without opening any receiver.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod support;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod passive_cli {
     use serde_json::{json, Value};
     use std::{
-        io::{self, Read},
+        io::{self},
         path::PathBuf,
-        process::{Child, Command, Stdio},
-        thread,
-        time::{Duration, Instant},
+        process::{Command, Stdio},
     };
 
     struct Service {
-        child: Child,
+        child: crate::support::ServiceChild,
         root: PathBuf,
     }
     impl Drop for Service {
         fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            let _ = self.child.child.kill();
+            let _ = self.child.child.wait();
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
@@ -49,28 +49,20 @@ mod passive_cli {
             .unwrap();
         let socket = root.join("private/control.sock");
         let executable = env!("CARGO_BIN_EXE_airhound-hostd");
-        let child = Command::new(executable)
-            .env("RUST_LOG", "airhound_hostd=debug")
-            .args(["serve", "--socket"])
-            .arg(&socket)
-            .arg("--database")
-            .arg(&database)
-            .current_dir(&root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = crate::support::ServiceChild::spawn(
+            Command::new(executable)
+                .env("RUST_LOG", "airhound_hostd=debug")
+                .args(["serve", "--socket"])
+                .arg(&socket)
+                .arg("--database")
+                .arg(&database)
+                .current_dir(&root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
+        .unwrap();
         let mut service = Service { child, root };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !socket.exists() {
-            assert!(
-                service.child.try_wait().unwrap().is_none(),
-                "service exited before bind"
-            );
-            assert!(Instant::now() < deadline, "service bind timeout");
-            thread::sleep(Duration::from_millis(10));
-        }
         let client = |extra: &[&str]| {
             Command::new(executable)
                 .args(["client", "--socket"])
@@ -209,26 +201,13 @@ mod passive_cli {
         assert!(!service.root.join("observations.csv").exists());
         // SAFETY: this is the owned child PID; it has not exited/reaped or been reused.
         assert_eq!(
-            unsafe { libc::kill(service.child.id() as libc::pid_t, libc::SIGTERM) },
+            unsafe { libc::kill(service.child.child.id() as libc::pid_t, libc::SIGTERM) },
             0
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(status) = service.child.try_wait().unwrap() {
-                assert!(status.success());
-                break;
-            }
-            assert!(Instant::now() < deadline, "service shutdown timeout");
-            thread::sleep(Duration::from_millis(10));
-        }
-        let mut diagnostics = String::new();
-        service
-            .child
-            .stderr
-            .take()
+        assert!(crate::support::wait_child(&mut service.child.child)
             .unwrap()
-            .read_to_string(&mut diagnostics)
-            .unwrap();
+            .success());
+        let diagnostics = String::from_utf8(service.child.diagnostics().unwrap()).unwrap();
         assert!(
             diagnostics.contains("Starting AirHound control service (capture=false)"),
             "actual serve path did not emit diagnostics to stderr: {diagnostics}"
@@ -258,28 +237,23 @@ fn service_owns_replay_and_commits_before_finish_reply() {
     let plan = root.join("plan.json");
     std::fs::write(&plan, serde_json::to_vec(&json!({"version":1,"receivers":[{"id":"replay","source":{"kind":"wifi_pcap","path":pcap}}]})).unwrap()).unwrap();
     let binary = env!("CARGO_BIN_EXE_airhound-hostd");
-    let mut server = Command::new(binary)
-        .args(["serve", "--capture", "--socket"])
-        .arg(&socket)
-        .arg("--database")
-        .arg(&database)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    struct Cleanup(std::process::Child, std::path::PathBuf);
+    let server = support::ServiceChild::spawn(
+        Command::new(binary)
+            .args(["serve", "--capture", "--socket"])
+            .arg(&socket)
+            .arg("--database")
+            .arg(&database)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null()),
+    )
+    .unwrap();
+    struct Cleanup(support::ServiceChild, std::path::PathBuf);
     impl Drop for Cleanup {
         fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
+            let _ = self.0.child.kill();
+            let _ = self.0.child.wait();
             let _ = std::fs::remove_dir_all(&self.1);
         }
-    }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !socket.exists() {
-        assert!(server.try_wait().unwrap().is_none());
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let mut cleanup = Cleanup(server, root);
     let client = |args: &[&str]| {
@@ -328,30 +302,22 @@ fn service_owns_replay_and_commits_before_finish_reply() {
     assert_eq!(reader.runs(10).unwrap().len(), 1);
     // SAFETY: this is the owned, live child process.
     assert_eq!(
-        unsafe { libc::kill(cleanup.0.id() as libc::pid_t, libc::SIGTERM) },
+        unsafe { libc::kill(cleanup.0.child.id() as libc::pid_t, libc::SIGTERM) },
         0
     );
-    while cleanup.0.try_wait().unwrap().is_none() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    assert!(support::wait_child(&mut cleanup.0.child).unwrap().success());
     assert!(!socket.exists());
     std::fs::remove_file(&pcap).unwrap();
-    cleanup.0 = Command::new(binary)
-        .args(["serve", "--capture", "--socket"])
-        .arg(&socket)
-        .arg("--database")
-        .arg(&database)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !socket.exists() {
-        assert!(cleanup.0.try_wait().unwrap().is_none());
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    cleanup.0 = support::ServiceChild::spawn(
+        Command::new(binary)
+            .args(["serve", "--capture", "--socket"])
+            .arg(&socket)
+            .arg("--database")
+            .arg(&database)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null()),
+    )
+    .unwrap();
     let retried = client(&[
         "start",
         "--request-id",

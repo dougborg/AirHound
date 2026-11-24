@@ -1,4 +1,6 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod support;
 
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Command};
@@ -116,23 +118,12 @@ fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
     let path = fixture.0.join("config.fifo");
     let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
-        .args(["session", "validate", "--config"])
-        .arg(path)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while child.try_wait().unwrap().is_none() {
-        if std::time::Instant::now() > deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("preview blocked on a FIFO");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let output = child.wait_with_output().unwrap();
+    let output = support::output(
+        Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
+            .args(["session", "validate", "--config"])
+            .arg(path),
+    )
+    .unwrap();
     assert!(!output.status.success());
     let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(reply["error"]["message"]
