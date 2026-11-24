@@ -556,6 +556,15 @@ fn qualify_cleanup(
     if message["cleanup_verified"] != true {
         return Err(error("companion did not acknowledge radio cleanup"));
     }
+    if selected
+        .as_deref()
+        .or(requested)
+        .is_some_and(|expected| message["usb_device"]["selector"].as_str() != Some(expected))
+    {
+        return Err(error(
+            "cleanup acknowledgement did not confirm selected USB identity",
+        ));
+    }
     selected_identity(message, requested, selected)?;
     read_metrics(message, dropped, reconnects)
 }
@@ -1185,32 +1194,83 @@ exit 3
         .await;
     }
 
+    #[test]
+    fn early_cleanup_without_requested_device_identity_is_not_qualified() {
+        let message = serde_json::json!({"type":"stopped","cleanup_verified":true});
+        let mut selected = None;
+        let (mut dropped, mut reconnects) = (17, 2);
+        assert!(qualify_cleanup(
+            &message,
+            Some("usb:1:1.1"),
+            &mut selected,
+            &mut dropped,
+            &mut reconnects
+        )
+        .is_err());
+        assert_eq!((dropped, reconnects), (17, 2));
+        assert!(
+            qualify_cleanup(&message, None, &mut selected, &mut dropped, &mut reconnects).is_ok()
+        );
+    }
+
     #[tokio::test]
-    async fn unexpected_stop_and_nonzero_exit_keep_receiver_failed_with_qualified_cleanup() {
+    async fn unsolicited_stop_remains_failure_regardless_of_exit_read_order() {
         crate::test_support::manual_time(async {
-            let fake = Fake::new(r#"
-printf '%s\n' '{"type":"hello","protocol_version":1}' '{"type":"status","state":"running","usb_device":{"selector":"usb:1:1.1"}}' '{"type":"stopped","cleanup_verified":true,"usb_device":{"selector":"usb:1:1.1"},"dropped_observations":0,"reconnect_attempts":2}'
+            let fake = Fake::new(
+                r#"
+printf '%s\n' '{"type":"hello","protocol_version":1}' '{"type":"stopped","cleanup_verified":true}'
 exit 7
-"#);
-            let mut options = fake.options();
-            options.usb_selector = Some("usb:1:1.1".to_owned());
+"#,
+            );
             let (tx, mut rx) = mpsc::channel(16);
-            let error = scan_loop(options, tx, ScanControl::new(true)).await.unwrap_err();
+            assert!(scan_loop(fake.options(), tx, ScanControl::new(true))
+                .await
+                .is_err());
+            let mut final_state = None;
+            while let Some(event) = rx.recv().await {
+                if let ScanEvent::ExternalStatus { state, .. } = event {
+                    final_state = Some(state);
+                }
+            }
+            assert_eq!(final_state.as_deref(), Some("failed"));
+            fake.assert_exited();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn requested_stop_and_nonzero_exit_keep_receiver_failed_with_qualified_cleanup() {
+        crate::test_support::manual_time(async {
+            let body = LIFECYCLE.replace("exit 0;;", "exit 7;;");
+            let fake = Fake::new(&body);
+            let (tx, mut rx) = mpsc::channel(16);
+            let control = ScanControl::new(true);
+            let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+            status(&mut rx, "running", &mut task).await;
+            control.shutdown();
+            // The stop command causally releases the fixture's acknowledgement
+            // and exit; the active-loop child-exit/read race is not under test.
+            let error = task.await.unwrap().unwrap_err();
             let message = error.to_string();
-            assert!(message.contains("companion stopped unexpectedly"));
             assert!(message.contains("companion exited unsuccessfully"));
             assert!(message.contains("cleanup_acknowledgement_qualified=true"));
             assert!(message.contains("reaped=true"));
             assert!(!message.contains("forced termination"));
             let mut final_status = None;
             while let Some(event) = rx.recv().await {
-                if let ScanEvent::ExternalStatus { state, reconnect_attempts, .. } = event {
+                if let ScanEvent::ExternalStatus {
+                    state,
+                    reconnect_attempts,
+                    ..
+                } = event
+                {
                     final_status = Some((state, reconnect_attempts));
                 }
             }
             assert_eq!(final_status, Some(("failed".to_owned(), 2)));
             fake.assert_exited();
-        }).await;
+        })
+        .await;
     }
 
     #[tokio::test]
