@@ -551,6 +551,12 @@ c.close();signal.pause()
         joined: bool,
     }
 
+    #[derive(Debug)]
+    struct StartFailure {
+        rejected: Vec<RejectedAttempt>,
+        health: serde_json::Value,
+    }
+
     struct Started {
         port: u16,
         source: Source,
@@ -566,7 +572,7 @@ c.close();signal.pause()
     async fn start_fixture(
         fixture: &Fixture,
         injected_conflicts: usize,
-    ) -> Result<Started, String> {
+    ) -> Result<Started, StartFailure> {
         start_fixture_with_extra_conflict(fixture, injected_conflicts, None).await
     }
 
@@ -574,7 +580,7 @@ c.close();signal.pause()
         fixture: &Fixture,
         injected_conflicts: usize,
         extra_conflict_attempt: Option<usize>,
-    ) -> Result<Started, String> {
+    ) -> Result<Started, StartFailure> {
         let mut rejected = Vec::new();
         for attempt in 1..=3 {
             let intentional_conflict = attempt <= injected_conflicts;
@@ -635,10 +641,10 @@ c.close();signal.pause()
                 joined: joined.is_ok(),
             });
             if joined.is_err() || !pre_spawn_busy || attempt == 3 {
-                return Err(format!(
-                    "attempt {attempt}: expected fix, got {}; pre-spawn busy={pre_spawn_busy}; rejected={rejected:?}",
-                    source.health()
-                ));
+                return Err(StartFailure {
+                    rejected,
+                    health: source.health(),
+                });
             }
         }
         unreachable!()
@@ -909,7 +915,12 @@ c.close();signal.pause()
                 .await
                 .err()
                 .expect("started helper must not retry");
-            assert!(error.contains("attempt 1:") && error.contains("pre-spawn busy=false"));
+            assert_eq!(error.rejected.len(), 1, "{error:?}");
+            assert_eq!(error.health["state"], "managed_endpoint_busy", "{error:?}");
+            let refused = &error.rejected[0];
+            assert_eq!(refused.attempt, 1, "{error:?}");
+            assert!(refused.intentional_conflict && refused.joined, "{error:?}");
+            assert!(!refused.helper_markers_absent, "{error:?}");
             // An additional competing listener is still retryable only with
             // the same terminal, joined, no-child evidence. Attribute it
             // separately instead of assuming the OS grants the next port.
@@ -939,28 +950,79 @@ c.close();signal.pause()
                 .await
                 .err()
                 .expect("three conflicts must fail");
-            assert!(error.contains("attempt 3:") && error.contains("pre-spawn busy=true"));
+            assert_eq!(error.rejected.len(), 3, "{error:?}");
+            assert_eq!(error.health["state"], "managed_endpoint_busy", "{error:?}");
+            for (index, refused) in error.rejected.iter().enumerate() {
+                assert_eq!(refused.attempt, index + 1, "{error:?}");
+                assert_eq!(refused.state, "managed_endpoint_busy", "{error:?}");
+                assert!(refused.intentional_conflict, "{error:?}");
+                assert!(refused.helper_markers_absent && refused.joined, "{error:?}");
+            }
             assert!(!fixture.root.join("args").exists());
-            let fixture = Fixture::new().await;
-            let script = std::fs::read_to_string(fixture.root.join("gpsd"))
-                .unwrap()
-                .replace(
-                    "trace('before_bind')",
-                    "raise SystemExit(2)\ntrace('before_bind')",
-                );
-            std::fs::write(fixture.root.join("gpsd"), script).unwrap();
-            let error = start_fixture(&fixture, 0)
-                .await
-                .err()
-                .expect("helper startup failure must not retry");
-            assert!(error.contains("attempt 1:") && error.contains("managed_start_failed"));
-            assert_eq!(
-                std::fs::read_to_string(fixture.root.join("pids"))
+            // Exercise both paths: no forced conflict, and a real held
+            // listener refusal before the first (and only) helper is spawned.
+            // Additional OS conflicts may consume the remaining bounded tries;
+            // every such refusal must retain its exact pre-spawn evidence.
+            for injected_conflicts in [0, 1] {
+                let fixture = Fixture::new().await;
+                let script = std::fs::read_to_string(fixture.root.join("gpsd"))
                     .unwrap()
-                    .lines()
-                    .count(),
-                1
-            );
+                    .replace(
+                        "trace('before_bind')",
+                        "raise SystemExit(2)\ntrace('before_bind')",
+                    );
+                std::fs::write(fixture.root.join("gpsd"), script).unwrap();
+                let error = start_fixture(&fixture, injected_conflicts)
+                    .await
+                    .err()
+                    .expect("helper startup failure must not retry");
+                assert!((1..=3).contains(&error.rejected.len()), "{error:?}");
+                assert_eq!(error.health["state"], "managed_start_failed", "{error:?}");
+                let (failed, preceding) = error.rejected.split_last().unwrap();
+                for (index, refused) in preceding.iter().enumerate() {
+                    assert_eq!(refused.attempt, index + 1, "{error:?}");
+                    assert_eq!(refused.state, "managed_endpoint_busy", "{error:?}");
+                    assert!(refused.helper_markers_absent && refused.joined, "{error:?}");
+                    assert!(!refused.fixture_extra_conflict, "{error:?}");
+                }
+                assert_eq!(
+                    preceding.iter().filter(|r| r.intentional_conflict).count(),
+                    injected_conflicts,
+                    "{error:?}"
+                );
+                assert_eq!(failed.attempt, error.rejected.len(), "{error:?}");
+                assert_eq!(failed.state, "managed_start_failed", "{error:?}");
+                assert!(
+                    !failed.intentional_conflict && !failed.fixture_extra_conflict,
+                    "{error:?}"
+                );
+                assert!(!failed.helper_markers_absent && failed.joined, "{error:?}");
+                for marker in ["args", "pids"] {
+                    assert_eq!(
+                        std::fs::read_to_string(fixture.root.join(marker))
+                            .unwrap()
+                            .lines()
+                            .count(),
+                        1,
+                        "{error:?}"
+                    );
+                }
+                let pid: i32 = std::fs::read_to_string(fixture.root.join("pids"))
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap();
+                assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "{error:?}");
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+                assert_eq!(
+                    unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
+                    -1
+                );
+                assert_eq!(
+                    io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ECHILD)
+                );
+            }
         })
         .await;
     }
