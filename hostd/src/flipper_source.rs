@@ -56,6 +56,26 @@ async fn scan_with<T: Read + Write + 'static, F: FnOnce(&str) -> io::Result<T> +
     control: ScanControl,
     open: F,
 ) -> io::Result<()> {
+    scan_with_completion(
+        port,
+        tx,
+        control,
+        open,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+async fn scan_with_completion<
+    T: Read + Write + 'static,
+    F: FnOnce(&str) -> io::Result<T> + Send + 'static,
+>(
+    port: String,
+    tx: mpsc::Sender<ScanEvent>,
+    control: ScanControl,
+    open: F,
+    #[cfg(test)] completed: Option<oneshot::Sender<()>>,
+) -> io::Result<()> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let _cancel = Cancel(cancelled.clone());
     let (done, finished) = oneshot::channel();
@@ -84,6 +104,10 @@ async fn scan_with<T: Read + Write + 'static, F: FnOnce(&str) -> io::Result<T> +
             );
             // worker's serial descriptor and lease have dropped before completion.
             let _ = done.send(result);
+            #[cfg(test)]
+            if let Some(completed) = completed {
+                let _ = completed.send(());
+            }
         })?;
     finished
         .await
@@ -395,76 +419,71 @@ mod tests {
     }
     #[tokio::test]
     async fn cancelled_future_retains_lease_until_owner_transport_is_closed() {
-        struct Gate {
-            entered: Arc<AtomicBool>,
-            release: Arc<AtomicBool>,
-            closed: Arc<AtomicBool>,
-        }
-        impl Read for Gate {
-            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                self.entered.store(true, Ordering::Release);
-                let deadline = std::time::Instant::now() + Duration::from_millis(500);
-                while !self.release.load(Ordering::Acquire) && std::time::Instant::now() < deadline
-                {
-                    std::thread::sleep(Duration::from_millis(2));
+        crate::test_support::manual_time(async {
+            struct Gate {
+                entered: Option<oneshot::Sender<()>>,
+                release: std::sync::mpsc::Receiver<()>,
+                closed: Arc<AtomicBool>,
+            }
+            impl Read for Gate {
+                fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                    if let Some(entered) = self.entered.take() {
+                        let _ = entered.send(());
+                    }
+                    // A real worker-owned read remains blocked until the test
+                    // releases it; no polling or arbitrary expiry opens this gate.
+                    let _ = self.release.recv();
+                    Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "mock disconnect",
+                    ))
                 }
-                Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "mock disconnect",
-                ))
             }
-        }
-        impl Write for Gate {
-            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-                panic!("no prompt received")
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        impl Drop for Gate {
-            fn drop(&mut self) {
-                self.closed.store(true, Ordering::Release);
-            }
-        }
-        let endpoint = Endpoint::new();
-        let entered = Arc::new(AtomicBool::new(false));
-        let release = Arc::new(AtomicBool::new(false));
-        let closed = Arc::new(AtomicBool::new(false));
-        let transport = Gate {
-            entered: entered.clone(),
-            release: release.clone(),
-            closed: closed.clone(),
-        };
-        let (tx, _rx) = mpsc::channel(1);
-        let path = endpoint.path.clone();
-        let task = tokio::spawn(scan_with(path, tx, ScanControl::new(true), move |_| {
-            Ok(transport)
-        }));
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while !entered.load(Ordering::Acquire) {
-                tokio::time::sleep(Duration::from_millis(2)).await;
-            }
-        })
-        .await
-        .unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        assert!(!closed.load(Ordering::Acquire));
-        assert!(airhound_hostd::serial_lease::acquire(&endpoint.path).is_err());
-        release.store(true, Ordering::Release);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if let Ok(lease) = airhound_hostd::serial_lease::acquire(&endpoint.path) {
-                    assert!(closed.load(Ordering::Acquire));
-                    drop(lease);
-                    break;
+            impl Write for Gate {
+                fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                    panic!("no prompt received")
                 }
-                tokio::time::sleep(Duration::from_millis(2)).await;
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
             }
+            impl Drop for Gate {
+                fn drop(&mut self) {
+                    self.closed.store(true, Ordering::Release);
+                }
+            }
+            let endpoint = Endpoint::new();
+            let (entered, ready) = oneshot::channel();
+            let (release, blocked) = std::sync::mpsc::channel();
+            let (completed, done) = oneshot::channel();
+            let closed = Arc::new(AtomicBool::new(false));
+            let transport = Gate {
+                entered: Some(entered),
+                release: blocked,
+                closed: closed.clone(),
+            };
+            let (tx, _rx) = mpsc::channel(1);
+            let path = endpoint.path.clone();
+            let task = tokio::spawn(scan_with_completion(
+                path,
+                tx,
+                ScanControl::new(true),
+                move |_| Ok(transport),
+                Some(completed),
+            ));
+            ready.await.unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(!closed.load(Ordering::Acquire));
+            assert!(airhound_hostd::serial_lease::acquire(&endpoint.path).is_err());
+            release.send(()).unwrap();
+            // This witness is emitted by the actual worker thread only after
+            // both its transport and lease guards have dropped.
+            done.await.unwrap();
+            let _lease = airhound_hostd::serial_lease::acquire(&endpoint.path).unwrap();
+            assert!(closed.load(Ordering::Acquire));
         })
-        .await
-        .unwrap();
+        .await;
     }
 
     #[test]
