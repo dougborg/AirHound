@@ -17,8 +17,8 @@
 
 use crate::transport::RegisterIo;
 use anyhow::{bail, ensure, Context, Result};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+
+use std::time::Duration;
 
 #[path = "channel_tables.rs"]
 mod channels;
@@ -104,7 +104,8 @@ fn rmw(io: &mut impl RegisterIo, reg: u32, mask: u32, value: u32) -> Result<()> 
 }
 
 fn poll_clear(io: &mut impl RegisterIo, reg: u32, mask: u32, timeout: Duration) -> Result<()> {
-    let started = Instant::now();
+    let clock = io.clock();
+    let started = clock.now();
     loop {
         let value = io.read32(reg)?;
         ensure!(
@@ -114,10 +115,10 @@ fn poll_clear(io: &mut impl RegisterIo, reg: u32, mask: u32, timeout: Duration) 
         if value & mask == 0 {
             return Ok(());
         }
-        if started.elapsed() >= timeout {
+        if clock.elapsed(started) >= timeout {
             bail!("register {reg:#06x} remained busy (mask {mask:#010x})");
         }
-        sleep(Duration::from_millis(1));
+        io.clock().sleep(Duration::from_millis(1));
     }
 }
 
@@ -132,7 +133,7 @@ pub fn read_eeprom(io: &mut impl RegisterIo) -> Result<[u8; 512]> {
         let command = (control & !(EFUSE_AIN | EFUSE_MODE)) | ((offset as u32) << 16) | EFUSE_KICK;
         io.write32(EFUSE_CTRL, command)?;
         poll_clear(io, EFUSE_CTRL, EFUSE_KICK, Duration::from_secs(1))?;
-        sleep(Duration::from_micros(2));
+        io.clock().sleep(Duration::from_micros(2));
         if io.read32(EFUSE_CTRL)? & 0x3f == 0x3f {
             continue;
         }
@@ -475,7 +476,7 @@ fn initialize_inner(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup>
         Duration::from_secs(1),
     )?;
     io.write32(MAC_SYS_CTRL, 3)?;
-    sleep(Duration::from_millis(200));
+    io.clock().sleep(Duration::from_millis(200));
     io.write32(MAC_SYS_CTRL, 0)?;
     mcu_pair(io, 1, 1, 1, false).context("MCU Q_SELECT")?;
     write_mac_table(io, tables::COMMON_MAC)?;
@@ -491,7 +492,7 @@ fn initialize_inner(io: &mut impl RegisterIo, channel: u8) -> Result<RadioSetup>
             ready = true;
             break;
         }
-        sleep(Duration::from_millis(1));
+        io.clock().sleep(Duration::from_millis(1));
     }
     ensure!(ready, "BBP is not ready after reset");
     write_mac_table(io, tables::BBP)?;
@@ -605,6 +606,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     struct SimulatedDevice {
+        time: crate::test_support::ManualTime,
         registers: BTreeMap<u32, u32>,
         rf: BTreeMap<u32, u32>,
         eeprom: [u8; 512],
@@ -628,6 +630,7 @@ mod tests {
             eeprom[0x44] = 12;
             eeprom[0x46] = (-2i8) as u8;
             Self {
+                time: Default::default(),
                 registers: BTreeMap::new(),
                 rf: BTreeMap::new(),
                 eeprom,
@@ -644,6 +647,9 @@ mod tests {
     }
 
     impl RegisterIo for SimulatedDevice {
+        fn clock(&self) -> crate::timing::Clock {
+            self.time.clock()
+        }
         fn read32(&mut self, reg: u32) -> Result<u32> {
             if reg == 0x2000 {
                 return Ok(if self.bbp_ready { 0x7610 } else { 0 });
@@ -1159,6 +1165,9 @@ mod tests {
             mac_writes: usize,
         }
         impl RegisterIo for FailingInit {
+            fn clock(&self) -> crate::timing::Clock {
+                self.inner.clock()
+            }
             fn read32(&mut self, reg: u32) -> Result<u32> {
                 self.inner.read32(reg)
             }

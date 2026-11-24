@@ -7,7 +7,6 @@ use std::{
     fs::{self, File},
     io::{BufWriter, Write},
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub(super) struct Rotation {
@@ -24,6 +23,19 @@ pub(super) struct Rotation {
 }
 impl Rotation {
     pub fn new(directory: PathBuf, max_bytes: u64, keep: usize) -> Result<Self> {
+        Self::with_clock(
+            directory,
+            max_bytes,
+            keep,
+            &mt7610u_lab::timing::Clock::default(),
+        )
+    }
+    fn with_clock(
+        directory: PathBuf,
+        max_bytes: u64,
+        keep: usize,
+        clock: &mt7610u_lab::timing::Clock,
+    ) -> Result<Self> {
         ensure!(
             (16 * 1024..=64 * 1024 * 1024).contains(&max_bytes),
             "rotation size must be 16 KiB..64 MiB"
@@ -45,11 +57,7 @@ impl Rotation {
             directory,
             files: VecDeque::new(),
             writer: None,
-            prefix: format!(
-                "{}-{}",
-                std::process::id(),
-                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-            ),
+            prefix: format!("{}-{}", std::process::id(), clock.unix_time()?.as_nanos()),
             index: 0,
             bytes: 0,
             sequence: 0,
@@ -118,15 +126,14 @@ mod tests {
     use super::*;
     #[test]
     fn rotates_private_complete_independent_sessions_with_bounded_retention() {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "mt7610-rotation-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let mut recording = Rotation::new(path.clone(), 16 * 1024, 2).unwrap();
+        let clock = crate::test_support::ManualTime::default().clock();
+        let mut recording = Rotation::with_clock(path.clone(), 16 * 1024, 2, &clock).unwrap();
         let line=serde_json::to_vec(&json!({"schema_version":1,"type":"beacon","session_id":"wire-session","sequence":55,"padding":"x".repeat(9000)})).unwrap();
         for _ in 0..5 {
             recording.observation(&line).unwrap();
@@ -154,7 +161,7 @@ mod tests {
             }
         }
         assert_ne!(sessions[0], sessions[1]);
-        assert!(Rotation::new(path.clone(), 16 * 1024, 2).is_err());
+        assert!(Rotation::with_clock(path.clone(), 16 * 1024, 2, &clock).is_err());
         drop(recording);
         fs::remove_dir_all(path).unwrap();
     }

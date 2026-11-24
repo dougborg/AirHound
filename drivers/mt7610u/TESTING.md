@@ -66,6 +66,28 @@ stale/error MCU replies, sequence wrap, firmware chunk offsets, invalid image
 rejection, cancellation, failed/quiet captures, broken output, pause/resume
 ordering, command EOF, input failures, bounded queues and recovery exhaustion.
 
+## Deterministic timing
+
+Correctness tests inject `timing::Clock` through the scripted USB endpoint and
+receiver adapter. Initialization, register/MCU polling, capture duration,
+channel dwell and reconnect backoff execute their production control flow with
+logical time. A simulated USB timeout advances by its requested timeout; tests
+can also advance ticks explicitly. One clock remains shared by stream
+orchestration and transport across initialization and reopen. Wall-clock
+observation timestamps use a fixed test epoch. Production still uses monotonic
+OS time, real hardware delays and the existing deadline values.
+
+Output-worker tests synchronize on entry/completion with channels and condition
+variables. The blocked-writer test injects deadline expiry into the same
+close/verdict path, then releases and drains the real worker. A scheduler pause
+cannot decide whether that test passes. Fixture directory uniqueness uses a
+process ID and atomic counter instead of timestamp precision.
+
+Outer CI/process watchdogs remain useful hang protection; their elapsed time is
+not a correctness assertion. These deterministic checks do not establish real
+USB timing, physical recovery or radio performance. See
+[the timing audit](https://github.com/dougborg/AirHound/issues/329).
+
 ## Hardware evidence and remaining gates
 
 The refactored driver completed a local 20-second, nine-channel capture with

@@ -2,18 +2,20 @@
 // USB protocol adapted from mt76 usb.c / mt76x02_usb_mcu.c / mt76x02_usb_core.c,
 // Copyright (C) 2018 Lorenzo Bianconi. Those files are BSD-3-Clause-Clear;
 // see THIRD_PARTY_NOTICES for retained terms and the pinned source revision.
+pub use crate::timing::{Clock, TimeSource};
 use anyhow::{bail, ensure, Context, Result};
 use rusb::{Context as UsbContext, DeviceHandle, Direction, TransferType};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_millis(300);
 
-fn retry_control<T>(mut operation: impl FnMut() -> rusb::Result<T>) -> rusb::Result<T> {
+fn retry_control<T>(
+    clock: &Clock,
+    mut operation: impl FnMut() -> rusb::Result<T>,
+) -> rusb::Result<T> {
     for attempt in 0..10 {
         match operation() {
-            Err(rusb::Error::Timeout) if attempt < 9 => {
-                std::thread::sleep(Duration::from_millis(6))
-            }
+            Err(rusb::Error::Timeout) if attempt < 9 => clock.sleep(Duration::from_millis(6)),
             result => return result,
         }
     }
@@ -38,6 +40,9 @@ impl std::fmt::Display for McuTimeout {
 impl std::error::Error for McuTimeout {}
 
 pub trait RegisterIo {
+    fn clock(&self) -> Clock {
+        Clock::default()
+    }
     fn read32(&mut self, reg: u32) -> Result<u32>;
     fn write32(&mut self, reg: u32, value: u32) -> Result<()>;
     fn rmw32(&mut self, reg: u32, mask: u32, value: u32) -> Result<u32> {
@@ -56,6 +61,9 @@ pub trait RegisterIo {
 /// Only endpoint I/O is abstracted; production framing, retries and validation
 /// run unchanged with either libusb or a scripted transport in tests.
 pub trait UsbIo {
+    fn clock(&self) -> Clock {
+        Clock::default()
+    }
     fn write_control(
         &mut self,
         request_type: u8,
@@ -119,6 +127,7 @@ impl UsbIo for DeviceHandle<UsbContext> {
 
 pub struct UsbDevice<T: UsbIo = DeviceHandle<UsbContext>> {
     handle: T,
+    clock: Clock,
     pub input_endpoints: Vec<u8>,
     pub output_endpoints: Vec<u8>,
     sequence: u8,
@@ -170,6 +179,12 @@ impl UsbDevice {
 }
 
 impl<T: UsbIo> UsbDevice<T> {
+    /// Bind orchestration and transport waits to one clock before initialization.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
     /// Construct a transport from claimed endpoint I/O. The first OUT endpoint
     /// is the MCU endpoint; WLAN transmit endpoints are never used.
     pub fn from_io(handle: T, input_endpoints: Vec<u8>, output_endpoints: Vec<u8>) -> Result<Self> {
@@ -183,6 +198,7 @@ impl<T: UsbIo> UsbDevice<T> {
             "invalid endpoint direction"
         );
         Ok(Self {
+            clock: handle.clock(),
             handle,
             input_endpoints,
             output_endpoints,
@@ -197,7 +213,7 @@ impl<T: UsbIo> UsbDevice<T> {
                 .write_control(0x40, request, value, index, data, TIMEOUT)
         };
         let count = (if matches!(request, 0x06 | 0x42) {
-            retry_control(write)
+            retry_control(&self.clock, write)
         } else {
             write()
         })
@@ -257,9 +273,9 @@ impl<T: UsbIo> UsbDevice<T> {
         if !wait {
             return Ok(Vec::new());
         }
-        let deadline = Instant::now() + Duration::from_millis(1500);
+        let deadline = self.clock.now() + Duration::from_millis(1500);
         let mut reply = [0u8; 1024];
-        while Instant::now() < deadline {
+        while self.clock.now() < deadline {
             let n = match self.handle.read_bulk(
                 self.input_endpoints[1],
                 &mut reply,
@@ -291,13 +307,16 @@ impl<T: UsbIo> UsbDevice<T> {
 }
 
 impl<T: UsbIo> RegisterIo for UsbDevice<T> {
+    fn clock(&self) -> Clock {
+        self.clock.clone()
+    }
     fn read32(&mut self, reg: u32) -> Result<u32> {
         ensure!(
             reg & 0xc0000000 == 0,
             "Unsupported special register namespace {reg:#x}"
         );
         let mut data = [0u8; 4];
-        let count = retry_control(|| {
+        let count = retry_control(&self.clock, || {
             self.handle.read_control(
                 0xc0,
                 0x07,
@@ -436,8 +455,10 @@ mod tests {
 
     #[test]
     fn control_retries_timeouts_but_stops_on_disconnect() {
+        let time = crate::test_support::ManualTime::default();
+        let clock = time.clock();
         let mut attempts = 0;
-        let value = retry_control(|| {
+        let value = retry_control(&clock, || {
             attempts += 1;
             if attempts < 3 {
                 Err(rusb::Error::Timeout)
@@ -447,21 +468,44 @@ mod tests {
         })
         .unwrap();
         assert_eq!((attempts, value), (3, 4));
+        assert_eq!(clock.now(), Duration::from_millis(12));
         attempts = 0;
-        let result: rusb::Result<()> = retry_control(|| {
+        let result: rusb::Result<()> = retry_control(&clock, || {
             attempts += 1;
             Err(rusb::Error::NoDevice)
         });
         assert_eq!(result, Err(rusb::Error::NoDevice));
         assert_eq!(attempts, 1);
+        assert_eq!(clock.now(), Duration::from_millis(12));
         attempts = 0;
-        let result: rusb::Result<()> = retry_control(|| {
+        let result: rusb::Result<()> = retry_control(&clock, || {
             attempts += 1;
             Err(rusb::Error::Timeout)
         });
         assert_eq!(result, Err(rusb::Error::Timeout));
         assert_eq!(attempts, 10);
+        assert_eq!(clock.now(), Duration::from_millis(66));
     }
+    #[test]
+    fn mcu_deadline_refuses_late_ack_without_waiting_for_wall_time() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut device = endpoint.device();
+        let clock = device.clock();
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .responses
+            .extend(vec![Err(rusb::Error::Timeout); 5]);
+        // The normal scripted write appends a valid ACK after the five reads.
+        let error = device.mcu_command(1, &[0; 8], true).unwrap_err();
+        assert!(error.is::<McuTimeout>());
+        assert_eq!(clock.now(), Duration::from_millis(1500));
+        assert_eq!(endpoint.0.lock().unwrap().responses.len(), 1);
+        drop(device);
+        assert_eq!(endpoint.0.lock().unwrap().released, 1);
+    }
+
     #[test]
     fn mcu_wire_format_and_bounds() {
         let packet = mcu_packet(12, 3, &[1, 2, 3, 4, 5]).unwrap();

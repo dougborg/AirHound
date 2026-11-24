@@ -6,10 +6,7 @@
 use crate::transport::{RegisterIo, UsbDevice, UsbIo};
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
-use std::{
-    thread::sleep,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 pub const REFERENCE_SHA256: &str =
     "538d08c08f8fb5aa05cacf34e49aeb307e8b2dc094407fc655fbf3580c893953";
@@ -92,41 +89,43 @@ pub fn poll(
     expected: u32,
     timeout: Duration,
 ) -> Result<u32> {
-    let until = Instant::now() + timeout;
+    let clock = io.clock();
+    let until = clock.now() + timeout;
     loop {
         let value = io.read32(reg)?;
         if value & mask == expected {
             return Ok(value);
         }
-        if Instant::now() >= until {
+        if clock.now() >= until {
             bail!("Register {reg:#x} timed out: {value:#010x}, expected {expected:#x} under mask {mask:#x}");
         }
-        sleep(Duration::from_millis(5));
+        clock.sleep(Duration::from_millis(5));
     }
 }
 
 pub fn enable_chip(io: &mut impl RegisterIo) -> Result<()> {
+    let clock = io.clock();
     let mut value = io.read32(0x0080)?;
     // Disable WLAN but retain its clock, as required for subsequent USB reads.
     io.write32(0x0080, value & !1)?;
-    sleep(Duration::from_micros(20));
+    clock.sleep(Duration::from_micros(20));
     value = io.read32(0x0080)?;
     value = (value | 0xff000000) & !0x20;
     if value & 1 != 0 {
         io.write32(0x0080, value | 0xc)?;
-        sleep(Duration::from_micros(20));
+        clock.sleep(Duration::from_micros(20));
         value &= !0xc;
     }
     io.write32(0x0080, value | 3)?;
     poll(io, 0x0020, 0x00c00000, 0x00c00000, Duration::from_secs(2))?;
-    let until = Instant::now() + Duration::from_secs(3);
+    let until = clock.now() + Duration::from_secs(3);
     loop {
         let mac = io.read32(0x1000)?;
         if mac != 0 && mac != u32::MAX {
             break;
         }
-        ensure!(Instant::now() < until, "MAC did not become accessible");
-        sleep(Duration::from_millis(5));
+        ensure!(clock.now() < until, "MAC did not become accessible");
+        clock.sleep(Duration::from_millis(5));
     }
     // MAC transmit disabled; USB MCU OUT transfers are not WLAN frames.
     io.rmw32(0x1004, 0xc, 0)?;
@@ -136,6 +135,7 @@ pub fn enable_chip(io: &mut impl RegisterIo) -> Result<()> {
 /// Returns true when this invocation uploaded the supplied image. A ready MCU
 /// is reused without making any claim about the identity of its running image.
 pub fn load<T: UsbIo>(device: &mut UsbDevice<T>, firmware: &Firmware<'_>) -> Result<bool> {
+    let clock = device.clock();
     firmware.require_reference()?;
     enable_chip(device)?;
     device.write32(0x0238, 0x00c00000)?;
@@ -146,7 +146,7 @@ pub fn load<T: UsbIo>(device: &mut UsbDevice<T>, firmware: &Firmware<'_>) -> Res
     device.write32(0x1004, 0x28)?;
     device.rmw32(0x0238, 0, 0x00c00020)?;
     device.control_out(0x01, 1, 0, &[])?;
-    sleep(Duration::from_millis(6));
+    clock.sleep(Duration::from_millis(6));
     for (reg, value) in [
         (0x0800, 1),
         (0x09a0, 0x00400230),
@@ -166,7 +166,7 @@ pub fn load<T: UsbIo>(device: &mut UsbDevice<T>, firmware: &Firmware<'_>) -> Res
             device.write_mcu_bulk(&chunk_packet(chunk)?)?;
             let next = device.read32(0x09a8)?.wrapping_add(1);
             device.write32(0x09a8, next)?;
-            sleep(Duration::from_millis(6));
+            clock.sleep(Duration::from_millis(6));
         }
     }
     device.control_out(0x01, 0x12, 0, firmware.ivb)?;
@@ -179,6 +179,29 @@ pub fn load<T: UsbIo>(device: &mut UsbDevice<T>, firmware: &Firmware<'_>) -> Res
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    #[test]
+    fn register_poll_deadline_and_delay_use_scripted_time() {
+        let endpoint = crate::test_support::Endpoint::default();
+        let mut device = endpoint.device();
+        let clock = crate::transport::RegisterIo::clock(&device);
+        assert!(super::poll(
+            &mut device,
+            0x444,
+            1,
+            1,
+            std::time::Duration::from_millis(12)
+        )
+        .is_err());
+        // Preserve the production 5ms poll interval and its deadline check order.
+        assert_eq!(clock.now(), std::time::Duration::from_millis(15));
+        endpoint.0.lock().unwrap().registers.insert(0x444, 1);
+        assert_eq!(
+            super::poll(&mut device, 0x444, 1, 1, std::time::Duration::ZERO).unwrap(),
+            1
+        );
+        assert_eq!(clock.now(), std::time::Duration::from_millis(15));
+    }
+
     use super::*;
     fn sample() -> Vec<u8> {
         let mut image = vec![0; 32 + 68 + 4];
