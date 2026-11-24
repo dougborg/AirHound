@@ -66,7 +66,7 @@ pub(crate) async fn scan(
         tx,
         control,
         #[cfg(test)]
-        None,
+        TestHooks::default(),
     )
     .await
 }
@@ -84,28 +84,28 @@ pub(crate) async fn scan_adb(
         tx,
         control,
         #[cfg(test)]
-        None,
+        TestHooks::default(),
     )
     .await
 }
 
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestHooks {
+    pub ingress: Option<mpsc::Sender<u64>>,
+    pub reaped: Option<crate::owned_child::Reaped>,
+    pub retry: Option<crate::test_support::TimerWitness>,
+    pub forward_completed: Option<mpsc::Sender<bool>>,
+}
 #[cfg(test)]
 pub(crate) async fn scan_adb_test(
     adb: airhound_hostd::session::RayhunterAdb,
     decoder: PathBuf,
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
-    witness: mpsc::Sender<u64>,
+    hooks: TestHooks,
 ) -> io::Result<()> {
-    scan_inner(
-        String::new(),
-        decoder,
-        Some(adb),
-        tx,
-        control,
-        Some(witness),
-    )
-    .await
+    scan_inner(String::new(), decoder, Some(adb), tx, control, hooks).await
 }
 
 async fn scan_inner(
@@ -114,7 +114,7 @@ async fn scan_inner(
     adb: Option<airhound_hostd::session::RayhunterAdb>,
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
-    #[cfg(test)] ingress_witness: Option<mpsc::Sender<u64>>,
+    #[cfg(test)] hooks: TestHooks,
 ) -> io::Result<()> {
     let hash = decoder_hash(&decoder).await?;
     let adb_hash = match &adb {
@@ -177,13 +177,18 @@ async fn scan_inner(
             "rayhunter_connecting",
         );
         let forward = match &adb {
-            Some(config) => Some(
-                crate::adb_forward::Forward::open(
+            Some(config) => {
+                let hash = adb_hash.clone().expect("managed ADB hash");
+                #[cfg(not(test))]
+                let opening = crate::adb_forward::Forward::open(config.clone(), hash);
+                #[cfg(test)]
+                let opening = crate::adb_forward::Forward::open_observed(
                     config.clone(),
-                    adb_hash.clone().expect("managed ADB hash"),
-                )
-                .await?,
-            ),
+                    hash,
+                    hooks.forward_completed.clone(),
+                );
+                Some(opening.await?)
+            }
             None => None,
         };
         if state.borrow().shutdown
@@ -198,7 +203,7 @@ async fn scan_inner(
         let selected_endpoint = forward
             .as_ref()
             .map_or(endpoint.as_str(), |f| f.endpoint.as_str());
-        let mut child = match Command::new(&decoder)
+        let child = match Command::new(&decoder)
             .args(["--endpoint", selected_endpoint])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -214,6 +219,11 @@ async fn scan_inner(
                 return Err(error);
             }
         };
+        let mut child = crate::owned_child::OwnedChild::new(
+            child,
+            #[cfg(test)]
+            hooks.reaped.clone(),
+        )?;
         previous_subscription = Some((generation, connection));
         let mut input = BufReader::new(
             child
@@ -267,7 +277,7 @@ async fn scan_inner(
                 // this record has not entered the bounded output queue yet.
                 #[cfg(test)]
                 if let (Some(witness), Some(tick)) =
-                    (&ingress_witness, record["event"]["tick"].as_u64())
+                    (&hooks.ingress, record["event"]["tick"].as_u64())
                 {
                     let _ = witness.try_send(tick);
                 }
@@ -281,15 +291,12 @@ async fn scan_inner(
             }
         }.await;
         // Stop/Pause and protocol failure always reap this exact owned helper.
-        // Cancellation additionally uses Tokio's kill-on-drop/reaper path.
-        let _ = child.start_kill();
-        let reaped = timeout(Duration::from_secs(3), child.wait()).await;
+        // The same supervisor retains/reaps ownership if this future is cancelled.
+        let reaped = child.finish().await;
         if let Some(forward) = forward {
             forward.close().await?;
         }
-        reaped.map_err(|_| {
-            io::Error::new(io::ErrorKind::TimedOut, "Rayhunter helper reap timeout")
-        })??;
+        reaped?;
         if state.borrow().shutdown || tx.is_closed() {
             break;
         }
@@ -315,7 +322,19 @@ async fn scan_inner(
                 );
                 let record = serde_json::json!({"type":"cellular_source_gap","schema_version":1,"reason":"transport_disconnect","connection_generation":connection,"lost_records":null,"rf_loss":"unknown"});
                 tokio::select! {r=tx.send(ScanEvent::Cellular{record,generation})=>if r.is_err(){break},_=state.changed()=>{}}
-                tokio::select! {_=tokio::time::sleep(Duration::from_secs(u64::from(attempts)))=>{},_=state.changed()=>{}}
+                let retry = tokio::time::sleep(Duration::from_secs(u64::from(attempts)));
+                #[cfg(test)]
+                let retry = async {
+                    if let Some(witness) = &hooks.retry {
+                        witness
+                            .clone()
+                            .observe(retry.deadline(), retry, |_| true)
+                            .await;
+                    } else {
+                        retry.await;
+                    }
+                };
+                tokio::select! {_=retry=>{},_=state.changed()=>{}}
             }
         }
     }
@@ -378,14 +397,15 @@ signal.pause()
         .await
         .unwrap()
     }
-    async fn gone(pid: i32) {
-        timeout(Duration::from_secs(3), async {
-            while unsafe { libc::kill(pid, 0) } == 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+    async fn gone(pid: i32, witness: &mut mpsc::Receiver<(u32, bool)>) {
+        let (actual, reaped) = timeout(Duration::from_secs(4), witness.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual, pid as u32);
+        assert!(reaped, "owned supervisor must confirm wait completed");
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
     }
     async fn blocked_tick(witness: &mut mpsc::Receiver<u64>, rx: &mpsc::Receiver<ScanEvent>) {
         // The timeout is a failure watchdog, not a scheduling or age criterion.
@@ -398,173 +418,207 @@ signal.pause()
     }
     #[tokio::test]
     async fn ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing() {
-        use crate::gpsd::tests::{feed, ready, set_clock, tpv};
-        use std::sync::{Arc, Mutex};
-        for initially_available in [false, true] {
-            let f = Fixture::new();
-            let gps = ready();
-            let wall = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
-            // Opaque monotonic anchor only: every freshness check uses the
-            // injected pair below, never elapsed wall-clock time.
-            let monotonic = std::time::Instant::now();
-            set_clock(&gps, wall, monotonic);
-            if initially_available {
-                feed(&gps, tpv(wall));
+        crate::test_support::manual_time(async {
+            use crate::gpsd::tests::{feed, ready, set_clock, tpv};
+            use std::sync::{Arc, Mutex};
+            for initially_available in [false, true] {
+                let f = Fixture::new();
+                let gps = ready();
+                let wall = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc);
+                // Opaque monotonic anchor only: every freshness check uses the
+                // injected pair below, never elapsed wall-clock time.
+                let monotonic = std::time::Instant::now();
+                set_clock(&gps, wall, monotonic);
+                if initially_available {
+                    feed(&gps, tpv(wall));
+                }
+                let control = ScanControl::new(true);
+                control.set_location_source(gps.clone());
+                let (tx, mut rx) = mpsc::channel(1);
+                let (witness_tx, mut witness_rx) = mpsc::channel(8);
+                let (reaped_tx, mut reaped_rx) = mpsc::channel(8);
+                let task = tokio::spawn(scan_inner(
+                    "ws://127.0.0.1:9/raw-diag".into(),
+                    f.script.clone(),
+                    None,
+                    tx,
+                    control.clone(),
+                    TestHooks {
+                        ingress: Some(witness_tx),
+                        reaped: Some(reaped_tx),
+                        ..Default::default()
+                    },
+                ));
+                let (child, _) = pid(&mut rx).await;
+                // pid() consumed tick 0. Tick 1 fills the only queue slot;
+                // witnessing tick 2 proves its location snapshot predates the
+                // GPS change, regardless of helper or coverage scheduling delays.
+                blocked_tick(&mut witness_rx, &rx).await;
+                let changed_at = wall + chrono::Duration::seconds(1);
+                set_clock(&gps, changed_at, monotonic + Duration::from_secs(1));
+                let mut later = tpv(changed_at);
+                later["lat"] = 11.0.into();
+                feed(&gps, later);
+                let ScanEvent::Cellular { record: queued, .. } = rx.recv().await.unwrap() else {
+                    panic!()
+                };
+                let blocked = rx.recv().await.unwrap();
+                let ScanEvent::Cellular { ref record, .. } = blocked else {
+                    panic!()
+                };
+                assert_eq!(
+                    record["event"]["tick"].as_u64().unwrap(),
+                    queued["event"]["tick"].as_u64().unwrap() + 1
+                );
+                assert!(chrono::DateTime::parse_from_rfc3339(
+                    record["host_received_at"].as_str().unwrap()
+                )
+                .is_ok());
+                let snapshot = record["receiver_location"].clone();
+                if initially_available {
+                    assert_eq!(snapshot["latitude"], 10.0);
+                    assert_eq!(snapshot["association"], "host_source_ingress");
+                    assert!(snapshot["fix_time"].is_string());
+                    assert!(snapshot["host_fix_age_ms"].is_u64());
+                    assert_eq!(snapshot["horizontal_accuracy_m"], 2.0);
+                    assert_eq!(snapshot["capture_time_synchronized"], false);
+                } else {
+                    assert!(snapshot.is_null());
+                }
+                assert_eq!(
+                    control.external_location_evidence().unwrap()["latitude"],
+                    11.0
+                );
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+                gone(child, &mut reaped_rx).await;
+
+                let (tx, rx) = mpsc::channel(1);
+                tx.send(blocked).await.unwrap();
+                drop(tx);
+                let mut output = Vec::new();
+                crate::filter_task(
+                    rx,
+                    Arc::new(Mutex::new(crate::FilterConfig::new())),
+                    Arc::new(crate::MacIndex::from_defaults()),
+                    monotonic,
+                    crate::WigleWriter::new(Vec::new()).unwrap(),
+                    &mut output,
+                    control,
+                )
+                .await
+                .unwrap();
+                let written = String::from_utf8(output)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                    .find(|record| record["event"]["tick"].is_u64())
+                    .unwrap();
+                assert_eq!(written["receiver_location"], snapshot);
             }
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn pause_reaps_owned_helper_resume_new_generation_and_finish_no_orphan() {
+        crate::test_support::manual_time(async {
+            let f = Fixture::new();
             let control = ScanControl::new(true);
-            control.set_location_source(gps.clone());
-            let (tx, mut rx) = mpsc::channel(1);
-            let (witness_tx, mut witness_rx) = mpsc::channel(8);
+            let (tx, mut rx) = mpsc::channel(4);
+            let (reaped_tx, mut reaped_rx) = mpsc::channel(8);
             let task = tokio::spawn(scan_inner(
                 "ws://127.0.0.1:9/raw-diag".into(),
                 f.script.clone(),
                 None,
                 tx,
                 control.clone(),
-                Some(witness_tx),
+                TestHooks {
+                    reaped: Some(reaped_tx),
+                    ..Default::default()
+                },
             ));
-            let (child, _) = pid(&mut rx).await;
-            // pid() consumed tick 0. Tick 1 fills the only queue slot;
-            // witnessing tick 2 proves its location snapshot predates the
-            // GPS change, regardless of helper or coverage scheduling delays.
-            blocked_tick(&mut witness_rx, &rx).await;
-            let changed_at = wall + chrono::Duration::seconds(1);
-            set_clock(&gps, changed_at, monotonic + Duration::from_secs(1));
-            let mut later = tpv(changed_at);
-            later["lat"] = 11.0.into();
-            feed(&gps, later);
-            let ScanEvent::Cellular { record: queued, .. } = rx.recv().await.unwrap() else {
-                panic!()
-            };
-            let blocked = rx.recv().await.unwrap();
-            let ScanEvent::Cellular { ref record, .. } = blocked else {
-                panic!()
-            };
-            assert_eq!(
-                record["event"]["tick"].as_u64().unwrap(),
-                queued["event"]["tick"].as_u64().unwrap() + 1
-            );
-            assert!(chrono::DateTime::parse_from_rfc3339(
-                record["host_received_at"].as_str().unwrap()
-            )
-            .is_ok());
-            let snapshot = record["receiver_location"].clone();
-            if initially_available {
-                assert_eq!(snapshot["latitude"], 10.0);
-                assert_eq!(snapshot["association"], "host_source_ingress");
-                assert!(snapshot["fix_time"].is_string());
-                assert!(snapshot["host_fix_age_ms"].is_u64());
-                assert_eq!(snapshot["horizontal_accuracy_m"], 2.0);
-                assert_eq!(snapshot["capture_time_synchronized"], false);
-            } else {
-                assert!(snapshot.is_null());
-            }
-            assert_eq!(
-                control.external_location_evidence().unwrap()["latitude"],
-                11.0
-            );
-            task.abort();
-            assert!(task.await.unwrap_err().is_cancelled());
-            gone(child).await;
-
-            let (tx, rx) = mpsc::channel(1);
-            tx.send(blocked).await.unwrap();
-            drop(tx);
-            let mut output = Vec::new();
-            crate::filter_task(
-                rx,
-                Arc::new(Mutex::new(crate::FilterConfig::new())),
-                Arc::new(crate::MacIndex::from_defaults()),
-                monotonic,
-                crate::WigleWriter::new(Vec::new()).unwrap(),
-                &mut output,
-                control,
-            )
-            .await
-            .unwrap();
-            let written = String::from_utf8(output)
+            let (first, g1) = pid(&mut rx).await;
+            control.store(false, Ordering::Relaxed);
+            gone(first, &mut reaped_rx).await;
+            while rx.try_recv().is_ok() {}
+            control.store(true, Ordering::Relaxed);
+            let (second, g2) = pid(&mut rx).await;
+            assert_ne!(first, second);
+            assert!(g2 > g1);
+            control.shutdown();
+            timeout(Duration::from_secs(4), task)
+                .await
                 .unwrap()
-                .lines()
-                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-                .find(|record| record["event"]["tick"].is_u64())
+                .unwrap()
                 .unwrap();
-            assert_eq!(written["receiver_location"], snapshot);
-        }
-    }
-    #[tokio::test]
-    async fn pause_reaps_owned_helper_resume_new_generation_and_finish_no_orphan() {
-        let f = Fixture::new();
-        let control = ScanControl::new(true);
-        let (tx, mut rx) = mpsc::channel(4);
-        let task = tokio::spawn(scan(
-            "ws://127.0.0.1:9/raw-diag".into(),
-            f.script.clone(),
-            tx,
-            control.clone(),
-        ));
-        let (first, g1) = pid(&mut rx).await;
-        control.store(false, Ordering::Relaxed);
-        gone(first).await;
-        while rx.try_recv().is_ok() {}
-        control.store(true, Ordering::Relaxed);
-        let (second, g2) = pid(&mut rx).await;
-        assert_ne!(first, second);
-        assert!(g2 > g1);
-        control.shutdown();
-        timeout(Duration::from_secs(4), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        gone(second).await;
+            gone(second, &mut reaped_rx).await;
+        })
+        .await;
     }
     #[tokio::test]
     async fn cancellation_with_full_queue_still_kills_owned_helper() {
-        let f = Fixture::new();
-        let (tx, mut rx) = mpsc::channel(1);
-        let control = ScanControl::new(true);
-        let (witness_tx, mut witness_rx) = mpsc::channel(8);
-        let task = tokio::spawn(scan_inner(
-            "ws://127.0.0.1:9/raw-diag".into(),
-            f.script.clone(),
-            None,
-            tx,
-            control,
-            Some(witness_tx),
-        ));
-        let (child, _) = pid(&mut rx).await;
-        blocked_tick(&mut witness_rx, &rx).await;
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        gone(child).await;
+        crate::test_support::manual_time(async {
+            let f = Fixture::new();
+            let (tx, mut rx) = mpsc::channel(1);
+            let control = ScanControl::new(true);
+            let (witness_tx, mut witness_rx) = mpsc::channel(8);
+            let (reaped_tx, mut reaped_rx) = mpsc::channel(8);
+            let task = tokio::spawn(scan_inner(
+                "ws://127.0.0.1:9/raw-diag".into(),
+                f.script.clone(),
+                None,
+                tx,
+                control,
+                TestHooks {
+                    ingress: Some(witness_tx),
+                    reaped: Some(reaped_tx),
+                    ..Default::default()
+                },
+            ));
+            let (child, _) = pid(&mut rx).await;
+            blocked_tick(&mut witness_rx, &rx).await;
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            gone(child, &mut reaped_rx).await;
+        })
+        .await;
     }
     #[tokio::test]
     async fn resume_refuses_changed_decoder_before_spawning_it() {
-        let f = Fixture::new();
-        let control = ScanControl::new(true);
-        let (tx, mut rx) = mpsc::channel(4);
-        let task = tokio::spawn(scan(
-            "ws://127.0.0.1:9/raw-diag".into(),
-            f.script.clone(),
-            tx,
-            control.clone(),
-        ));
-        let (first, _) = pid(&mut rx).await;
-        control.store(false, Ordering::Relaxed);
-        gone(first).await;
-        std::fs::write(
-            &f.script,
-            "#!/usr/bin/env python3\nraise Exception('must not execute')\n",
-        )
-        .unwrap();
-        control.store(true, Ordering::Relaxed);
-        let error = timeout(Duration::from_secs(3), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap_err();
-        assert!(error.to_string().contains("decoder changed"));
+        crate::test_support::manual_time(async {
+            let f = Fixture::new();
+            let control = ScanControl::new(true);
+            let (tx, mut rx) = mpsc::channel(4);
+            let (reaped_tx, mut reaped_rx) = mpsc::channel(8);
+            let task = tokio::spawn(scan_inner(
+                "ws://127.0.0.1:9/raw-diag".into(),
+                f.script.clone(),
+                None,
+                tx,
+                control.clone(),
+                TestHooks {
+                    reaped: Some(reaped_tx),
+                    ..Default::default()
+                },
+            ));
+            let (first, _) = pid(&mut rx).await;
+            control.store(false, Ordering::Relaxed);
+            gone(first, &mut reaped_rx).await;
+            std::fs::write(
+                &f.script,
+                "#!/usr/bin/env python3\nraise Exception('must not execute')\n",
+            )
+            .unwrap();
+            control.store(true, Ordering::Relaxed);
+            let error = timeout(Duration::from_secs(3), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err();
+            assert!(error.to_string().contains("decoder changed"));
+        })
+        .await;
     }
 }

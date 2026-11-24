@@ -24,8 +24,11 @@ mod adb_forward;
 mod ble_packet;
 mod ble_source;
 mod external_scanner;
+mod owned_child;
 mod rayhunter_source;
 mod serial_source;
+#[cfg(test)]
+mod test_support;
 use airhound_hostd::external_wifi;
 mod observation;
 use control::ScanControl;
