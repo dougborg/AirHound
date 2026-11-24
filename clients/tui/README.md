@@ -55,6 +55,8 @@ works without a terminal and emits no terminal escape sequences.
 This is an independent Cargo build root and lockfile. Headless tests use Ratatui's
 `TestBackend` and a fake Unix-socket service; they never open a user's terminal UI
 or radio. The macOS/Linux workflow checks formatting, tests and strict Clippy.
+Backend fixtures use [controlled test time](../TESTING.md); production request
+and operation deadlines remain unchanged.
 
 ```sh
 cargo +stable test --manifest-path clients/tui/Cargo.toml --locked

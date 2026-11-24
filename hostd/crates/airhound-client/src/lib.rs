@@ -223,6 +223,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
 }
 
 #[cfg(test)]
+mod test_clock;
+
+#[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -240,7 +243,7 @@ mod tests {
         })
         .unwrap()
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn framing_rejects_lengths_and_truncated_payloads() {
         for bytes in [
             0u32.to_be_bytes().to_vec(),
@@ -256,8 +259,9 @@ mod tests {
             .is_err());
         assert!(output.is_empty());
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn fragmented_frame_and_remote_error_preserve_connection() {
+        let time = super::test_clock::ManualTime::hold().await;
         let (client, mut server) = duplex(64);
         let server_task = tokio::spawn(async move {
             for id in 1..=3 {
@@ -283,34 +287,100 @@ mod tests {
         ));
         assert_eq!(client.status().await.unwrap()["mode"], "passive_control");
         server_task.await.unwrap();
+        time.finish().await;
     }
-    #[tokio::test]
-    async fn mismatched_response_and_timeout_poison_connection() {
-        for mismatch in [false, true] {
-            let (client, mut server) = duplex(1024);
-            let server_task = tokio::spawn(async move {
-                read_frame(&mut server).await.unwrap();
-                write_frame(&mut server, &Response::success(1, hello()))
-                    .await
-                    .unwrap();
-                read_frame(&mut server).await.unwrap();
-                if mismatch {
-                    write_frame(&mut server, &Response::success(99, Value::Null))
-                        .await
-                        .unwrap();
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            });
-            let mut client = Client::handshake(client, Duration::from_millis(30))
+    #[tokio::test(start_paused = true)]
+    async fn mismatched_response_poisons_connection() {
+        let time = super::test_clock::ManualTime::hold().await;
+        let (client, mut server) = duplex(1024);
+        let peer = tokio::spawn(async move {
+            read_frame(&mut server).await.unwrap();
+            write_frame(&mut server, &Response::success(1, hello()))
                 .await
                 .unwrap();
-            assert!(client.status().await.is_err());
-            assert!(matches!(client.status().await, Err(ClientError::Closed)));
-            server_task.abort();
-        }
+            read_frame(&mut server).await.unwrap();
+            write_frame(&mut server, &Response::success(99, Value::Null))
+                .await
+                .unwrap();
+            assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+        });
+        let mut client = Client::handshake(client, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(
+            matches!(client.status().await, Err(ClientError::Protocol(message)) if message == "response version or request ID mismatch")
+        );
+        assert!(matches!(client.status().await, Err(ClientError::Closed)));
+        peer.await.unwrap();
+        time.finish().await;
     }
-    #[tokio::test]
+
+    #[tokio::test(start_paused = true)]
+    async fn request_timeout_boundary_poisons_connection_and_closes_peer() {
+        let time = super::test_clock::ManualTime::hold().await;
+        let (client, mut server) = duplex(1024);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            read_frame(&mut server).await.unwrap();
+            write_frame(&mut server, &Response::success(1, hello()))
+                .await
+                .unwrap();
+            let request: Request =
+                serde_json::from_slice(&read_frame(&mut server).await.unwrap()).unwrap();
+            assert!(matches!(request.command, Command::Status {}));
+            seen.send(()).unwrap();
+            assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+        });
+        let mut client = Client::handshake(client, Duration::from_secs(1))
+            .await
+            .unwrap();
+        {
+            let call = client.status();
+            tokio::pin!(call);
+            tokio::select! { result = &mut call => panic!("early result: {result:?}"), _ = received => {} }
+            tokio::time::advance(Duration::from_millis(999)).await;
+            assert!(std::future::Future::poll(
+                call.as_mut(),
+                &mut std::task::Context::from_waker(std::task::Waker::noop())
+            )
+            .is_pending());
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert!(matches!(call.await, Err(ClientError::Timeout)));
+        }
+        assert!(matches!(client.status().await, Err(ClientError::Closed)));
+        peer.await.unwrap();
+        time.finish().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handshake_timeout_uses_virtual_deadline_and_closes_peer() {
+        let time = super::test_clock::ManualTime::hold().await;
+        let (client, mut server) = duplex(1024);
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let request: Request =
+                serde_json::from_slice(&read_frame(&mut server).await.unwrap()).unwrap();
+            assert!(matches!(request.command, Command::Hello {}));
+            seen.send(()).unwrap();
+            assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
+        });
+        let call = Client::handshake(client, Duration::from_secs(1));
+        tokio::pin!(call);
+        tokio::select! { _ = &mut call => panic!("unexpected handshake completion"), _ = received => {} }
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(std::future::Future::poll(
+            call.as_mut(),
+            &mut std::task::Context::from_waker(std::task::Waker::noop())
+        )
+        .is_pending());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(matches!(call.await, Err(ClientError::Timeout)));
+        peer.await.unwrap();
+        time.finish().await;
+    }
+    #[tokio::test(start_paused = true)]
     async fn cancelled_call_closes_stream_instead_of_accepting_late_response() {
+        let time = super::test_clock::ManualTime::hold().await;
         let (client, mut server) = duplex(1024);
         let (seen, started) = tokio::sync::oneshot::channel();
         let peer = tokio::spawn(async move {
@@ -334,5 +404,6 @@ mod tests {
         }
         assert!(matches!(client.status().await, Err(ClientError::Closed)));
         peer.await.unwrap();
+        time.finish().await;
     }
 }

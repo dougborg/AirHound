@@ -16,5 +16,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time", "sync"] }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util", "sync"] }
 tempfile = "3"
 rmcp = { version = "=3.11.0", default-features = false, features = ["client", "transport-child-process"] }
