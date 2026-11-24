@@ -5,9 +5,60 @@ hardware certification. Supported sources still need permissions and correct
 firmware. USB product names alone establish neither firmware nor working reception.
 The remaining integration work is tracked in [#269](https://github.com/dougborg/AirHound/issues/269).
 
-## Current acceptance status
+## Current preview receiver checkpoint
 
-The canonical preview now contains reviewed backend `041c215` and GUI `b7a7c7a`.
+The latest backend-only checks used installed backend `b2e2a42`; the preview also
+contains the saved-recording paging correction from `c3cbcd6`. These checks did
+not exercise GUI capture controls or change the user's saved-recording selection.
+Current manual paging, live selection and capture-control acceptance remain open.
+Earlier user confirmation of connection and saved-recording opening remains
+separate evidence.
+
+| Receiver | Verified individual scope | Remaining qualification |
+| --- | --- | --- |
+| CatSniffer | 1,587 BLE packet observations, retained raw PDU and available receive metadata; final stopped status and zero reported host drops | RF loss unknown; firmware capabilities were not freshly queried; no coded/extended reception claim |
+| ALFA | 1,378 WiFi observations with available identity/channel metadata; final stopped status, zero reported host/producer drops and no reconnects | Measured RSSI, RX PHY and raw frame/IE enrichment remain unavailable; subsequent combined lifecycle failed |
+| Flipper/AWOK | 949 WiFi packet observations with retained frame bytes and attributed bridge identity; final producer stop acknowledgement and zero reported host/UART/RPC errors or drops | Stop acknowledgement does not prove RF silence; physical USB recovery remains untested |
+| Experimental Orbic + GNSS | A 120-second, single-generation Start/Finish retained 577 LTE observations, 331 complete-identity observations and 513 hash-verified reconstructed raw frames; all cells had qualified receiver-location snapshots, maximum age 1,040 ms | Complete-identity observations are not unique cell or tower counts; this individual check did not exercise Pause/Resume |
+
+The original CatSniffer and ALFA controller receipts remain failed because their
+predicates expected incorrect record-kind names. Separate saved-evidence reviews
+verified the scopes above without recapture or rewriting those receipts. Orbic
+Finish released its owned forward, decoder and GNSS resources.
+
+A subsequent combined CatSniffer/ALFA/Flipper/Orbic session retained 10,820 records.
+Every source had positive reception and qualified receiver-location associations
+before and after Pause/Resume. All four source pause acknowledgements and Orbic
+forward release were observed; saved phase records matched final history. Orbic
+retained 214 reconstructed raw frames and an explicit subscription gap between
+its two generations. However, ALFA entered recovery twice and failed before
+Finish; the recording ended **failed**, and the planned repeat was skipped.
+The host's shutdown wording conflated a nonzero child exit with forced termination,
+so that wording alone does not prove a kill or establish radio-cleanup failure.
+The underlying receiver failure remains unresolved. The backend returned idle;
+Orbic/GNSS cleanup and Flipper stop evidence passed. This is partial combined
+reception evidence, not successful combined lifecycle or repeat acceptance.
+
+Native WiFi address redaction and native BLE initialization timeout remain
+unresolved; current permission approval and diagnosis are incomplete. The M5
+transport opened at the configured baud but accepted no firmware records during
+its 30-second check. That does not establish zero raw UART bytes or current
+firmware identity. Its production serial path and dependencies match an earlier
+successful run; no reset, flash or firmware conclusion follows from this result.
+
+RF loss remains unknown beyond reported counters, and capture clocks remain
+unvalidated. GNSS describes the receiver rig: Orbic associates it at host-source
+ingress, other sources at host processing time. Neither association establishes
+synchronized RF capture time or transmitter position. These bounded checks do not
+complete full-rig GUI, recovery, endurance, metadata-completeness or export
+acceptance.
+
+## Earlier preview and firmware checkpoints
+
+The following artifact-specific results are historical; they do not supersede
+the unresolved current checks above.
+
+The earlier canonical preview contained reviewed backend `041c215` and GUI `b7a7c7a`.
 The completed rollout preserved existing recordings and settings, retained the
 previous applications and database backup, and launched one GUI with an idle
 backend. No capture was started during installation. The user subsequently
