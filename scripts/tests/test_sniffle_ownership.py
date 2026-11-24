@@ -18,13 +18,17 @@ SPEC = importlib.util.spec_from_file_location('sniffle_source_ownership', HELPER
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
 RUNNER = '''import importlib.util,sys
+from types import SimpleNamespace
 from pathlib import Path
 s=importlib.util.spec_from_file_location('helper',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-m.LEASE_ROOT=Path(sys.argv[2]);sys.argv=['helper']+sys.argv[3:]
+m.LEASE_ROOT=Path(sys.argv[2]);m.time=SimpleNamespace(sleep=lambda _:None);sys.argv=['helper']+sys.argv[3:]
 try: m.main()
 except Exception as e: print(str(e),file=sys.stderr);sys.exit(1)
 '''
-HARDWARE = '''import os,time,types
+HARDWARE = '''import os,signal,types
+WAKE_READ,WAKE_WRITE=os.pipe()
+os.set_blocking(WAKE_WRITE,False)
+signal.set_wakeup_fd(WAKE_WRITE)
 class SniffleHW:
  def __init__(self,port,**kwargs):
   fd=os.open(port,os.O_RDWR|os.O_NOCTTY);os.write(fd,b'OPEN')
@@ -32,10 +36,10 @@ class SniffleHW:
  def cmd_marker(self,marker): pass
  def probe_fw_version(self):
   if os.environ.get('HOLD_QUERY'):
-   print('QUERY_READY',flush=True);time.sleep(20)
+   print('QUERY_READY',flush=True);os.read(WAKE_READ,1)
   return types.SimpleNamespace(major=1,minor=11,revision=0,api_level=0)
  def setup_sniffer(self,**kwargs): pass
- def recv_and_decode(self): time.sleep(.02)
+ def recv_and_decode(self): os.read(WAKE_READ,1)
 '''
 
 
@@ -134,7 +138,8 @@ class SniffleOwnershipTests(unittest.TestCase):
                 second = subprocess.run(second_args, capture_output=True, timeout=3)
                 self.assertEqual(second.returncode, 1)
                 self.assertIn(b'already owned', second.stderr)
-                self.assertFalse(select.select([master], [], [], .2)[0], 'denied owner wrote UART')
+                # The denied process has exited, so it can no longer produce a late write.
+                self.assertFalse(select.select([master], [], [], 0)[0], 'denied owner wrote UART')
                 self.assertIsNone(first.poll(), 'denial disrupted first owner')
             finally:
                 first.send_signal(signal.SIGTERM)
