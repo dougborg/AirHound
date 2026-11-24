@@ -92,6 +92,11 @@ pub struct ReceiverConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
+    /// Experimental read-only subscription through a separately licensed decoder.
+    Rayhunter {
+        endpoint: String,
+        decoder: PathBuf,
+    },
     NativeBle {
         adapter: Option<String>,
     },
@@ -169,6 +174,7 @@ impl SessionConfig {
             for (index, receiver) in receivers.iter().enumerate() {
                 let source = &receiver["source"];
                 let fields: &[&str] = match source["kind"].as_str() {
+                    Some("rayhunter") => &["endpoint", "decoder"],
                     Some("sniffle") => &["port", "python", "helper"],
                     Some("airhound_serial" | "flipper_marauder") => &["port"],
                     Some("external_wifi") => &["executable", "firmware"],
@@ -277,6 +283,15 @@ impl SessionConfig {
                 ));
             }
             let resource = match &mut receiver.source {
+                Source::Rayhunter { endpoint, decoder } => {
+                    crate::rayhunter::validate_endpoint(endpoint)?;
+                    if !decoder.is_absolute() {
+                        return Err(invalid(
+                            "Rayhunter decoder must be an absolute executable path",
+                        ));
+                    }
+                    format!("rayhunter:{endpoint}")
+                }
                 Source::NativeBle { adapter } => {
                     native_ble_count += 1;
                     default_ble |= adapter.is_none();
@@ -431,6 +446,9 @@ impl Source {
     /// Requested configuration only. Actual radio state comes from backend health.
     pub fn assignment(&self) -> serde_json::Value {
         match self {
+            Self::Rayhunter { endpoint, .. } => {
+                serde_json::json!({"mode":"experimental_cellular", "endpoint":endpoint, "media":["cellular"], "pause":"close_subscription", "stop":"close_subscription", "modem_participation":"active_independent_of_host", "capture_clock":"unvalidated", "rf_loss":"unknown"})
+            }
             Self::NativeBle { .. } | Self::NativeWifi {} => {
                 serde_json::json!({"mode":"os_managed"})
             }
@@ -470,6 +488,39 @@ impl Source {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rayhunter_requires_explicit_endpoint_and_helper_and_rejects_duplicate_subscription() {
+        let plan = serde_json::json!({"version":1,"receivers":[{"id":"cellular","source":{"kind":"rayhunter","endpoint":"ws://127.0.0.1:9000/raw-diag","decoder":"/fixture/decoder"}}]});
+        let config = SessionConfig::from_json(plan.clone())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert_eq!(
+            config.receivers[0].source.assignment()["media"],
+            serde_json::json!(["cellular"])
+        );
+        let mut duplicate = plan.clone();
+        duplicate["receivers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"id":"second","source":plan["receivers"][0]["source"]}));
+        assert!(SessionConfig::from_json(duplicate)
+            .unwrap()
+            .resolve()
+            .is_err());
+        for field in ["decoder", "endpoint"] {
+            let mut missing = plan.clone();
+            missing["receivers"][0]["source"][field] = serde_json::Value::Null;
+            assert!(SessionConfig::from_json(missing).is_err());
+        }
+        let mut remote = plan.clone();
+        remote["receivers"][0]["source"]["endpoint"] = "ws://192.0.2.1:9000/raw-diag".into();
+        assert!(SessionConfig::from_json(remote).unwrap().resolve().is_err());
+        let mut command = plan;
+        command["receivers"][0]["source"]["start_recording"] = true.into();
+        assert!(SessionConfig::from_json(command).is_err());
+    }
 
     #[test]
     fn flipper_live_source_is_explicit_fixed_contract_and_shares_serial_ownership() {

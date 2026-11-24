@@ -130,6 +130,9 @@ pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>
     let mut tasks = Vec::new();
     for receiver in plan.receivers {
         match &receiver.source {
+            Source::Rayhunter { decoder, .. } => {
+                crate::rayhunter_source::validate_decoder(decoder)?
+            }
             Source::NativeBle { adapter } => {
                 crate::receiver::validate_selection(adapter.as_deref(), cfg!(target_os = "macos"))
                     .map_err(io::Error::other)?
@@ -151,7 +154,9 @@ pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>
         let source = receiver.source;
         tasks.push(ReceiverTask {
             id: receiver.id,
-            scanner: if source.is_ble() {
+            scanner: if matches!(source, Source::Rayhunter { .. }) {
+                Scanner::Cellular
+            } else if source.is_ble() {
                 Scanner::Ble
             } else {
                 Scanner::Wifi
@@ -171,6 +176,9 @@ async fn start_source(
     control: ScanControl,
 ) -> io::Result<()> {
     match source {
+        Source::Rayhunter { endpoint, decoder } => {
+            crate::rayhunter_source::scan(endpoint, decoder, tx, control).await
+        }
         Source::NativeBle { adapter } => {
             let Some((adapter, receiver)) =
                 ble::initialize(receiver::selected(adapter.as_deref()), &control, &tx).await?
@@ -349,6 +357,7 @@ where
     let mut owners = std::collections::HashMap::new();
     for receiver in receivers {
         let child_control = control.fork_receiver(receiver.id.clone(), receiver.assignment);
+        child_control.set_health(Scanner::Cellular, Phase::Disabled, "not_assigned");
         child_control.set_health(Scanner::Ble, Phase::Disabled, "not_assigned");
         child_control.set_health(Scanner::Wifi, Phase::Disabled, "not_assigned");
         child_control.set_health(

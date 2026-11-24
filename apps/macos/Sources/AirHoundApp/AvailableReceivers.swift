@@ -13,6 +13,15 @@ struct AvailableReceivers: View {
   @State private var baud: Int64 = 115200
   var body: some View {
     DisclosureGroup("Available devices") {
+      Button("Add Rayhunter / Orbic (experimental)") {
+        session.addReceiver(
+          source: .object([
+            "kind": .string("rayhunter"), "endpoint": .string(""), "decoder": .string(""),
+          ]))
+      }.disabled(!session.canEditPlan || !session.sessionSources.contains("rayhunter"))
+      Text("Requires a prepared local raw-feed forward and the separate Rayhunter decoder.").font(
+        .caption
+      ).foregroundStyle(.secondary)
       if let inventory = session.inventory {
         ForEach(inventory.receiverChoices) { choice in
           let device = choice.device

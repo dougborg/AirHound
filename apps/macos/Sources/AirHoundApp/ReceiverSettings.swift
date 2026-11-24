@@ -6,6 +6,13 @@ struct ReceiverSettings: View {
   let receiver: PlanReceiver
   var body: some View {
     switch receiver.kind {
+    case "rayhunter":
+      field("Forwarded raw endpoint", "endpoint")
+      field("Rayhunter decoder", "decoder", file: true)
+      Text(
+        "Experimental cellular subscription. Select a prepared local forward. Pause and Finish close the subscription; the modem keeps operating. Capture time and transmitter location are unverified."
+      )
+      .font(.caption).foregroundStyle(.secondary)
     case "external_wifi":
       field("USB selector", "usb_selector")
       field("Scanner helper", "executable", file: true)

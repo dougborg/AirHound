@@ -47,7 +47,7 @@ public struct Recording: Sendable {
       guard
         [
           "wifi_observation", "ble_observation", "external_wifi_observation",
-          "ble_packet_observation", "wifi_packet_observation",
+          "ble_packet_observation", "wifi_packet_observation", "cellular_observation",
         ].contains(type)
       else {
         ignored += 1
@@ -55,6 +55,26 @@ public struct Recording: Sendable {
       }
       guard rows.count < rowLimit else {
         throw ModelError.invalid("Recording exceeds 10,000 observations")
+      }
+      if type == "cellular_observation" {
+        let cell = object["observation"] as? [String: Any] ?? [:]
+        let source = object["session_source"] as? [String: Any] ?? [:]
+        let plmn = [cell["mcc"] as? String, cell["mnc"] as? String].compactMap { $0 }.joined(
+          separator: "-")
+        let eci = (cell["eci"] as? Int).map(String.init)
+        let pci = (cell["pci"] as? Int).map(String.init) ?? "Unknown"
+        let pretty = try JSONSerialization.data(
+          withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        rows.append(
+          Observation(
+            id: lineNumber, name: plmn.isEmpty ? "LTE PCI \(pci)" : "LTE \(plmn)",
+            medium: "Cellular",
+            receiver: source["receiver_id"] as? String ?? "Not reported",
+            address: eci.map { "ECI \($0)" } ?? "PCI \(pci)", rssi: cell["rssi_dbm"] as? Int,
+            channel: (cell["earfcn"] as? Int).map { "EARFCN \($0)" } ?? "Not reported",
+            frequency: "Not reported", band: "LTE", phy: "Not reported", match: "Not evaluated",
+            alert: "Not evaluated", evidence: [], raw: String(decoding: pretty, as: UTF8.self)))
+        continue
       }
       let detection = object["detection"] as? [String: Any] ?? [:]
       let source = object["session_source"] as? [String: Any] ?? [:]

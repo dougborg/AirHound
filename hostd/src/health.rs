@@ -15,6 +15,7 @@ pub enum Phase {
 }
 #[derive(Clone, Copy)]
 pub enum Scanner {
+    Cellular,
     Ble,
     Wifi,
 }
@@ -31,8 +32,22 @@ impl Default for Health {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
+    pub cellular: Health,
     pub ble: Health,
     pub wifi: Health,
+}
+
+impl Default for Snapshot {
+    fn default() -> Self {
+        Self {
+            ble: Health::default(),
+            wifi: Health::default(),
+            cellular: Health {
+                state: Phase::Disabled,
+                reason: "not_assigned",
+            },
+        }
+    }
 }

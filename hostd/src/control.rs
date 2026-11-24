@@ -95,6 +95,7 @@ impl ScanControl {
         let mut snapshot = self.1.lock().unwrap_or_else(|e| e.into_inner());
         let health = Health { state, reason };
         match scanner {
+            Scanner::Cellular => snapshot.cellular = health,
             Scanner::Ble => snapshot.ble = health,
             Scanner::Wifi => snapshot.wifi = health,
         }
@@ -104,6 +105,7 @@ impl ScanControl {
         let mut finished = self.5.lock().unwrap_or_else(|e| e.into_inner());
         let mut snapshot = self.1.lock().unwrap_or_else(|e| e.into_inner());
         let health = match scanner {
+            Scanner::Cellular => &mut snapshot.cellular,
             Scanner::Ble => &mut snapshot.ble,
             Scanner::Wifi => &mut snapshot.wifi,
         };
@@ -217,7 +219,7 @@ impl ScanControl {
             let pause = |snapshot: &Arc<Mutex<Snapshot>>| {
                 let mut health = snapshot.lock().unwrap_or_else(|e| e.into_inner());
                 let health = &mut *health;
-                for scanner in [&mut health.ble, &mut health.wifi] {
+                for scanner in [&mut health.ble, &mut health.wifi, &mut health.cellular] {
                     if !enabled && matches!(scanner.state, Phase::Running | Phase::Initializing) {
                         *scanner = Health {
                             state: Phase::Paused,

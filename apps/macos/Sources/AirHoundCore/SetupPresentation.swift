@@ -8,6 +8,7 @@ public struct PlanReceiver: Identifiable {
   public var kind: String { source["kind"]?.string ?? "unknown" }
   public var title: String {
     switch kind {
+    case "rayhunter": return "Rayhunter / Orbic (experimental)"
     case "native_ble": return "System Bluetooth"
     case "native_wifi": return "System Wi-Fi"
     case "sniffle": return "Sniffle / CatSniffer"
@@ -22,7 +23,9 @@ public struct PlanReceiver: Identifiable {
     }
   }
   public var endpoint: String {
-    ["port", "usb_selector", "interface", "adapter", "path"].compactMap { source[$0]?.string }.first
+    ["endpoint", "port", "usb_selector", "interface", "adapter", "path"].compactMap {
+      source[$0]?.string
+    }.first
       ?? "System managed"
   }
 }
