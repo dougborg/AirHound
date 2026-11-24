@@ -40,6 +40,7 @@ import Foundation
     var selected: Int?
     var anchor = NSPoint.zero
     var total = 0
+    var holdUpdateChecks = 0
     for (index, file) in files.enumerated() {
       let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
       guard size <= 512 * 1024 else { throw NSError(domain: "Page exceeds byte limit", code: 1) }
@@ -75,6 +76,7 @@ import Foundation
         precondition(display.recording!.observations.map(\.id) == heldIDs)
         precondition(scroll.contentView.bounds.origin == anchor)
         precondition(coordinator.rows[coordinator.table.selectedRow].id == selected)
+        holdUpdateChecks += 1
       }
       precondition(background.records.count <= 1000)
       samples.append([
@@ -86,15 +88,15 @@ import Foundation
     // Small snapshots still measure layout, but do not claim eviction coverage.
     let current = try background.observations()
     let selectedEvicted = !current.observations.contains { $0.id == selected }
-    display.resume(current, label: "Private snapshot replay", context: context)
-    precondition(!display.held && display.selection == nil)
     let (_, resumeMS) = ms {
+      display.resume(current, label: "Private snapshot replay", context: context)
       coordinator.update(
         rows: current.observations, revision: current.revision, selection: nil,
         sortOrder: [ObservationSort()], context: context)
       window.contentView?.layoutSubtreeIfNeeded()
       window.contentView?.displayIfNeeded()
     }
+    precondition(!display.held && display.selection == nil)
     precondition(coordinator.rows.map(\.id) == current.observations.map(\.id))
     let (_, scrollMS) = ms {
       // Physical benchmark workload, not a readiness delay or correctness clock.
@@ -133,7 +135,8 @@ import Foundation
         "Offline presentation experiment, protocol + receiver + reported address; not persistent physical-device identity or shipped grouping UI",
       "input_rows": total, "background_rows": background.records.count,
       "omitted_rows": background.omitted,
-      "held_rows": heldIDs.count, "held_selection_and_viewport_preserved": true,
+      "held_rows": heldIDs.count, "hold_update_checks": holdUpdateChecks,
+      "held_selection_and_viewport_preserved": holdUpdateChecks > 0 ? (true as Any) : NSNull(),
       "eviction_exercised": background.omitted > 0,
       "selected_row_evicted_from_background": selectedEvicted, "follow_live_resumed": true,
       "resume_ms": resumeMS, "scroll_300_layout_display_ms": scrollMS,
