@@ -279,22 +279,76 @@ pub async fn query(request: &Request) -> Identification {
     result
 }
 
-async fn read_identity(mut command: Command, deadline: Duration) -> io::Result<Firmware> {
+async fn read_identity(command: Command, deadline: Duration) -> io::Result<Firmware> {
+    read_identity_with_timer(
+        command,
+        deadline,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
+struct IdentityWitness {
+    timer: crate::test_support::TimerWitness,
+    spawned: tokio::sync::oneshot::Sender<u32>,
+}
+
+async fn read_identity_with_timer(
+    mut command: Command,
+    deadline: Duration,
+    #[cfg(test)] witness: Option<IdentityWitness>,
+) -> io::Result<Firmware> {
+    command.stdin(Stdio::null());
+    // A test-owned stdin keeps the synthetic child blocked on an event, not a sleep.
+    #[cfg(test)]
+    if witness.is_some() {
+        command.stdin(Stdio::piped());
+    }
     let mut child = command
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()?;
-    let result = tokio::time::timeout(deadline, async {
+    #[cfg(test)]
+    let timer = witness.map(|witness| {
+        let _ = witness
+            .spawned
+            .send(child.id().expect("fresh child has PID"));
+        witness.timer
+    });
+    let expires = tokio::time::Instant::now() + deadline;
+    let operation = tokio::time::timeout_at(expires, async {
         let mut bytes = Vec::new();
-        child.stdout.take().expect("piped stdout").take(OUTPUT_LIMIT + 1).read_to_end(&mut bytes).await?;
-        if bytes.len() > OUTPUT_LIMIT as usize { return Err(invalid("identity response exceeds 4 KiB")); }
+        child
+            .stdout
+            .take()
+            .expect("piped stdout")
+            .take(OUTPUT_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > OUTPUT_LIMIT as usize {
+            return Err(invalid("identity response exceeds 4 KiB"));
+        }
         if !child.wait().await?.success() {
             return Err(io::Error::other("Sniffle identity helper failed; check device ownership, permissions, protocol and Python dependencies"));
         }
         Firmware::parse(&bytes)
-    }).await.unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::TimedOut, "Sniffle identity query timed out")));
+    });
+    #[cfg(test)]
+    let operation = async {
+        match timer {
+            Some(timer) => timer.observe(expires, operation, Result::is_err).await,
+            None => operation.await,
+        }
+    };
+    let result = operation.await.unwrap_or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Sniffle identity query timed out",
+        ))
+    });
     if result.is_err() {
         let _ = child.kill().await;
         let _ = child.wait().await;
@@ -327,22 +381,45 @@ mod tests {
     }
     #[tokio::test]
     async fn helper_timeout_output_bounds_exit_and_malformed_output_are_rejected() {
-        for (script, timeout, kind) in [
-            (
-                "sleep 1",
-                Duration::from_millis(10),
-                io::ErrorKind::TimedOut,
-            ),
-            ("printf '{}'", DEADLINE, io::ErrorKind::Other),
-            ("exit 2", DEADLINE, io::ErrorKind::Other),
-            ("yes abc", DEADLINE, io::ErrorKind::InvalidInput),
-        ] {
+        crate::test_support::manual_time(async {
             let mut command = Command::new("/bin/sh");
-            command.args(["-c", script]);
+            command.args(["-c", "read ignored"]);
+            let (timer, mut events) = crate::test_support::TimerWitness::channel();
+            let (spawned, pid) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(read_identity_with_timer(
+                command,
+                Duration::from_millis(10),
+                Some(IdentityWitness { timer, spawned }),
+            ));
+            let pid = pid.await.unwrap();
+            crate::test_support::advance_registered_timer(&mut events).await;
             assert_eq!(
-                read_identity(command, timeout).await.unwrap_err().kind(),
-                kind
+                task.await.unwrap().unwrap_err().kind(),
+                io::ErrorKind::TimedOut
             );
-        }
+            assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            assert_eq!(
+                unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+            for (script, kind) in [
+                ("printf '{}'", io::ErrorKind::Other),
+                ("exit 2", io::ErrorKind::Other),
+                ("yes abc", io::ErrorKind::InvalidInput),
+            ] {
+                let mut command = Command::new("/bin/sh");
+                command.args(["-c", script]);
+                assert_eq!(
+                    read_identity(command, DEADLINE).await.unwrap_err().kind(),
+                    kind
+                );
+            }
+        })
+        .await;
     }
 }
