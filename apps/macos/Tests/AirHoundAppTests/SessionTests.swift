@@ -343,9 +343,11 @@ final class SessionTests: XCTestCase {
     ]
     service.standardOutput = FileHandle.nullDevice
     service.standardError = FileHandle.nullDevice
+    let serviceLog = try FixtureServiceLog(
+      process: service, path: root.appendingPathComponent("service-readiness.log"))
     try service.run()
     defer { XCTAssertTrue(stopOwnedProcess(service)) }
-    try await awaitFixtureFile(socket)
+    try await serviceLog.wait(for: service)
     let suite = "AirHound-queued-setup-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }

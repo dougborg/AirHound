@@ -21,7 +21,9 @@ Production deadlines and bounded process cleanup remain in force.
 | `.github/scripts`, workflow-invoked fixtures | Include in repository-wide review; job deadlines, fuzz budgets and benchmark durations must be distinguished from correctness gates. |
 
 The remaining Swift fixture batch uses shared test-only file/process event helpers.
-Core service startup observes socket creation; replay completion observes durable
+Direct-process service fixtures observe the bounded stderr diagnostic emitted only
+after successful listen; socket-path creation alone is explicitly rejected by a
+causal negative test. Replay completion observes durable
 DB/WAL writes and queries finished history rather than polling the actor clock.
 WAL replacement re-arms the watcher under either file/directory delivery order.
 Owned-process cleanup uses termination notifications; its escalation tests inject
@@ -37,6 +39,10 @@ Production collector pacing and GUI refresh timers remain production behavior,
 not correctness-time assertions. The repository-wide indirect-helper audit and
 the regression guard below remain unfinished; a clean lexical search does not
 establish completion of #329.
+
+The GUI's own standalone/LaunchServices startup path is a separate production
+readiness change: it must use an authenticated backend handshake within one total
+deadline. These fixture witnesses do not mask or claim to fix that startup path.
 
 Rust host/core/firmware, companions and drivers are coordinated separately under
 #329. Their findings belong in the same closure checklist. No language or helper

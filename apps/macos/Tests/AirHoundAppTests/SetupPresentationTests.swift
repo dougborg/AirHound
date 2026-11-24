@@ -319,9 +319,11 @@ final class SetupPresentationTests: XCTestCase {
     server.arguments = ["serve", "--socket", socket.path, "--database", database.path]
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
+    let serviceLog = try FixtureServiceLog(
+      process: server, path: root.appendingPathComponent("service-readiness.log"))
     try server.run()
     defer { XCTAssertTrue(stopOwnedProcess(server)) }
-    try await awaitFixtureFile(socket)
+    try await serviceLog.wait(for: server)
     let wrapper = root.appendingPathComponent("selected-backend.sh")
     let log = root.appendingPathComponent("client-arguments")
     func quote(_ value: String) -> String {

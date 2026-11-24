@@ -130,11 +130,13 @@ final class SetupTests: XCTestCase {
     server.arguments = ["serve", "--socket", socket.path]
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
+    let serviceLog = try FixtureServiceLog(
+      process: server, path: root.appendingPathComponent("service-readiness.log"))
     try server.run()
     defer {
       XCTAssertTrue(stopOwnedProcess(server), "Private profile service did not exit after cleanup")
     }
-    try await waitForFixtureFile(socket)
+    try await serviceLog.wait(for: server)
     let client = BackendClient(executable: URL(fileURLWithPath: path), socket: socket)
     let config = Data(
       #"{"version":1,"alert_policy":"silent","receivers":[{"id":"my-ble","source":{"kind":"native_ble"}}]}"#

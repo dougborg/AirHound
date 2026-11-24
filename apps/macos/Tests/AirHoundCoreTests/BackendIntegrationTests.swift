@@ -23,9 +23,11 @@ final class BackendIntegrationTests: XCTestCase {
     ]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
+    let serviceLog = try FixtureServiceLog(
+      process: process, path: directory.appendingPathComponent("service-readiness.log"))
     try process.run()
     defer { XCTAssertTrue(stopOwnedProcess(process), "Private replay service was not reaped") }
-    try await waitForFixtureFile(socket)
+    try await serviceLog.wait(for: process)
     let pcap = directory.appendingPathComponent("empty.pcap")
     // Little-endian PCAP v2.4, linktype radiotap (127), no packets.
     try Data([

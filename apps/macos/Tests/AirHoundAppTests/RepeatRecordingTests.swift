@@ -69,9 +69,10 @@ final class RepeatRecordingTests: XCTestCase {
     ]
     server.standardOutput = output
     server.standardError = output
+    let serviceLog = try FixtureServiceLog(process: server, path: log, output: output)
     try server.run()
     defer { XCTAssertTrue(stopOwnedProcess(server), "Private backend did not terminate/reap") }
-    try await awaitFixtureFile(socket)
+    try await serviceLog.wait(for: server)
     let suite = "AirHound-repeat-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { preferences.removePersistentDomain(forName: suite) }

@@ -106,6 +106,53 @@ final class TestSynchronizationTests: XCTestCase {
     XCTAssertEqual(registrations, 2)
   }
 
+  func testServiceWitnessRejectsCreatedSocketUntilExplicitPostListenDiagnostic() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let release = root.appendingPathComponent("release")
+    let barrier = try FixtureReleasePipe(release)
+    let started = root.appendingPathComponent("started")
+    let socket = root.appendingPathComponent("control.sock")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [
+      "-c",
+      """
+      exec 3<>"$1"
+      : > "$2"
+      printf 'socket created, not listening yet\n' >&2
+      : > "$3"
+      IFS= read -r released <&3 || exit 2
+      printf 'DEBUG AirHound control socket listening\n' >&2
+      IFS= read -r cleanup <&3
+      """, "fixture", release.path, socket.path, started.path,
+    ]
+    let log = try FixtureServiceLog(process: process, path: root.appendingPathComponent("stderr"))
+    try process.run()
+    defer { XCTAssertTrue(stopOwnedProcess(process)) }
+    try await awaitFixtureFile(started)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: socket.path))
+    let notReady = expectation(description: "Socket creation does not satisfy listen witness")
+    var checked = false
+    var completed = false
+    let task = Task {
+      try await log.wait(for: process) { ready in
+        if !checked {
+          checked = true
+          XCTAssertFalse(ready)
+          notReady.fulfill()
+        }
+      }
+      completed = true
+    }
+    await fulfillment(of: [notReady], timeout: 30)
+    XCTAssertFalse(completed)
+    try barrier.release()
+    try await task.value
+    XCTAssertTrue(completed)
+  }
+
   func testStorageWitnessCancellationJoinsItsPendingQueryWithoutAnotherWrite() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
