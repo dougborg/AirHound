@@ -22,3 +22,12 @@ pub mod device_stream;
 pub mod storage;
 
 pub mod rayhunter;
+
+// Share the daemon's owned-child and causal-clock fixture support with library
+// process tests. Each test binary uses a subset; none of this enters the library API.
+#[cfg(test)]
+#[allow(dead_code)]
+mod owned_child;
+#[cfg(test)]
+#[allow(dead_code)]
+mod test_support;
