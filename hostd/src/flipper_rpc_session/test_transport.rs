@@ -81,16 +81,6 @@ impl PeerTransport for Peer {
         self.request(Action::Probe)
     }
 }
-// The separate real UnixStream smoke exercises byte framing and ownership. It
-// has no injected fault delay or negative-time assertion.
-impl PeerTransport for std::os::unix::net::UnixStream {
-    fn delay(&mut self, _: Duration) -> io::Result<()> {
-        panic!("real socket smoke must not use timed faults")
-    }
-    fn probe_empty(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 pub(super) struct Host {
     pub(super) clock: ManualClock,
@@ -196,6 +186,62 @@ impl Drop for Host {
         }
         if let Some((_, reply)) = self.pending_delay.take() {
             let _ = reply.send(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+    }
+}
+
+/// Socket timeouts are hang guards only. Translate expiry into a terminal
+/// fixture error so the production retry loop cannot hide it behind frozen time.
+pub(super) struct GuardedIo<T>(pub(super) T);
+fn terminal_guard(error: io::Error) -> io::Error {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        io::Error::other(format!("fixture socket hang guard expired: {error}"))
+    } else {
+        error
+    }
+}
+impl<T: Read> Read for GuardedIo<T> {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.0.read(bytes).map_err(terminal_guard)
+    }
+}
+impl<T: Write> Write for GuardedIo<T> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.write(bytes).map_err(terminal_guard)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush().map_err(terminal_guard)
+    }
+}
+impl PeerTransport for GuardedIo<std::os::unix::net::UnixStream> {
+    fn delay(&mut self, _: Duration) -> io::Result<()> {
+        panic!("real socket smoke must not use timed faults")
+    }
+    fn probe_empty(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Every exit, including assertion panic, closes the fixture connection and
+/// joins its only peer. The abort clone refers only to this test-owned socket.
+pub(super) struct SocketPeer<T> {
+    pub(super) abort: std::os::unix::net::UnixStream,
+    pub(super) thread: Option<std::thread::JoinHandle<T>>,
+}
+impl<T> SocketPeer<T> {
+    pub(super) fn join(mut self) -> std::thread::Result<T> {
+        let _ = self.abort.shutdown(std::net::Shutdown::Both);
+        self.thread.take().unwrap().join()
+    }
+}
+impl<T> Drop for SocketPeer<T> {
+    fn drop(&mut self) {
+        let _ = self.abort.shutdown(std::net::Shutdown::Both);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
