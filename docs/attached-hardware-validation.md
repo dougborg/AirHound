@@ -39,9 +39,20 @@ or full-rig GUI acceptance.
 
 The M5 now runs verified `3597e59` / `0.2.0`, application `933fac`, with
 the reviewed HCI read-fairness change in
-[#321](https://github.com/dougborg/AirHound/pull/321). Its new ten-minute observer
-is in progress; no acceptance pass is claimed. The prior `5c3d9eb` image remains
-available for rollback. That prior image’s fresh ten-minute observer
+[#321](https://github.com/dougborg/AirHound/pull/321). Its ten-minute observer
+retained 131,291 BLE and 2,853 WiFi reports, complete periodic health, and zero
+sampled scan/output losses, UART timeouts or completed overruns. The original
+strict verdict remains failed: a 22,703µs writer poll gap exceeded the historical
+20ms target, and recovered memory minima crossed earlier-revision references.
+A separate engineering review supports bounded experimental follow-up: the
+current service budgets were met, and both memory samplers repeatedly returned
+to 3,448 bytes after minima of 3,348 and 3,316 bytes. This resolves those specific
+comparisons for further testing; it does not rewrite the failed receipt, establish
+a safe heap reserve, rule out a leak, or prove arbitrary-density endurance. The
+uncapped upstream HCI queue remains a resource risk. Production lifecycle and
+complete-rig checks remain separate gates.
+
+The prior `5c3d9eb` image remains available for rollback. Its fresh ten-minute observer
 received 93,127 BLE and 2,585 WiFi reports, with 19 complete periodic-health
 samples, no printed fault and zero sampled scan/output/timeout/overrun counters.
 Strict acceptance nevertheless remained **review required**: internal free-memory
@@ -53,8 +64,7 @@ A separate ten-minute continuation without a reset received 129,829 BLE and
 bytes. External free memory stayed constant. Output/timeout/overrun counters
 remained zero, but 16 scan drops and a maximum writer poll gap of 23,006µs failed
 its runtime checks. Both receipts remain failed/nonaccepted; cleanup and default
-data preservation passed. The current same-boot production lifecycle and complete
-rig remain disabled pending acceptance. Earlier `96b19ae`, `3fbc1a0`, `34678ec`
+data preservation passed. Same-boot production lifecycle and complete-rig acceptance remain pending. Earlier `96b19ae`, `3fbc1a0`, `34678ec`
 and `e3de1ad` failures remain historical evidence, not overwritten successes.
 Earlier BLE-only and zero-input failures remain below,
 tracked with the current runtime work in
@@ -402,7 +412,7 @@ after 218 BLE and one WiFi report and failed the ten-minute acceptance. Its caus
 was not proven by silence alone. The subsequent `e3de1ad` recovery/display image
 ran continuously for ten minutes with 142,470 BLE and 3,113 WiFi reports, but four
 UART timeouts (three detection records and one BLE record) failed strict loss
-acceptance. The later `5c3d9eb` results and current `3597e59` pending check are
+acceptance. The later `5c3d9eb` results and current `3597e59` reviewed disposition are
 scoped above; none of these follow-ups rewrites the earlier failures.
 
 ## Provenance and privacy
@@ -451,7 +461,7 @@ configuration; rediscover the current endpoint and select it explicitly.
 | Native Bluetooth | CoreBluetooth, OS-managed | Two finished native GUI recordings on `d8ad552` backend / `946d3c0` GUI retained BLE; first run also exercised Pause/Resume. Earlier `07c7142`/`33a5e93` evidence remains below | Mixed user/accessibility controls, duration-target overruns retained; no full-rig or RF-losslessness claim. OS determines adapter/PHY; USB dongles do not become separate CoreBluetooth receivers |
 | Native WiFi | CoreWLAN, OS interface | Both consecutive native GUI recordings on `d8ad552` / `946d3c0` retained WiFi; second saved view manually confirmed responsive | Earlier redacted-address failures retained. Permissions remain specific to running identity; actual native control evidence does not establish full-rig acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART460800; installed `3597e59` / AirHound `0.2.0`, application `933fac` | Reviewed HCI read-fairness image installed; ten-minute acceptance in progress. Prior `5c3d9eb` and its rollback remain preserved | No current strict pass yet. Prior image’s first observer required memory review; its no-reset continuation failed with 16 scan drops and a 23,006µs writer poll gap. Current host lifecycle/full rig/recovery pending; historical failures retained under [#320](https://github.com/dougborg/AirHound/issues/320), [#317](https://github.com/dougborg/AirHound/issues/317), [#175](https://github.com/dougborg/AirHound/issues/175). RF loss unknown |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART460800; installed `3597e59` / AirHound `0.2.0`, application `933fac` | Ten-minute observation retained 131,291 BLE + 2,853 WiFi, full health and zero sampled scan/output/timeouts; original strict failure preserved | Separate review supports bounded follow-up despite recovered cross-revision memory minima and obsolete 20ms poll-gap target; not safe-reserve/leak-free/endurance proof. Same-boot host lifecycle/full rig/recovery pending. Prior failures remain under [#320](https://github.com/dougborg/AirHound/issues/320), [#317](https://github.com/dougborg/AirHound/issues/317), [#175](https://github.com/dougborg/AirHound/issues/175); RF loss unknown |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and retained in the current desktop delivery; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
@@ -922,8 +932,8 @@ internally unexplained; production readiness timeouts are unchanged.
 - Verify the complete compatible rig with current native and external receivers,
   including the updated M5 and Flipper. Native-only reception and GUI control
   evidence now exists on `d8ad552`/`946d3c0`. M5 lifecycle success belongs to
-  firmware `0.1.1`; installed `3597e59` still awaits strict acceptance. Resolve
-  current memory/scan/scheduling findings, then validate same-boot host lifecycle
+  firmware `0.1.1`; installed `3597e59` retains its strict failure with a separately reviewed
+  bounded operational disposition. Validate same-boot host lifecycle
   and close/reopen behavior before full-rig claims.
   Preserve earlier BLE, controller-assertion and host-opening failures under
   [#317](https://github.com/dougborg/AirHound/issues/317),
