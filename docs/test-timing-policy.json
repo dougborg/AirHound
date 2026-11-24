@@ -674,6 +674,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-rpc-after-teardown.json SHA256 6391894d12e4be68a2513996cc0db87115850888b3c434e9a5f1d0a33afddf24."
     },
+    "275ba7b30d4ffe92f9db5da1ad494c73b89d625f88eac04fe14e87c3b0620587": {
+      "path": "scripts/stage-local-receiver-helpers.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "6c278facf27afd9f18f7a4b8f13db893a91771e2b5f63e277d3011aa0f871aeb",
+      "category": "production-scope",
+      "reason": "Operational capability query enforces its exclusive3s deadline from after Popen through readiness, EOF, successful exit and final validation. Tests inject the clock at causal boundaries. Cleanup retains a separate3s bound; this disposition is not a claim that spawn or cleanup are within the query budget, or that Python timed waits avoid internal polling.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
+    },
     "27b01e1c70f3c776b0ba9241ec0817eeb0497b5b908e40a33c92e40726936f1e": {
       "path": "hostd/src/main.rs",
       "scope": "output_flushes_while_scanners_are_idle_and_on_channel_close",
@@ -861,20 +871,6 @@
       "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
-    },
-    "32fad5fdcce0fd38baf21705ad7456c413640fd258e555352ae1c32a5eae97fb": {
-      "path": "scripts/tests/test_helper_capabilities.py",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "6b240c51c9417c66330a925dd3629ba62b654bb43bdb20414b721dc3d21bdebe",
-      "category": "virtual-time",
-      "reason": "Replaces stage monotonic with fixed0 for payload tests or explicit2.999/3/3.001 values after child-ready FIFO for timeout tests; select outcome is injected only for tested expiration. Real IO/kill/reap retained.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 87,
-      "excerpt": "with patch.object(stage,'time',SimpleNamespace(monotonic=clock)), patch.object(stage,'select',SimpleNamespace(select=wait)):",
-      "source": "/tmp/airhound-deterministic-presentation-time",
-      "file_sha256": "1d1a17d4fa2ca392da7d73dffd14afbe3f4c5717eea6bf4000355dee4cd6bc34"
     },
     "33ce7dd25a1edc1e84ebb12a63088c714d47632e532a6dda5ec0128322ae1a63": {
       "path": "hostd/src/gpsd.rs",
@@ -1500,16 +1496,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "5eaa92ebe6bac9a1fa5af1c454121cbfde82f3da084678bc7309c0bd6777cb73": {
-      "path": "scripts/stage-local-receiver-helpers.py",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "b5da80622aad276c7c21e9f4c36e5eab53c297dc103290ebe5ec06e96e9e76d5",
-      "category": "outer-hang-guard",
-      "reason": "Operational receiver-helper capability query computes an intended 3 s query deadline and waits for output readability. The subsequent exit wait has a minimum 10 ms allowance and finally has a separate 3 s reap bound; no final deadline recheck exists, so this is not a strict absolute end-to-end deadline. Success requires bounded valid capabilities and successful exit. Unit tests inject the query clock/readability. Late-EOF acceptance and Python 3.12 timed Popen.wait polling remain explicit production followups; classification does not approve their correctness or remove cleanup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-operational32.json SHA256 2543f4d3bf6e837a69df697bda75b7ac2398e4522f5b14725a44055861e3bcb6."
-    },
     "5eb57c0b9abfa6a27d91ab57144e27515b1acfb4cf2b1ba94414a652a396f0ef": {
       "path": "hostd/src/ble_source.rs",
       "scope": "outage_budget_tolerates_ordinary_reenumeration_but_not_headers_alone",
@@ -1593,16 +1579,6 @@
       "reason": "FakeScanner starts numeric now=0; fake.sleep only adds supplied duration. ProfileTests.profile patches profiler.time.monotonic to fake.now and sleep to fake.sleep before every production profiler invocation; fake process/subprocess/signal handlers drive outcomes. No real elapsed interval determines assertions. Operational profiler timings remain distinct.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-runtime-profiler-composed.json SHA256 7c258987277e38a557f50e3edad11c071339924d90c0933f8ae3985614826147."
-    },
-    "610f9c839e423ed03b80ed0c60ee4ecf65840323be56596b0c579909a52c4b7a": {
-      "path": "scripts/stage-local-receiver-helpers.py",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "b5da80622aad276c7c21e9f4c36e5eab53c297dc103290ebe5ec06e96e9e76d5",
-      "category": "outer-hang-guard",
-      "reason": "Operational receiver-helper capability query computes an intended 3 s query deadline and waits for output readability. The subsequent exit wait has a minimum 10 ms allowance and finally has a separate 3 s reap bound; no final deadline recheck exists, so this is not a strict absolute end-to-end deadline. Success requires bounded valid capabilities and successful exit. Unit tests inject the query clock/readability. Late-EOF acceptance and Python 3.12 timed Popen.wait polling remain explicit production followups; classification does not approve their correctness or remove cleanup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-operational32.json SHA256 2543f4d3bf6e837a69df697bda75b7ac2398e4522f5b14725a44055861e3bcb6."
     },
     "621b278362af0c7245d34afd50bea540c78ed8824a76ac60d899eed0fe3979a6": {
       "path": "hostd/src/flipper_rpc_session/test_transport.rs",
@@ -1703,6 +1679,16 @@
       "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
       "category": "outer-hang-guard",
       "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "660c126c3a972d02cab79e35c729c29b08343859252ad8b1ed21f3a25e6464db": {
+      "path": "scripts/tests/test_helper_capabilities.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "aed0f35a8798eff3f408d81ab72536a9fb6e78a01fbb6c057a7a256ff4e4ce1b",
+      "category": "virtual-time",
+      "reason": "All query correctness clocks are fixed/injected numeric state, advanced at actual pipe EOF, child exit, parse or validation events; before/at/after cases do not depend on scheduler speed. The duration equality asserts the forwarded query/cleanup budget; actual process/pipe waits use distinct30s outer guards and every child is reaped.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
     },
     "66978ecde1dd08a68a4321e02ef8c7832de2e264c7cd0e56599b43501f8725ab": {
       "path": "hostd/src/external_scanner.rs",
@@ -2212,20 +2198,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
     },
-    "86879d988dba0a687aa6d96f714f0eae8b326dcb34852c2be085a7125e02e020": {
-      "path": "scripts/tests/test_helper_capabilities.py",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "6b240c51c9417c66330a925dd3629ba62b654bb43bdb20414b721dc3d21bdebe",
-      "category": "virtual-time",
-      "reason": "Replaces stage monotonic with fixed0 for payload tests or explicit2.999/3/3.001 values after child-ready FIFO for timeout tests; select outcome is injected only for tested expiration. Real IO/kill/reap retained.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 42,
-      "excerpt": "with patch.object(stage, 'time', SimpleNamespace(monotonic=lambda: 0)), \\",
-      "source": "/tmp/airhound-deterministic-presentation-time",
-      "file_sha256": "1d1a17d4fa2ca392da7d73dffd14afbe3f4c5717eea6bf4000355dee4cd6bc34"
-    },
     "868f04e1de9aaa5fd66fafa3f064dece657b99451222c69b7f155d361fc2d1c7": {
       "path": "hostd/src/discovery/identify/ublox.rs",
       "scope": "new",
@@ -2329,6 +2301,16 @@
       "reason": "Shared stop_scanners timer uses unchanged production budget. All async main tests enter manual_time; forced-stop tests observe real scanner Pending/backpressure and actual TimerWitness registration before explicit virtual expiry. Cooperative shutdown uses completion events. No scheduler elapsed bound determines success.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
+    },
+    "89f35ee50f3237e288b1509395a1206a4cc2405157c57c25739216e0400e90e4": {
+      "path": "scripts/tests/test_helper_capabilities.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "aed0f35a8798eff3f408d81ab72536a9fb6e78a01fbb6c057a7a256ff4e4ce1b",
+      "category": "virtual-time",
+      "reason": "All query correctness clocks are fixed/injected numeric state, advanced at actual pipe EOF, child exit, parse or validation events; before/at/after cases do not depend on scheduler speed. The duration equality asserts the forwarded query/cleanup budget; actual process/pipe waits use distinct30s outer guards and every child is reaped.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
     },
     "8a00373bfb9adf43daacac47043e968c8a6d8dd1a206b4fe2273dc7e198d73cb": {
       "path": "scripts/tests/test_test_timing_guard.py",
@@ -2672,6 +2654,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
+    "9f0ac2b87a3757842e5fda5c440627c4d194643c0a7e29291f6404f84362abfe": {
+      "path": "scripts/tests/test_helper_capabilities.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "aed0f35a8798eff3f408d81ab72536a9fb6e78a01fbb6c057a7a256ff4e4ce1b",
+      "category": "virtual-time",
+      "reason": "All query correctness clocks are fixed/injected numeric state, advanced at actual pipe EOF, child exit, parse or validation events; before/at/after cases do not depend on scheduler speed. The duration equality asserts the forwarded query/cleanup budget; actual process/pipe waits use distinct30s outer guards and every child is reaped.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
+    },
     "9f93c0880d2e744b09471ce5f696e1c2bf01079cc1e7aeb49b772265d04c54c7": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
@@ -3011,16 +3003,6 @@
       "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
-    },
-    "aeff3329871740ad2466fda1d133e24f78d41681b402377304fedbebf2e3b9a4": {
-      "path": "scripts/stage-local-receiver-helpers.py",
-      "scope": "fixture-file",
-      "rule": "clock-reference",
-      "context_sha256": "b5da80622aad276c7c21e9f4c36e5eab53c297dc103290ebe5ec06e96e9e76d5",
-      "category": "outer-hang-guard",
-      "reason": "Operational receiver-helper capability query computes an intended 3 s query deadline and waits for output readability. The subsequent exit wait has a minimum 10 ms allowance and finally has a separate 3 s reap bound; no final deadline recheck exists, so this is not a strict absolute end-to-end deadline. Success requires bounded valid capabilities and successful exit. Unit tests inject the query clock/readability. Late-EOF acceptance and Python 3.12 timed Popen.wait polling remain explicit production followups; classification does not approve their correctness or remove cleanup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-operational32.json SHA256 2543f4d3bf6e837a69df697bda75b7ac2398e4522f5b14725a44055861e3bcb6."
     },
     "af2b25c4945eaec285aae2a3172e6bd74269ab559217d3c9e8f4c19c57af3884": {
       "path": "scripts/check-test-timing.py",
@@ -3720,20 +3702,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
     },
-    "da1da28ef583ddc2923b24ba577cce1e36ef5eeaf8946d39df577061852399a7": {
-      "path": "scripts/tests/test_helper_capabilities.py",
-      "scope": "fixture-file",
-      "rule": "delay-import",
-      "context_sha256": "6b240c51c9417c66330a925dd3629ba62b654bb43bdb20414b721dc3d21bdebe",
-      "category": "fixed-input",
-      "reason": "Asserts the production timeout argument remains3; the owned-child wait uses a separately labeled30s outer guard.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 36,
-      "excerpt": "self.assertEqual(timeout, 3)",
-      "source": "/tmp/airhound-deterministic-presentation-time",
-      "file_sha256": "1d1a17d4fa2ca392da7d73dffd14afbe3f4c5717eea6bf4000355dee4cd6bc34"
-    },
     "da4b8a55cf4d374fad83e3bff203514146339c40e7a6e54086f21f14d24de24e": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
@@ -4368,6 +4336,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
+    "f93ee44a1c8c85d8adb996caac923764869973582275744aa764fb96c6225a1e": {
+      "path": "scripts/tests/test_helper_capabilities.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "aed0f35a8798eff3f408d81ab72536a9fb6e78a01fbb6c057a7a256ff4e4ce1b",
+      "category": "virtual-time",
+      "reason": "All query correctness clocks are fixed/injected numeric state, advanced at actual pipe EOF, child exit, parse or validation events; before/at/after cases do not depend on scheduler speed. The duration equality asserts the forwarded query/cleanup budget; actual process/pipe waits use distinct30s outer guards and every child is reaped.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
+    },
     "f9e21095e8004b7e2195cfa3bcb23c8ce01b298b881a661a82bd6ae14b953979": {
       "path": "hostd/src/session_runtime/tests.rs",
       "scope": "run",
@@ -4461,6 +4439,16 @@
       "reason": "FakeScanner starts numeric now=0; fake.sleep only adds supplied duration. ProfileTests.profile patches profiler.time.monotonic to fake.now and sleep to fake.sleep before every production profiler invocation; fake process/subprocess/signal handlers drive outcomes. No real elapsed interval determines assertions. Operational profiler timings remain distinct.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-runtime-profiler-composed.json SHA256 7c258987277e38a557f50e3edad11c071339924d90c0933f8ae3985614826147."
+    },
+    "fd7b1bbd1fa58435b6453cb511f9569e326d205f4a4a42990d7b9205d09ec5ad": {
+      "path": "scripts/stage-local-receiver-helpers.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "6c278facf27afd9f18f7a4b8f13db893a91771e2b5f63e277d3011aa0f871aeb",
+      "category": "production-scope",
+      "reason": "Operational capability query enforces its exclusive3s deadline from after Popen through readiness, EOF, successful exit and final validation. Tests inject the clock at causal boundaries. Cleanup retains a separate3s bound; this disposition is not a claim that spawn or cleanup are within the query budget, or that Python timed waits avoid internal polling.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
     },
     "fd8531d9228d7a43d5802fc0d01f791d1b898f9d3cda456b6b52ade535eed3a7": {
       "path": "hostd/src/main.rs",
