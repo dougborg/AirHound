@@ -217,3 +217,99 @@ fn inotify_stat_add_race_and_reused_ignored_descriptor_rearm_without_removing_ne
         })
         .unwrap();
 }
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn wal_write_precedes_visible_commit_and_only_run_bound_commit_witness_completes() {
+    use std::io::Write;
+    let root = Root::new();
+    let database = root.0.join("records.sqlite");
+    let wal = root.0.join("records.sqlite-wal");
+    let mut writer = rusqlite::Connection::open(&database).unwrap();
+    writer.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE run(state TEXT, payload BLOB); INSERT INTO run VALUES('recording',zeroblob(65536));").unwrap();
+    let reader = rusqlite::Connection::open(&database).unwrap();
+    let state = || {
+        reader
+            .query_row("SELECT state FROM run", [], |row| row.get::<_, String>(0))
+            .unwrap()
+    };
+    let original_wal_len = std::fs::metadata(&wal).unwrap().len();
+    let mut writes = support::FileEvents::new(&[&database, &wal]).unwrap();
+    let transaction = writer.transaction().unwrap();
+    let mut flushed = false;
+    writes
+        .until(|| {
+            if !flushed {
+                // Force actual WAL writes while retaining an uncommitted transaction.
+                // The next OS notification cannot establish committed visibility.
+                transaction
+                    .execute(
+                        "UPDATE run SET state='finished',payload=zeroblob(131072)",
+                        [],
+                    )
+                    .unwrap();
+                transaction.cache_flush().unwrap();
+                flushed = true;
+                return Ok(None);
+            }
+            assert!(std::fs::metadata(&wal)?.len() > original_wal_len);
+            assert_eq!(state(), "recording");
+            Ok(Some(()))
+        })
+        .unwrap();
+    let mut service = support::ServiceChild::spawn(Command::new("/bin/sh")
+        .args(["-c", "printf 'AirHound control socket listening\\nAirHound recording terminal commit: other-run\\n' >&2; IFS= read -r committed; printf 'AirHound recording terminal commit: expected-run\\n' >&2"])
+        .stdin(Stdio::piped()).stdout(Stdio::null())).unwrap();
+    transaction.commit().unwrap();
+    writeln!(service.child.stdin.as_mut().unwrap(), "committed").unwrap();
+    // Force the marker to have been written before the waiter starts. The log
+    // reader must retain it; an earlier marker for another run cannot satisfy it.
+    assert!(support::wait_child(&mut service.child).unwrap().success());
+    service.wait_for_terminal_commit("expected-run").unwrap();
+    assert_eq!(state(), "finished");
+}
+
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn terminal_commit_witness_rejects_wrong_run_partial_line_and_early_exit() {
+    for line in [
+        "AirHound recording terminal commit: other-run\\n",
+        "AirHound recording terminal commit: expected-run",
+        "commit failed\\n",
+    ] {
+        let mut service = support::ServiceChild::spawn(
+            Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "printf 'AirHound control socket listening\\n' >&2; printf '%b' \"$1\" >&2",
+                    "fixture",
+                    line,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null()),
+        )
+        .unwrap();
+        let error = service
+            .wait_for_terminal_commit("expected-run")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains(if line.ends_with("expected-run") {
+                "unterminated"
+            } else {
+                "witness missing"
+            }));
+        let pid = service.child.id() as libc::pid_t;
+        drop(service);
+        let mut status = 0;
+        // SAFETY: exact owned fixture PID; Drop must have reaped it.
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+}

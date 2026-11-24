@@ -407,6 +407,7 @@ pub fn output(command: &mut Command) -> io::Result<Output> {
 pub struct ServiceChild {
     pub child: Child,
     log: Option<std::thread::JoinHandle<io::Result<Vec<u8>>>>,
+    events: std::sync::mpsc::Receiver<io::Result<Vec<u8>>>,
 }
 impl ServiceChild {
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
@@ -443,8 +444,10 @@ impl ServiceChild {
                             .ends_with("AirHound control socket listening")
                     {
                         announced = true;
-                        let _ = send.send(Ok(()));
                     }
+                    // Retain complete lines for later run-bound witnesses. The
+                    // total log bound also bounds this queue; never block stderr.
+                    let _ = send.send(Ok(line.clone()));
                     all.extend_from_slice(&line);
                 }
                 if !announced {
@@ -454,8 +457,8 @@ impl ServiceChild {
                 }
                 Ok(all)
             })();
-            if !announced {
-                let _ = send.send(Err(result.as_ref().err().unwrap().to_string()));
+            if let Err(error) = &result {
+                let _ = send.send(Err(io::Error::other(error.to_string())));
             }
             result
         });
@@ -467,20 +470,37 @@ impl ServiceChild {
                 return Err(error);
             }
         };
-        let owned = Self {
+        let mut owned = Self {
             child,
             log: Some(reader),
+            events: received,
         };
-        received
-            .recv_timeout(OUTER_GUARD)
-            .map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("service readiness outer guard: {error}"),
-                )
-            })?
-            .map_err(io::Error::other)?;
+        owned.wait_for_line("AirHound control socket listening")?;
         Ok(owned)
+    }
+    /// Complete lines are queued from spawn onward, so fast replay completion
+    /// cannot be lost before the caller learns its run ID from Start.
+    pub fn wait_for_terminal_commit(&mut self, run: &str) -> io::Result<()> {
+        self.wait_for_line(&format!("AirHound recording terminal commit: {run}"))
+    }
+    pub fn wait_for_line(&mut self, suffix: &str) -> io::Result<()> {
+        let deadline = Instant::now() + OUTER_GUARD;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let line = self.events.recv_timeout(remaining).map_err(|error| {
+                let kind = match error {
+                    std::sync::mpsc::RecvTimeoutError::Timeout => io::ErrorKind::TimedOut,
+                    std::sync::mpsc::RecvTimeoutError::Disconnected => io::ErrorKind::UnexpectedEof,
+                };
+                io::Error::new(
+                    kind,
+                    format!("service diagnostic witness missing ({suffix}): {error}"),
+                )
+            })??;
+            if String::from_utf8_lossy(&line).trim_end().ends_with(suffix) {
+                return Ok(());
+            }
+        }
     }
     pub fn diagnostics(&mut self) -> io::Result<Vec<u8>> {
         self.log

@@ -497,6 +497,7 @@ fn launch_with_hooks(
     let capture_control = control.clone();
     let mut stop = control.subscribe();
     let completion = recording.clone();
+    let completed_run = id.clone();
     let task = tokio::spawn(async move {
         let csv = WigleWriter::new(io::sink())?;
         let result = session_runtime::run_controlled(
@@ -520,6 +521,9 @@ fn launch_with_hooks(
         tokio::task::spawn_blocking(move || completion.finish(succeeded))
             .await
             .map_err(io::Error::other)??;
+        // Storage completion has joined its writer after the terminal transaction.
+        // A WAL write notification alone does not establish commit visibility.
+        log::debug!("AirHound recording terminal commit: {completed_run}");
         result
     });
     Active {
