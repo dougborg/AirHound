@@ -10,6 +10,9 @@ use crate::protocol::MsgBuffer;
 
 pub const FIFO_CHUNK: usize = 16;
 pub const LINE_BUDGET_US: u64 = 20_000;
+/// Separately bounded delimiter recovery. This never extends a record's budget
+/// or retries its payload; the original timed-out record remains lost.
+pub const RESYNC_BUDGET_US: u64 = 20_000;
 
 struct Line(MsgBuffer);
 
@@ -103,9 +106,32 @@ pub enum LineError<E> {
 #[cfg(any(feature = "firmware", test))]
 pub async fn drain_cooperative<E>(
     line: &[u8],
+    output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
+    now_micros: impl FnMut() -> u64,
+    poll_gap: impl FnMut(u64),
+) -> Result<(), LineError<E>> {
+    drain_with_budget(line, output_step, now_micros, poll_gap, LINE_BUDGET_US).await
+}
+
+/// The sole writer must retain its damaged record's lease across this call.
+/// FIFO ordering places this LF after the accepted prefix and before the next
+/// record. The hardware step still owns panic exclusion and never waits.
+#[cfg(any(feature = "firmware", test))]
+pub async fn resynchronize_lf<E>(
+    output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
+    now_micros: impl FnMut() -> u64,
+    poll_gap: impl FnMut(u64),
+) -> Result<(), LineError<E>> {
+    drain_with_budget(b"\n", output_step, now_micros, poll_gap, RESYNC_BUDGET_US).await
+}
+
+#[cfg(any(feature = "firmware", test))]
+async fn drain_with_budget<E>(
+    line: &[u8],
     mut output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
     mut now_micros: impl FnMut() -> u64,
     mut poll_gap: impl FnMut(u64),
+    budget_us: u64,
 ) -> Result<(), LineError<E>> {
     let started = now_micros();
     let mut previous = started;
@@ -115,7 +141,7 @@ pub async fn drain_cooperative<E>(
         let now = now_micros();
         poll_gap(now.wrapping_sub(previous));
         previous = now;
-        if now.wrapping_sub(started) >= LINE_BUDGET_US {
+        if now.wrapping_sub(started) >= budget_us {
             return Err(LineError::Timeout);
         }
         let length = (line.len() - offset).min(FIFO_CHUNK);
