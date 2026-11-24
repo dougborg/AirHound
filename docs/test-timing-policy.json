@@ -959,45 +959,50 @@
       "scope": "register_poll_deadline_and_delay_use_scripted_time",
       "rule": "clock-read",
       "context_sha256": "f0b236c2182978bb0a41cf0302b5cb23b4614fd5710d6448f4f61a5149d132d6",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "Register polling receives the scripted Endpoint clock; delay advances ManualTime only and assertions check logical ticks.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
     "0d8eecafd5b8b86aa41456a59cb0f04a27978914f8304128c7489be817de3397": {
       "path": "drivers/mt7610u/src/stream.rs",
       "scope": "unplug_recovers_with_new_session_and_bounded_attempts",
       "rule": "clock-read",
       "context_sha256": "bef8ebc1273e5e6d8a508ec3e7d3e551ae7a9d78f1e1a2e64e0a25190b92860e",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "Runtime and FakeHardware share ManualTime; explicit retry/poll advances determine recovery and duration boundaries.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
     "3dab9e7a184aec81fb6b6981125ab0ac5039fe90dc847da8b3a7ebf774f274ad": {
       "path": "drivers/mt7610u/src/stream.rs",
       "scope": "unplug_recovers_with_new_session_and_bounded_attempts",
       "rule": "clock-read",
       "context_sha256": "bef8ebc1273e5e6d8a508ec3e7d3e551ae7a9d78f1e1a2e64e0a25190b92860e",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "Runtime and FakeHardware share ManualTime; explicit retry/poll advances determine recovery and duration boundaries.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
     "6c48b810a38939032a7641f7a978ebd11386e921014d64c87edeacda6d05d59d": {
       "path": "drivers/mt7610u/src/stream/hardware.rs",
       "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
       "rule": "clock-read",
       "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
     "c40e1f64cd084e11d336f99260dbecb65020059134b7dd4b9068b1574faee4fa": {
       "path": "drivers/mt7610u/src/stream/hardware.rs",
       "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
       "rule": "clock-read",
       "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     },
     "a54c49f650c99fcd614a60ba8fd612c85756ee672462c114e752a0a41231305e": {
       "path": "hostd/src/ble_source.rs",
@@ -1277,6 +1282,136 @@
       "category": "unresolved",
       "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "913912978664cd7dd338229f4f465808353b3f60d9869350de73598dd7aec143": {
+      "path": "drivers/mt7610u/src/firmware.rs",
+      "scope": "register_poll_deadline_and_delay_use_scripted_time",
+      "rule": "clock-read",
+      "context_sha256": "f0b236c2182978bb0a41cf0302b5cb23b4614fd5710d6448f4f61a5149d132d6",
+      "category": "virtual-time",
+      "reason": "Register polling receives the scripted Endpoint clock; delay advances ManualTime only and assertions check logical ticks.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "9d774d7c649d49bbf0dccfa725018efd5cc04283822106233045745b413bd95b": {
+      "path": "drivers/mt7610u/src/stream.rs",
+      "scope": "unplug_recovers_with_new_session_and_bounded_attempts",
+      "rule": "clock-read",
+      "context_sha256": "bef8ebc1273e5e6d8a508ec3e7d3e551ae7a9d78f1e1a2e64e0a25190b92860e",
+      "category": "virtual-time",
+      "reason": "Runtime and FakeHardware share ManualTime; explicit retry/poll advances determine recovery and duration boundaries.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "e780f3d1b4be02b1a6bb361308222fa0c8f33e1c25b34a6eaaa38a9f479f0feb": {
+      "path": "drivers/mt7610u/src/stream.rs",
+      "scope": "event_loop_duration_expires_on_fake_poll_ticks",
+      "rule": "clock-read",
+      "context_sha256": "2e18605d01e6ad7241ff1730f489a700762c84ce299d591510076149f8bb4384",
+      "category": "virtual-time",
+      "reason": "Runtime and FakeHardware share ManualTime; explicit retry/poll advances determine recovery and duration boundaries.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "e07e4af21f3852deeeedb2073efd80cb8a2be2df2335dc3209d02a8f31caa8e0": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "393fa544bc6f46b60b7515c7f1fdc9d49bbc6a00eda83f6d05252349b3ba3192": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "eb30ed659ec44d3bdb1c13354a01b830fdb519af0852b6efdfca087a682fa6b9": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "cbf59148b4d98c676299172563afc44d7bd6ef43781e5a016c582f7e4830488e": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "virtual-time",
+      "reason": "Hardware receives the scripted Endpoint clock and preserves it across reopen; simulated USB timeouts advance logical time only.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "e26c88b17f0a76f35e6cd34b37f723329b0ca901cdde6050eac87f6073e2b18c": {
+      "path": "drivers/mt7610u/src/test_support.rs",
+      "scope": "sleep",
+      "rule": "delay-or-deadline",
+      "context_sha256": "6c5a8a87fb56385788275741026c2ec52b1ff57cb1a36331342223e27becd4f3",
+      "category": "virtual-time",
+      "reason": "ManualTime stores a Duration under a mutex; sleep advances that value and Unix time uses a fixed epoch plus logical time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "ace036f0763f441e9dccd97b7f53cb6f6ea9fc27d13b37116778426a8104bbc9": {
+      "path": "drivers/mt7610u/src/test_support.rs",
+      "scope": "unix_time",
+      "rule": "clock-read",
+      "context_sha256": "4010707d99cb103d527bfcb7c7331a0bc9127fa768bad9e9fda30a00c9b6bec8",
+      "category": "virtual-time",
+      "reason": "ManualTime stores a Duration under a mutex; sleep advances that value and Unix time uses a fixed epoch plus logical time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "86c8ec630ffd3ce1ea62a942b912b1c1276d6806b35f20cf019a387706e1e7f7": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "control_retries_timeouts_but_stops_on_disconnect",
+      "rule": "clock-read",
+      "context_sha256": "392bce07d55276acbade3a5f2cd5d4349de7858638b9f7f4b769f7c7f760d297",
+      "category": "virtual-time",
+      "reason": "Retry and MCU deadline tests use ManualTime or scripted Endpoint with timeout-induced logical advances; no OS clock determines the assertions.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "f31a4b20d1cee71894e7691b44239c1464dfc408b90b4efc19f85db7c7f9a7d1": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "control_retries_timeouts_but_stops_on_disconnect",
+      "rule": "clock-read",
+      "context_sha256": "392bce07d55276acbade3a5f2cd5d4349de7858638b9f7f4b769f7c7f760d297",
+      "category": "virtual-time",
+      "reason": "Retry and MCU deadline tests use ManualTime or scripted Endpoint with timeout-induced logical advances; no OS clock determines the assertions.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "2ee4382baa0644c52778afa072189826603b59f71ed6697de83d7d47b3850693": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "control_retries_timeouts_but_stops_on_disconnect",
+      "rule": "clock-read",
+      "context_sha256": "392bce07d55276acbade3a5f2cd5d4349de7858638b9f7f4b769f7c7f760d297",
+      "category": "virtual-time",
+      "reason": "Retry and MCU deadline tests use ManualTime or scripted Endpoint with timeout-induced logical advances; no OS clock determines the assertions.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "aa28ebad4a70ef2a049e2ef0cf5f44e21d05e0eebc8550c3e4ade356e42978b1": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "mcu_deadline_refuses_late_ack_without_waiting_for_wall_time",
+      "rule": "clock-read",
+      "context_sha256": "a243937a0b71f129bf2fa492b565c072bcf8f83fa4d749792d78ceae000bfc8a",
+      "category": "virtual-time",
+      "reason": "Retry and MCU deadline tests use ManualTime or scripted Endpoint with timeout-induced logical advances; no OS clock determines the assertions.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
     }
   },
   "migration_baseline": {
