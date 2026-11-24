@@ -4,11 +4,24 @@ use crate::{
     radio,
     transport::{RegisterIo, UsbDevice, UsbIo},
 };
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+
+/// Historical preparation evidence, separate from the current firmware state.
+#[derive(Clone, Copy, Debug)]
+pub struct PreparationFailure {
+    pub stage: &'static str,
+    pub firmware_uploaded: Option<bool>,
+}
+impl std::fmt::Display for PreparationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "receiver preparation failed during {}", self.stage)
+    }
+}
+impl std::error::Error for PreparationFailure {}
 
 pub fn prepare<T: UsbIo>(
     device: &mut UsbDevice<T>,
@@ -22,11 +35,22 @@ pub fn prepare<T: UsbIo>(
         matches!(asic >> 16, 0x7610 | 0x7650),
         "Unexpected ASIC {asic:#010x}"
     );
-    let uploaded = firmware::load(device, firmware)?;
+    let uploaded = firmware::load(device, firmware).context(PreparationFailure {
+        stage: "firmware_load",
+        firmware_uploaded: None,
+    })?;
     check_cancelled(stop)?;
-    let setup = radio::initialize_channel(device, channel)?;
+    let setup = radio::initialize_channel(device, channel).context(PreparationFailure {
+        stage: "initialize_channel",
+        firmware_uploaded: Some(uploaded),
+    })?;
     check_cancelled(stop)?;
-    radio::retune_with_drain(device, &setup.calibration, channel, drain_packets)?;
+    radio::retune_with_drain(device, &setup.calibration, channel, drain_packets).context(
+        PreparationFailure {
+            stage: "initial_retune",
+            firmware_uploaded: Some(uploaded),
+        },
+    )?;
     check_cancelled(stop)?;
     Ok((setup, uploaded))
 }
@@ -71,4 +95,71 @@ pub fn check_cancelled(stop: &AtomicBool) -> Result<()> {
         "Operation cancelled before capture; radio cleanup will be attempted"
     );
     Ok(())
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::{
+        test_support::{image, Endpoint},
+        transport::{McuExchangeEvidence, McuTimeout},
+    };
+    #[test]
+    fn preparation_context_retains_actual_first_command_failure() {
+        for uploaded in [false, true] {
+            let endpoint = Endpoint::default();
+            endpoint.0.lock().unwrap().suppress_mcu_replies = true;
+            endpoint
+                .0
+                .lock()
+                .unwrap()
+                .registers
+                .insert(0x730, if uploaded { 0 } else { 1 });
+            let bytes = image();
+            let mut firmware = Firmware::parse(&bytes).unwrap();
+            firmware.sha256 = crate::firmware::REFERENCE_SHA256.into();
+            let mut device = endpoint.device();
+            let error = prepare(&mut device, &firmware, 1, &AtomicBool::new(false))
+                .expect_err("initialization failure");
+            let stage = error.downcast_ref::<PreparationFailure>().unwrap();
+            assert_eq!(stage.stage, "initialize_channel");
+            assert_eq!(stage.firmware_uploaded, Some(uploaded));
+            assert!(error.is::<McuTimeout>());
+            assert_eq!(
+                error.downcast_ref::<McuExchangeEvidence>().unwrap().command,
+                12
+            );
+            shutdown(&mut device).unwrap();
+            assert_eq!(device.read32(0x1004).unwrap() & 0xc, 0);
+        }
+    }
+    #[test]
+    fn preparation_context_distinguishes_load_and_initial_retune_failures() {
+        let bytes = image();
+        let mut firmware = Firmware::parse(&bytes).unwrap();
+        let endpoint = Endpoint::default();
+        let mut device = endpoint.device();
+        let error = prepare(&mut device, &firmware, 1, &AtomicBool::new(false))
+            .expect_err("untrusted firmware");
+        let stage = error.downcast_ref::<PreparationFailure>().unwrap();
+        assert_eq!(stage.stage, "firmware_load");
+        assert_eq!(stage.firmware_uploaded, None);
+        firmware.sha256 = crate::firmware::REFERENCE_SHA256.into();
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .packets
+            .push_back(Err(rusb::Error::NoDevice));
+        let error = prepare(&mut device, &firmware, 1, &AtomicBool::new(false))
+            .expect_err("retune drain disconnected");
+        let stage = error.downcast_ref::<PreparationFailure>().unwrap();
+        assert_eq!(stage.stage, "initial_retune");
+        assert_eq!(stage.firmware_uploaded, Some(false));
+        assert_eq!(
+            error.downcast_ref::<rusb::Error>(),
+            Some(&rusb::Error::NoDevice)
+        );
+    }
 }

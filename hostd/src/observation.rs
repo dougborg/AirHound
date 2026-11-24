@@ -62,6 +62,8 @@ pub enum ScanEvent {
         generation: u64,
     },
     ExternalStatus {
+        diagnostics: Option<Box<airhound_hostd::external_diagnostics::Diagnostics>>,
+        diagnostics_invalid: bool,
         identity: airhound_hostd::external_identity::Identity,
         usb_selector: Option<String>,
         state: String,

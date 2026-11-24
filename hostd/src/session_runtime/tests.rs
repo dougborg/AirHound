@@ -582,6 +582,8 @@ async fn delayed_external_status_cannot_resurrect_finished_receiver() {
     let mut receiver = task("wifi", |tx, control| async move {
         control.finish_receiver(Scanner::Wifi, true);
         tx.send(ScanEvent::ExternalStatus {
+            diagnostics: None,
+            diagnostics_invalid: false,
             identity: Default::default(),
             usb_selector: Some("usb:1:2".into()),
             state: "running".into(),
@@ -685,4 +687,89 @@ fn firmware_observation_preserves_producer_evidence_but_uses_host_source_and_gps
     assert_eq!(value["timestamp_basis"], "device_uptime_ms_not_utc");
     assert_eq!(value["ts"], 1234);
     assert!(value["detection"].is_object());
+}
+
+#[tokio::test]
+async fn external_failure_diagnostics_reach_source_attributed_saved_records() {
+    crate::test_support::manual_time(async {
+        use airhound_hostd::{
+            external_diagnostics::Diagnostics,
+            storage::{self, writer::Writer},
+        };
+        let directory = crate::test_directory::create("external-diagnostics").unwrap();
+        let database = directory.join("recordings.sqlite");
+        let writer = Writer::start(
+            database.clone(),
+            storage::RecordingMode::Live,
+            serde_json::json!({}),
+            vec![
+                ("receiver".into(), serde_json::json!({})),
+                (
+                    storage::output::SESSION_SOURCE.into(),
+                    serde_json::json!({}),
+                ),
+            ],
+        )
+        .unwrap();
+        let run = writer.run_id.clone();
+        let live = RecordingWriter::default();
+        let (output, completion) = storage::output::attach(live.clone(), writer);
+        let sample: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/external-diagnostics-v1.json"
+        ))
+        .unwrap();
+        let control = ScanControl::new(false);
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(ScanEvent::Sourced {
+            identity: identity(),
+            control: control.clone(),
+            event: Box::new(ScanEvent::ExternalStatus {
+                identity: Default::default(),
+                usb_selector: None,
+                state: "failed".into(),
+                dropped: 0,
+                producer_dropped: 0,
+                reconnect_attempts: 2,
+                diagnostics: Some(Box::new(Diagnostics::parse(&sample).unwrap())),
+                diagnostics_invalid: false,
+            }),
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        filter_task(
+            rx,
+            Arc::new(Mutex::new(FilterConfig::new())),
+            Arc::new(MacIndex::from_defaults()),
+            Instant::now(),
+            WigleWriter::new(io::sink()).unwrap(),
+            output,
+            control,
+        )
+        .await
+        .unwrap();
+        completion.finish(false).unwrap();
+        let reader = storage::Reader::open(&database).unwrap();
+        assert_eq!(reader.runs(1).unwrap()[0].state, "failed");
+        let page = reader.records(&run, 0, 100).unwrap();
+        let saved = page
+            .records
+            .iter()
+            .find(|r| r.kind == "external_scanner_status")
+            .unwrap();
+        assert_eq!(saved.source_id, "receiver");
+        assert_eq!(saved.payload["session_source"]["session_id"], "session");
+        assert_eq!(saved.payload["diagnostics_v1"], sample);
+        assert_eq!(saved.payload["state"], "failed");
+        assert_eq!(
+            live.messages()
+                .into_iter()
+                .find(|m| m["type"] == "external_scanner_status")
+                .unwrap(),
+            saved.payload
+        );
+        drop(reader);
+        std::fs::remove_dir_all(directory).unwrap();
+    })
+    .await;
 }

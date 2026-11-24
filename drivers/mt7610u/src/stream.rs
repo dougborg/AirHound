@@ -41,6 +41,72 @@ enum State {
     Paused,
     Recovering,
 }
+#[derive(Clone, Debug, serde::Serialize)]
+struct FailureEvidence {
+    operation: &'static str,
+    kind: &'static str,
+    preparation_stage: Option<&'static str>,
+    firmware_uploaded_in_failed_preparation: Option<bool>,
+    usb_error: Option<&'static str>,
+    mcu_command: Option<u8>,
+    mcu_sequence: Option<u8>,
+    mcu: Option<mt7610u_lab::transport::McuExchangeEvidence>,
+}
+impl FailureEvidence {
+    fn capture(error: &anyhow::Error, operation: &'static str) -> Self {
+        use mt7610u_lab::{
+            receiver::PreparationFailure,
+            transport::{McuExchangeEvidence, McuTimeout},
+        };
+        let stage = error.downcast_ref::<PreparationFailure>();
+        let timeout = error.downcast_ref::<McuTimeout>();
+        let mcu = error.downcast_ref::<McuExchangeEvidence>();
+        let usb = error.downcast_ref::<rusb::Error>();
+        Self {
+            operation,
+            kind: if timeout.is_some() {
+                "mcu_timeout"
+            } else if usb.is_some() {
+                "usb"
+            } else if mcu.is_some() {
+                "mcu_exchange"
+            } else {
+                "other"
+            },
+            preparation_stage: stage.map(|s| s.stage),
+            firmware_uploaded_in_failed_preparation: stage.and_then(|s| s.firmware_uploaded),
+            usb_error: usb.map(|e| match e {
+                rusb::Error::Io => "io",
+                rusb::Error::InvalidParam => "invalid_param",
+                rusb::Error::Access => "access",
+                rusb::Error::NoDevice => "no_device",
+                rusb::Error::NotFound => "not_found",
+                rusb::Error::Busy => "busy",
+                rusb::Error::Timeout => "timeout",
+                rusb::Error::Overflow => "overflow",
+                rusb::Error::Pipe => "pipe",
+                rusb::Error::Interrupted => "interrupted",
+                rusb::Error::NoMem => "no_mem",
+                rusb::Error::NotSupported => "not_supported",
+                rusb::Error::BadDescriptor => "bad_descriptor",
+                rusb::Error::Other => "other",
+            }),
+            mcu_command: timeout
+                .map(|t| t.command)
+                .or_else(|| mcu.map(|m| m.command)),
+            mcu_sequence: timeout
+                .map(|t| t.sequence)
+                .or_else(|| mcu.map(|m| m.sequence)),
+            mcu: mcu.cloned(),
+        }
+    }
+}
+#[derive(Default, serde::Serialize)]
+struct Diagnostics {
+    last_failure: Option<FailureEvidence>,
+    last_cleanup_failure: Option<FailureEvidence>,
+}
+
 struct Runtime<H> {
     clock: Clock,
     hardware: H,
@@ -57,6 +123,7 @@ struct Runtime<H> {
     session_started: Duration,
     cleanup_verified: bool,
     pending_resume: Option<Value>,
+    diagnostics: Diagnostics,
 }
 impl<H: ReceiverHardware> Runtime<H> {
     fn new(hardware: H) -> Self {
@@ -78,6 +145,7 @@ impl<H: ReceiverHardware> Runtime<H> {
             session_started: now,
             cleanup_verified: true,
             pending_resume: None,
+            diagnostics: Diagnostics::default(),
         }
     }
     fn status(&self, request_id: Option<Value>) -> Value {
@@ -92,6 +160,11 @@ impl<H: ReceiverHardware> Runtime<H> {
                 value[key] = count.clone();
             }
         }
+        if self.diagnostics.last_failure.is_some()
+            || self.diagnostics.last_cleanup_failure.is_some()
+        {
+            value["diagnostics_v1"] = json!(self.diagnostics);
+        }
         if let Some(id) = request_id {
             value["request_id"] = id;
         }
@@ -100,7 +173,7 @@ impl<H: ReceiverHardware> Runtime<H> {
     fn transition(&mut self, command: Command, out: &Output) -> Result<()> {
         match command.cmd {
             Action::Pause if self.state != State::Paused => {
-                self.hardware.shutdown()?;
+                self.shutdown_evidence("pause_shutdown")?;
                 self.cleanup_verified = true;
                 self.dropped += out.discard_observations();
                 self.state = State::Paused;
@@ -143,7 +216,23 @@ impl<H: ReceiverHardware> Runtime<H> {
         out.send(&self.status(request_id), false)?;
         Ok(())
     }
+    fn shutdown_evidence(&mut self, operation: &'static str) -> Result<()> {
+        let result = self.hardware.shutdown();
+        if let Err(error) = &result {
+            self.diagnostics.last_cleanup_failure =
+                Some(FailureEvidence::capture(error, operation));
+        }
+        result
+    }
     fn recover(&mut self, error: anyhow::Error, out: &Output) -> Result<()> {
+        self.diagnostics.last_failure = Some(FailureEvidence::capture(
+            &error,
+            if self.state == State::Recovering {
+                "initialize"
+            } else {
+                "receive"
+            },
+        ));
         let mcu_timeout = error
             .chain()
             .any(|e| e.is::<mt7610u_lab::transport::McuTimeout>());
@@ -153,7 +242,7 @@ impl<H: ReceiverHardware> Runtime<H> {
         if !mcu_timeout && !disconnected {
             return Err(error);
         }
-        self.cleanup_verified = self.hardware.shutdown().is_ok();
+        self.cleanup_verified = self.shutdown_evidence("recovery_shutdown").is_ok();
         if mcu_timeout {
             self.mcu_timeouts += 1;
             ensure!(
@@ -211,7 +300,7 @@ impl<H: ReceiverHardware> Runtime<H> {
         Ok(())
     }
     fn stop(&mut self, out: &Output, request_id: Option<Value>) -> Result<()> {
-        let result = self.hardware.shutdown();
+        let result = self.shutdown_evidence("stop_shutdown");
         self.cleanup_verified = result.is_ok();
         self.dropped += out.discard_observations();
         let mut stopped = self.status(request_id);
@@ -392,6 +481,40 @@ mod tests {
             request_id: Some(json!(id)),
         }
     }
+    #[test]
+    fn final_failure_diagnostics_survive_budget_and_cleanup_errors() {
+        let out = queued_output();
+        let mut runtime = Runtime::new(FakeHardware::default());
+        for index in 0..3 {
+            let error = anyhow::Error::from(mt7610u_lab::transport::McuTimeout {
+                command: 12,
+                sequence: 1,
+            })
+            .context(mt7610u_lab::receiver::PreparationFailure {
+                stage: "initialize_channel",
+                firmware_uploaded: Some(false),
+            });
+            let result = runtime.recover(error, &out);
+            assert_eq!(result.is_err(), index == 2);
+        }
+        runtime.hardware.fail_shutdown = true;
+        assert!(runtime.stop(&out, None).is_err());
+        let stopped = records(&out).pop().unwrap();
+        let d = &stopped["diagnostics_v1"];
+        assert_eq!(stopped["type"], "stopped");
+        assert_eq!(stopped["cleanup_verified"], false);
+        assert_eq!(d["last_failure"]["kind"], "mcu_timeout");
+        assert_eq!(d["last_failure"]["mcu_command"], 12);
+        assert_eq!(d["last_failure"]["preparation_stage"], "initialize_channel");
+        assert_eq!(d["last_cleanup_failure"]["operation"], "stop_shutdown");
+        assert_eq!(d["last_cleanup_failure"]["kind"], "other");
+        assert!(serde_json::to_vec(d).unwrap().len() < 2048);
+        let ordinary = anyhow::anyhow!("private opaque detail never serialized");
+        let d = serde_json::to_value(FailureEvidence::capture(&ordinary, "receive")).unwrap();
+        assert_eq!(d["kind"], "other");
+        assert!(!d.to_string().contains("private opaque"));
+    }
+
     #[test]
     fn mcu_timeout_recovery_requires_cleanup_and_has_a_session_wide_limit() {
         let out = Output::new(Vec::new());
