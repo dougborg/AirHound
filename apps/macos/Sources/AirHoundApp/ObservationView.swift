@@ -3,9 +3,9 @@ import SwiftUI
 
 struct MainView: View {
   @ObservedObject var model: AppModel
-  var observations: [Observation] { model.recording?.observations ?? [] }
+  @State private var presentation = ObservationPresentation()
+  var observations: [Observation] { presentation.recording?.observations ?? [] }
   @State private var receiver: String? = "all"
-  @State private var selection: Observation.ID?
   @State private var search = ""
   @State private var medium = "All types"
   @State private var matchesOnly = false
@@ -16,7 +16,7 @@ struct MainView: View {
   // scrolling, selecting an observation, or opening the inspector.
   @State private var filtered: [Observation] = []
   @State private var receiverIDs: [String] = []
-  var selected: Observation? { filtered.first { $0.id == selection } }
+  var selected: Observation? { filtered.first { $0.id == presentation.selection } }
   var body: some View {
     NavigationSplitView {
       List(selection: $receiver) {
@@ -32,14 +32,16 @@ struct MainView: View {
       .navigationSplitViewColumnWidth(min: 210, ideal: 235, max: 320)
       .safeAreaInset(edge: .bottom) {
         VStack(alignment: .leading, spacing: 6) {
-          Text(model.recordingLabel).font(.headline)
+          Text(presentation.label).font(.headline)
           Text("Capture controls are in the Capture tab.").font(.caption).foregroundStyle(
             .secondary)
         }.frame(maxWidth: .infinity, alignment: .leading).padding()
       }
     } detail: {
       VStack(spacing: 0) {
-        RecordNavigation(session: model.session)
+        RecordNavigation(
+          session: model.session, held: presentation.held,
+          hold: { presentation.hold() }, resume: resumeUpdates)
         HStack {
           Picker("Protocol", selection: $medium) {
             Text("All types").tag("All types")
@@ -51,8 +53,14 @@ struct MainView: View {
         }.padding(12)
         Divider()
         ObservationTable(
-          rows: filtered, revision: tableRevision,
-          selection: $selection, sortOrder: $sortOrder
+          rows: filtered, revision: tableRevision, context: model.recordingRevision,
+          selection: Binding(
+            get: { presentation.selection },
+            set: { presentation.select($0, liveWindow: model.session.browsingRun != nil) }),
+          sortOrder: $sortOrder,
+          userScrolled: {
+            if model.session.browsingRun != nil { presentation.hold() }
+          }
         )
         .overlay {
           if observations.isEmpty {
@@ -69,11 +77,11 @@ struct MainView: View {
         HStack {
           Text("\(filtered.count) of \(observations.count) observations")
           Spacer()
-          Text(model.recordingLabel)
+          Text(presentation.label)
         }.font(.caption).foregroundStyle(.secondary).padding(10)
       }
       .navigationTitle("AirHound")
-      .navigationSubtitle(model.recordingLabel)
+      .navigationSubtitle(presentation.label)
       .searchable(text: $search, placement: .toolbar, prompt: "Search observations")
       .inspector(isPresented: $showInspector) {
         InspectorView(observation: selected).inspectorColumnWidth(min: 260, ideal: 300, max: 420)
@@ -120,17 +128,28 @@ struct MainView: View {
     }
     .onChange(of: model.recordingRevision) { _, _ in
       receiver = "all"
-      selection = nil
+      receiveUpdates()
     }
-    .onChange(of: model.recording?.revision, initial: true) { _, _ in
-      receiverIDs = Array(Set(observations.map(\.receiver))).sorted()
-      refreshRows()
-    }
+    .onChange(of: model.recording?.revision, initial: true) { _, _ in receiveUpdates() }
     .onChange(of: receiver) { _, _ in refreshRows() }
     .onChange(of: medium) { _, _ in refreshRows() }
     .onChange(of: matchesOnly) { _, _ in refreshRows() }
     .onChange(of: search) { _, _ in refreshRows() }
     .onChange(of: sortOrder) { _, _ in refreshRows() }
+  }
+  private func receiveUpdates() {
+    if presentation.receive(
+      model.recording, label: model.recordingLabel, context: model.recordingRevision)
+    {
+      receiverIDs = Array(Set(observations.map(\.receiver))).sorted()
+      refreshRows()
+    }
+  }
+  private func resumeUpdates() {
+    presentation.resume(
+      model.recording, label: model.recordingLabel, context: model.recordingRevision)
+    receiverIDs = Array(Set(observations.map(\.receiver))).sorted()
+    refreshRows()
   }
   private func refreshRows() {
     filtered = observations.filter { row in
@@ -142,7 +161,9 @@ struct MainView: View {
           })
     }.sorted(using: sortOrder.map(\.comparator))
     tableRevision = UUID()
-    if let selection, !filtered.contains(where: { $0.id == selection }) { self.selection = nil }
+    if let selection = presentation.selection, !filtered.contains(where: { $0.id == selection }) {
+      presentation.selection = nil
+    }
   }
   private func receiverLabel(_ name: String, id: String, icon: String, assignment: String)
     -> some View
@@ -205,17 +226,37 @@ struct InspectorView: View {
 
 struct RecordNavigation: View {
   @ObservedObject var session: SessionModel
+  let held: Bool
+  let hold: () -> Void
+  let resume: () -> Void
   var body: some View {
     if session.browsingRun != nil {
-      HStack {
-        Text("Stored recording").font(.headline)
-        Toggle("Follow new records", isOn: $session.followLive).toggleStyle(.checkbox)
-        Spacer()
-        Button("From Beginning") { session.rewindRecords() }
-          .disabled(!session.canSubmitAction)
-        Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
-          session.loadMoreRecords()
-        }.disabled(!session.canSubmitAction)
+      VStack(alignment: .leading, spacing: 6) {
+        HStack {
+          Text("Stored recording").font(.headline)
+          Toggle(
+            "Follow live",
+            isOn: Binding(
+              get: { session.followLive && !held },
+              set: { follow in
+                session.followLive = follow
+                if follow { resume() } else { hold() }
+              })
+          ).toggleStyle(.checkbox)
+          Spacer()
+          Button("From Beginning") {
+            resume()
+            session.rewindRecords()
+          }.disabled(!session.canSubmitAction)
+          Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
+            resume()
+            session.loadMoreRecords()
+          }.disabled(!session.canSubmitAction)
+        }
+        if held {
+          Text("View held for inspection. Holding this view does not pause capture.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
       }.padding(12)
       Divider()
     }

@@ -7,8 +7,10 @@ import SwiftUI
 struct ObservationTable: NSViewRepresentable {
   let rows: [Observation]
   let revision: UUID
+  let context: UUID
   @Binding var selection: Observation.ID?
   @Binding var sortOrder: [ObservationSort]
+  var userScrolled: () -> Void
 
   func makeCoordinator() -> ObservationTableCoordinator { ObservationTableCoordinator() }
 
@@ -20,7 +22,10 @@ struct ObservationTable: NSViewRepresentable {
     let coordinator = context.coordinator
     coordinator.selectionChanged = { selection = $0 }
     coordinator.sortChanged = { sortOrder = $0 }
-    coordinator.update(rows: rows, revision: revision, selection: selection, sortOrder: sortOrder)
+    coordinator.userScrolled = userScrolled
+    coordinator.update(
+      rows: rows, revision: revision, selection: selection, sortOrder: sortOrder,
+      context: self.context)
   }
 
   func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize?
@@ -79,17 +84,33 @@ enum ObservationColumn: String, CaseIterable {
   }
 }
 
+/// Wheel scrolling and scroller dragging hold the display; programmatic anchor
+/// restoration must not be mistaken for a user's request to inspect older rows.
+final class ObservationScrollView: NSScrollView {
+  var userScrolled: () -> Void = {}
+  override func scrollWheel(with event: NSEvent) {
+    userScrolled()
+    super.scrollWheel(with: event)
+  }
+}
+
 @MainActor
 final class ObservationTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
   let table = NSTableView()
   private(set) var rows: [Observation] = []
   private var revision: UUID?
+  private var context: UUID?
   private var applying = false
   var selectionChanged: (Observation.ID?) -> Void = { _ in }
   var sortChanged: ([ObservationSort]) -> Void = { _ in }
+  var userScrolled: () -> Void = {}
 
   func makeScrollView() -> NSScrollView {
-    let scroll = NSScrollView()
+    let scroll = ObservationScrollView()
+    scroll.userScrolled = { [weak self] in self?.userDidScroll() }
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(liveScrollStarted),
+      name: NSScrollView.willStartLiveScrollNotification, object: scroll)
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = true
     scroll.autohidesScrollers = true
@@ -120,7 +141,7 @@ final class ObservationTableCoordinator: NSObject, NSTableViewDataSource, NSTabl
 
   func update(
     rows newRows: [Observation], revision newRevision: UUID,
-    selection: Observation.ID?, sortOrder: [ObservationSort]
+    selection: Observation.ID?, sortOrder: [ObservationSort], context newContext: UUID? = nil
   ) {
     applying = true
     defer { applying = false }
@@ -128,22 +149,28 @@ final class ObservationTableCoordinator: NSObject, NSTableViewDataSource, NSTabl
       NSSortDescriptor(key: $0.column.rawValue, ascending: $0.ascending)
     }
     if table.sortDescriptors != descriptors { table.sortDescriptors = descriptors }
-    if revision != newRevision {
+    let contextChanged = context != newContext
+    context = newContext
+    var restoreOrigin: NSPoint?
+    if revision != newRevision || contextChanged {
       // Retain the visible anchor during live-page insertion/eviction instead
       // of snapping the user back to the first row at every refresh.
       let clip = table.enclosingScrollView?.contentView
       let origin = clip?.bounds.origin ?? .zero
       let top = table.row(at: origin)
-      let anchor = rows.indices.contains(top) ? rows[top].id : nil
+      let anchor = !contextChanged && rows.indices.contains(top) ? rows[top].id : nil
       let offset = top >= 0 ? origin.y - table.rect(ofRow: top).minY : 0
       rows = newRows
       revision = newRevision
       table.reloadData()
+      table.enclosingScrollView?.layoutSubtreeIfNeeded()
+      table.layoutSubtreeIfNeeded()
       if let clip, let anchor, let row = rows.firstIndex(where: { $0.id == anchor }) {
         let maximum = max(0, table.bounds.height - clip.bounds.height)
-        clip.scroll(
-          to: NSPoint(x: origin.x, y: min(maximum, max(0, table.rect(ofRow: row).minY + offset))))
-        table.enclosingScrollView?.reflectScrolledClipView(clip)
+        restoreOrigin = NSPoint(
+          x: origin.x, y: min(maximum, max(0, table.rect(ofRow: row).minY + offset)))
+      } else if contextChanged {
+        restoreOrigin = .zero
       }
     }
     let index = selection.flatMap { id in rows.firstIndex { $0.id == id } }
@@ -151,6 +178,18 @@ final class ObservationTableCoordinator: NSObject, NSTableViewDataSource, NSTabl
       table.selectRowIndexes(
         index.map { IndexSet(integer: $0) } ?? IndexSet(), byExtendingSelection: false)
     }
+    // AppKit may scroll while applying selection. Restore the visible anchor
+    // after both operations, never scroll the reader to an offscreen selection.
+    if let restoreOrigin, let scroll = table.enclosingScrollView {
+      scroll.contentView.scroll(to: restoreOrigin)
+      scroll.reflectScrolledClipView(scroll.contentView)
+    }
+  }
+
+  @objc private func liveScrollStarted(_ notification: Notification) { userDidScroll() }
+  private func userDidScroll() {
+    guard !applying else { return }
+    userScrolled()
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int { rows.count }

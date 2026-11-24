@@ -61,3 +61,17 @@ reads Idle; replaying stored health must not imply that a receiver is still runn
 The health pane scrolls independently above the recordings list in a native
 vertical split, leaving a usable recordings area even with several receivers
 and a GPS provider at the minimum window height.
+
+Live observation inspection holds one presentation window when a row is selected
+or the user scrolls. The selected cursor, inspector record, neighboring rows and
+viewport remain stable while the session keeps reading new records and capture
+continues independently. The view says “View held for inspection. Holding this
+view does not pause capture.” Explicit “Follow live” clears selection and adopts
+the current window; page/navigation controls and a different recording are
+intentional context changes. Filters and sorting operate on the held window.
+
+The held live snapshot contains at most the existing 1,000-record / 4 MiB input
+window, in addition to the session's current window with the same limits. Decoded
+strings/pretty JSON have normal additional memory cost; these are input limits,
+not an 8 MiB resident-memory claim. No list of past windows is accumulated. Rows
+remain recycled AppKit cells, and held updates skip filter/sort and table reload.
