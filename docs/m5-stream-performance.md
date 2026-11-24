@@ -85,23 +85,27 @@ structured-health/command admission without guaranteeing lossless delivery.
 The UART task checks FIFO readiness and copies at most 16 bytes in one short
 ownership critical section. It yields immediately on blockage and after at most
 four steps (64 bytes), with interrupts enabled outside the brief FIFO copy.
-The prospective dual-budget candidate uses a 40 ms no-acceptance watchdog and
+The cooperative writer uses a 40 ms no-acceptance watchdog and
 an immutable length-aware total allowance capped at 200 ms; see the exact
 [service-budget policy](m5-psram-output-proposal.md#prospective-cooperative-uart-service-budgets).
 Positive validated FIFO acceptance renews only the watchdog. The 94/310/512-byte
 allowances are 62.040 / 126.728 / 191.112 ms; actual completion does not wait for
 them. These are poll-time limits, not preemption or measured wire latency.
 A completed final-step overrun is reported separately and never retried as an
-incomplete frame. The separate <20 ms intra-line poll-gap responsiveness gate
-and zero-output-loss criterion remain unchanged.
+incomplete frame. Bounded elapsed/overrun/last-timeout diagnostics require no new
+payload buffer. Successful delimiter recovery does not erase a timeout loss.
 
-The candidate adds bounded elapsed/overrun/last-timeout diagnostics without a
-new payload buffer or relaxed memory gate. It has portable test coverage, but
-its final target build, linked-memory audit and physical acceptance remain
-pending. The prior 600-second display/resynchronization attempt continued both
-radios and recovered after four typed timeout losses; its strict verdict remains
-failed. That observation does not establish which task or FIFO condition caused
-each timeout. No historical benchmark below measures the new budget policy.
+> **Historical dual-budget planning checkpoint:** The initial proposal retained
+> a separate <20 ms intra-line poll-gap responsiveness gate, the zero-output-loss
+> criterion and the existing memory gate. Portable tests existed, while the final
+> target build, linked-memory audit and physical acceptance were still pending.
+> These statements record the plan at that time: the old poll-gap gate is not a
+> current service-budget requirement, and the pending-work list is not current
+> delivery status. The prior 600-second display/resynchronization attempt had
+> continued both radios and recovered after four typed timeout losses; its strict
+> verdict remains failed. That observation did not establish which task or FIFO
+> condition caused each timeout. No historical benchmark below measures the new
+> budget policy.
 
 Boot diagnostics are synchronous only before the runtime ownership handoff and
 radio readiness barrier. The panic pre-backtrace hook permanently takes the same
