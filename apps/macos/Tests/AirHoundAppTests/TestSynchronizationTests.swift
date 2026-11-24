@@ -228,9 +228,12 @@ final class TestSynchronizationTests: XCTestCase {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let queried = expectation(description: "Durable state is still pending")
+    let process = Process()
     var first = true
     let task = Task {
-      try await waitForFixtureStorage([root.appendingPathComponent("history.sqlite")]) {
+      try await waitForFixtureStorage(
+        [root.appendingPathComponent("history.sqlite")], ownedProcess: process
+      ) {
         if first {
           first = false
           queried.fulfill()
@@ -245,5 +248,6 @@ final class TestSynchronizationTests: XCTestCase {
       XCTFail("Cancelled storage witness must not report success")
     } catch is CancellationError {
     }
+    XCTAssertNil(process.terminationHandler, "Cancellation must release exit-observer ownership")
   }
 }
