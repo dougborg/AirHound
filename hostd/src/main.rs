@@ -28,6 +28,8 @@ mod owned_child;
 mod rayhunter_source;
 mod serial_source;
 #[cfg(test)]
+mod test_directory;
+#[cfg(test)]
 mod test_support;
 use airhound_hostd::external_wifi;
 mod observation;
@@ -848,8 +850,36 @@ async fn stop_scanners(
     wifi: tokio::task::JoinHandle<()>,
     budget: std::time::Duration,
 ) -> bool {
-    async fn stop(mut task: tokio::task::JoinHandle<()>, budget: std::time::Duration) -> bool {
-        match tokio::time::timeout(budget, &mut task).await {
+    stop_scanners_with_timers(
+        ble,
+        wifi,
+        budget,
+        #[cfg(test)]
+        [None, None],
+    )
+    .await
+}
+async fn stop_scanners_with_timers(
+    ble: tokio::task::JoinHandle<()>,
+    wifi: tokio::task::JoinHandle<()>,
+    budget: std::time::Duration,
+    #[cfg(test)] witnesses: [Option<crate::test_support::TimerWitness>; 2],
+) -> bool {
+    async fn stop(
+        mut task: tokio::task::JoinHandle<()>,
+        budget: std::time::Duration,
+        #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + budget;
+        let wait = tokio::time::timeout_at(deadline, &mut task);
+        #[cfg(test)]
+        let wait = async {
+            match witness {
+                Some(witness) => witness.observe(deadline, wait, Result::is_err).await,
+                None => wait.await,
+            }
+        };
+        match wait.await {
             Ok(result) => result.is_err(),
             Err(_) => {
                 log::warn!("Scanner exceeded shutdown budget; canceling its task");
@@ -859,7 +889,22 @@ async fn stop_scanners(
             }
         }
     }
-    let (ble_forced, wifi_forced) = tokio::join!(stop(ble, budget), stop(wifi, budget));
+    #[cfg(test)]
+    let [ble_witness, wifi_witness] = witnesses;
+    let (ble_forced, wifi_forced) = tokio::join!(
+        stop(
+            ble,
+            budget,
+            #[cfg(test)]
+            ble_witness
+        ),
+        stop(
+            wifi,
+            budget,
+            #[cfg(test)]
+            wifi_witness
+        )
+    );
     ble_forced || wifi_forced
 }
 
@@ -1763,14 +1808,8 @@ mod tests {
     #[test]
     fn existing_output_requires_explicit_overwrite() {
         use std::io::Write;
-        let path = std::env::temp_dir().join(format!(
-            "airhound-output-{}-{}.csv",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let directory = crate::test_directory::create("airhound-output").unwrap();
+        let path = directory.join("output.csv");
         super::open_output(&path, false)
             .unwrap()
             .write_all(b"keep me")
@@ -1782,11 +1821,25 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"keep me");
         drop(super::open_output(&path, true).unwrap());
         assert!(std::fs::read(&path).unwrap().is_empty());
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    async fn pending_once<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        assert!(matches!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(future.as_mut().poll(cx))).await,
+            std::task::Poll::Pending
+        ));
+    }
+    async fn wait_shutdown(control: ScanControl) -> io::Result<()> {
+        let mut state = control.subscribe();
+        while !state.borrow().shutdown {
+            state.changed().await.map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
 
     #[derive(Clone, Default)]
     struct RecordingWriter {
@@ -1822,109 +1875,118 @@ mod tests {
 
     #[tokio::test]
     async fn failed_adapter_is_reported_even_without_observations() {
-        let output = RecordingWriter::default();
-        run_session(
-            SessionPolicy::native(),
-            FilterConfig {
-                wifi_enabled: false,
-                ..FilterConfig::new()
-            },
-            WigleWriter::new(Vec::new()).unwrap(),
-            output.clone(),
-            Scanners {
-                ble: |_, _| async { Err(io::Error::other("denied")) },
-                wifi: |_, _| async { panic!("disabled") },
-            },
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        )
-        .await
-        .unwrap();
-        let messages: Vec<serde_json::Value> = recorded(&output)
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let health = messages.last().unwrap();
-        assert_eq!(health["type"], "scanner_health");
-        assert_eq!(health["scanners"]["ble"]["state"], "unavailable");
-        assert_eq!(health["scanners"]["wifi"]["state"], "disabled");
-        assert_eq!(health["scan_requested"], true);
+        crate::test_support::manual_time(async {
+            let output = RecordingWriter::default();
+            run_session(
+                SessionPolicy::native(),
+                FilterConfig {
+                    wifi_enabled: false,
+                    ..FilterConfig::new()
+                },
+                WigleWriter::new(Vec::new()).unwrap(),
+                output.clone(),
+                Scanners {
+                    ble: |_, _| async { Err(io::Error::other("denied")) },
+                    wifi: |_, _| async { panic!("disabled") },
+                },
+                |_, _, _| std::future::pending(),
+                std::future::pending(),
+            )
+            .await
+            .unwrap();
+            let messages: Vec<serde_json::Value> = recorded(&output)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let health = messages.last().unwrap();
+            assert_eq!(health["type"], "scanner_health");
+            assert_eq!(health["scanners"]["ble"]["state"], "unavailable");
+            assert_eq!(health["scanners"]["wifi"]["state"], "disabled");
+            assert_eq!(health["scan_requested"], true);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn recording_commands_commit_pause_resume_and_retain_replies() {
-        use airhound_hostd::storage::{
-            self, output::SESSION_SOURCE, writer::Writer, RecordingMode,
-        };
-        let root = std::env::temp_dir().join(format!(
-            "airhound-command-storage-{}-{}",
-            std::process::id(),
-            storage::now_us().unwrap()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let path = root.join("recording.sqlite");
-        let writer = Writer::start(
-            path.clone(),
-            RecordingMode::Replay,
-            serde_json::json!({}),
-            vec![(SESSION_SOURCE.into(), serde_json::json!({}))],
-        )
-        .unwrap();
-        let run = writer.run_id.clone();
-        let (output, completion) = storage::output::attach(Vec::new(), writer);
-        let (tx, rx) = mpsc::channel(8);
-        std::thread::spawn(move || {
-            read_commands(
-                io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"stop\"}\n{\"cmd\":\"start\"}\n"),
-                tx,
+        crate::test_support::manual_time(async {
+            use airhound_hostd::storage::{
+                self, output::SESSION_SOURCE, writer::Writer, RecordingMode,
+            };
+            let root = std::env::temp_dir().join(format!(
+                "airhound-command-storage-{}-{}",
+                std::process::id(),
+                storage::now_us().unwrap()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let path = root.join("recording.sqlite");
+            let writer = Writer::start(
+                path.clone(),
+                RecordingMode::Replay,
+                serde_json::json!({}),
+                vec![(SESSION_SOURCE.into(), serde_json::json!({}))],
             )
-        })
-        .join()
-        .unwrap()
-        .unwrap();
-        let control = ScanControl::new(true);
-        command_loop_recording(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            &control,
-            Instant::now(),
-            output,
-            Some(completion.clone()),
-        )
-        .await
-        .unwrap();
-        assert!(control.load(Ordering::Relaxed));
-        tokio::task::spawn_blocking(move || completion.finish(true))
-            .await
+            .unwrap();
+            let run = writer.run_id.clone();
+            let (output, completion) = storage::output::attach(Vec::new(), writer);
+            let (tx, rx) = mpsc::channel(8);
+            std::thread::spawn(move || {
+                read_commands(
+                    io::Cursor::new(
+                        b"{\"cmd\":\"stop\"}\n{\"cmd\":\"stop\"}\n{\"cmd\":\"start\"}\n",
+                    ),
+                    tx,
+                )
+            })
+            .join()
             .unwrap()
             .unwrap();
-        let reader = storage::Reader::open(&path).unwrap();
-        let records = reader.records(&run, 0, 10).unwrap();
-        assert_eq!(records.records.len(), 3);
-        assert!(records
-            .records
-            .iter()
-            .all(|record| record.kind == "command_result"));
-        let connection = rusqlite::Connection::open_with_flags(
-            &path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        let states: Vec<String> = connection
-            .prepare("SELECT state FROM transitions ORDER BY id")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
-        assert_eq!(states, ["recording", "paused", "recording", "finished"]);
-        drop(connection);
-        drop(reader);
-        std::fs::remove_dir_all(root).unwrap();
+            let control = ScanControl::new(true);
+            command_loop_recording(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                &control,
+                Instant::now(),
+                output,
+                Some(completion.clone()),
+            )
+            .await
+            .unwrap();
+            assert!(control.load(Ordering::Relaxed));
+            tokio::task::spawn_blocking(move || completion.finish(true))
+                .await
+                .unwrap()
+                .unwrap();
+            let reader = storage::Reader::open(&path).unwrap();
+            let records = reader.records(&run, 0, 10).unwrap();
+            assert_eq!(records.records.len(), 3);
+            assert!(records
+                .records
+                .iter()
+                .all(|record| record.kind == "command_result"));
+            let connection = rusqlite::Connection::open_with_flags(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            let states: Vec<String> = connection
+                .prepare("SELECT state FROM transitions ORDER BY id")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(states, ["recording", "paused", "recording", "finished"]);
+            drop(connection);
+            drop(reader);
+            std::fs::remove_dir_all(root).unwrap();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn command_input_changes_state_and_returns_status_in_order() {
+        crate::test_support::manual_time(async {
         let (tx, rx) = mpsc::channel(1);
         let input = b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n{\"cmd\":\"set_rssi\",\"min_rssi\":-65}\n{\"cmd\":\"start\"}\n{\"cmd\":\"status\"}";
         // BufReader may bypass its buffer for large reads, so constrain the
@@ -1974,26 +2036,31 @@ mod tests {
         assert!(lines[0].contains("\"scanning\":false"));
         assert!(lines[1].contains("\"scanning\":true"));
         assert_eq!(output.flushes.load(Ordering::Relaxed), 9);
+        }).await;
     }
 
     #[tokio::test]
     async fn oversized_command_cannot_execute_its_suffix() {
-        let (tx, mut rx) = mpsc::channel(2);
-        let producer = std::thread::spawn(move || {
-            let mut input = vec![b'x'; protocol::MAX_MSG_LEN + 1];
-            input.extend_from_slice(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n");
-            read_commands(io::Cursor::new(input), tx)
-        });
-        assert!(matches!(
-            rx.recv().await,
-            Some(Some(HostCommand::GetStatus))
-        ));
-        assert!(rx.recv().await.is_none());
-        producer.join().unwrap().unwrap();
+        crate::test_support::manual_time(async {
+            let (tx, mut rx) = mpsc::channel(2);
+            let producer = std::thread::spawn(move || {
+                let mut input = vec![b'x'; protocol::MAX_MSG_LEN + 1];
+                input.extend_from_slice(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}\n");
+                read_commands(io::Cursor::new(input), tx)
+            });
+            assert!(matches!(
+                rx.recv().await,
+                Some(Some(HostCommand::GetStatus))
+            ));
+            assert!(rx.recv().await.is_none());
+            producer.join().unwrap().unwrap();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn command_errors_are_observable_without_state_changes() {
+        crate::test_support::manual_time(async {
         let (tx, rx) = mpsc::channel(1);
         let producer = std::thread::spawn(move || {
             read_commands(io::Cursor::new(b"oops\n{\"cmd\":\"set_rssi\",\"min_rssi\":1}\n{\"cmd\":\"set_mode\",\"mode\":\"ap\"}\n"), tx)
@@ -2012,6 +2079,7 @@ mod tests {
         assert_eq!(output.lines().count(), 3);
         assert_eq!(config.lock().unwrap().min_rssi, -90);
         assert!(scanning.load(Ordering::Relaxed));
+        }).await;
     }
 
     struct FailingWriter;
@@ -2026,97 +2094,105 @@ mod tests {
 
     #[tokio::test]
     async fn command_output_failure_is_returned() {
-        let (tx, rx) = mpsc::channel(1);
-        tx.send(Some(HostCommand::GetStatus)).await.unwrap();
-        drop(tx);
-        let err = command_loop(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            &ScanControl::new(true),
-            Instant::now(),
-            FailingWriter,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        crate::test_support::manual_time(async {
+            let (tx, rx) = mpsc::channel(1);
+            tx.send(Some(HostCommand::GetStatus)).await.unwrap();
+            drop(tx);
+            let err = command_loop(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                &ScanControl::new(true),
+                Instant::now(),
+                FailingWriter,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn shutdown_cancels_idle_and_backpressured_scanners_and_drains_output() {
-        for busy in [false, true] {
-            let recording = RecordingWriter::default();
-            let writer = WigleWriter::new(recording.clone()).unwrap();
-            let (tx, rx) = mpsc::channel(1);
-            let event = airhound::scanner::BleAdvParser::parse(&[0x56; 6], -55, &[]);
-            tx.send(ScanEvent::Ble(event.clone())).await.unwrap();
-            let scanner = tokio::spawn(async move {
-                if busy {
-                    loop {
-                        if tx.send(ScanEvent::Ble(event.clone())).await.is_err() {
-                            break;
+        crate::test_support::manual_time(async {
+            for busy in [false, true] {
+                let recording = RecordingWriter::default();
+                let writer = WigleWriter::new(recording.clone()).unwrap();
+                let (tx, rx) = mpsc::channel(1);
+                let event = airhound::scanner::BleAdvParser::parse(&[0x56; 6], -55, &[]);
+                tx.send(ScanEvent::Ble(event.clone())).await.unwrap();
+                let (entered, ready) = tokio::sync::oneshot::channel();
+                let scanner = tokio::spawn(async move {
+                    let work = async move {
+                        if busy {
+                            while tx.send(ScanEvent::Ble(event.clone())).await.is_ok() {}
+                        } else {
+                            let _hold = tx;
+                            std::future::pending::<()>().await;
                         }
-                    }
-                } else {
-                    let _hold_sender = tx;
-                    std::future::pending::<()>().await;
-                }
-            });
-            tokio::task::yield_now().await;
-            let output = tokio::spawn(filter_task(
-                rx,
-                Arc::new(Mutex::new(FilterConfig::new())),
-                Arc::new(MacIndex::from_defaults()),
-                Instant::now(),
-                writer,
-                Vec::new(),
-                ScanControl::new(true),
-            ));
-            tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                stop_scanners(
+                    };
+                    tokio::pin!(work);
+                    pending_once(work.as_mut()).await;
+                    entered.send(()).unwrap();
+                    work.await;
+                });
+                ready.await.unwrap();
+                let output = tokio::spawn(filter_task(
+                    rx,
+                    Arc::new(Mutex::new(FilterConfig::new())),
+                    Arc::new(MacIndex::from_defaults()),
+                    Instant::now(),
+                    writer,
+                    Vec::new(),
+                    ScanControl::new(true),
+                ));
+                let (witness, mut events) = crate::test_support::TimerWitness::channel();
+                let stopped = tokio::spawn(stop_scanners_with_timers(
                     scanner,
                     tokio::spawn(async {}),
                     std::time::Duration::from_secs(1),
-                )
-                .await;
-                output.await.unwrap()
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            assert!(String::from_utf8(recording.bytes.lock().unwrap().clone())
-                .unwrap()
-                .contains("56:56:56:56:56:56"));
-        }
+                    [Some(witness), None],
+                ));
+                crate::test_support::advance_registered_timer(&mut events).await;
+                assert!(
+                    stopped.await.unwrap(),
+                    "uncooperative scanner required owned cancellation"
+                );
+                output.await.unwrap().unwrap();
+                assert!(String::from_utf8(recording.bytes.lock().unwrap().clone())
+                    .unwrap()
+                    .contains("56:56:56:56:56:56"));
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn csv_failure_terminates_output_and_closes_scan_channel() {
-        struct FailAfterHeader {
-            fail: Arc<AtomicBool>,
-        }
-        impl Write for FailAfterHeader {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                if self.fail.load(Ordering::Relaxed) {
-                    Err(io::ErrorKind::StorageFull.into())
-                } else {
-                    Ok(bytes.len())
+        crate::test_support::manual_time(async {
+            struct FailAfterHeader {
+                fail: Arc<AtomicBool>,
+            }
+            impl Write for FailAfterHeader {
+                fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                    if self.fail.load(Ordering::Relaxed) {
+                        Err(io::ErrorKind::StorageFull.into())
+                    } else {
+                        Ok(bytes.len())
+                    }
+                }
+                fn flush(&mut self) -> io::Result<()> {
+                    if self.fail.load(Ordering::Relaxed) {
+                        Err(io::ErrorKind::StorageFull.into())
+                    } else {
+                        Ok(())
+                    }
                 }
             }
-            fn flush(&mut self) -> io::Result<()> {
-                if self.fail.load(Ordering::Relaxed) {
-                    Err(io::ErrorKind::StorageFull.into())
-                } else {
-                    Ok(())
-                }
-            }
-        }
-        let fail = Arc::new(AtomicBool::new(false));
-        let writer = WigleWriter::new(FailAfterHeader { fail: fail.clone() }).unwrap();
-        fail.store(true, Ordering::Relaxed);
-        let (tx, rx) = mpsc::channel(1);
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            filter_task(
+            let fail = Arc::new(AtomicBool::new(false));
+            let writer = WigleWriter::new(FailAfterHeader { fail: fail.clone() }).unwrap();
+            let (tx, rx) = mpsc::channel(1);
+            let output = filter_task(
                 rx,
                 Arc::new(Mutex::new(FilterConfig::new())),
                 Arc::new(MacIndex::from_defaults()),
@@ -2124,50 +2200,59 @@ mod tests {
                 writer,
                 Vec::new(),
                 ScanControl::new(true),
-            ),
-        )
-        .await
-        .unwrap();
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::StorageFull);
-        assert!(tx.is_closed());
+            );
+            tokio::pin!(output);
+            // Poll the real filter to register its periodic flush before injecting failure.
+            pending_once(output.as_mut()).await;
+            fail.store(true, Ordering::Relaxed);
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            let result = output.await;
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::StorageFull);
+            assert!(tx.is_closed());
+        })
+        .await;
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn output_flushes_while_scanners_are_idle_and_on_channel_close() {
-        let recording = RecordingWriter::default();
-        let writer = WigleWriter::new(recording.clone()).unwrap();
-        let (tx, rx) = mpsc::channel(2);
-        let output = tokio::spawn(filter_task(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            Arc::new(MacIndex::from_defaults()),
-            Instant::now(),
-            writer,
-            Vec::new(),
-            ScanControl::new(true),
-        ));
-        // Let the initial interval tick finish before queuing an observation.
-        tokio::task::yield_now().await;
-        let initial_flushes = recording.flushes.load(Ordering::Relaxed);
-        let event = airhound::scanner::BleAdvParser::parse(&[0x12; 6], -55, &[]);
-        tx.send(ScanEvent::Ble(event)).await.unwrap();
-        tokio::task::yield_now().await;
-        tokio::time::advance(std::time::Duration::from_secs(5)).await;
-        tokio::task::yield_now().await;
-        assert!(recording.flushes.load(Ordering::Relaxed) > initial_flushes);
-        let bytes = recording.bytes.lock().unwrap().clone();
-        assert!(String::from_utf8(bytes)
-            .unwrap()
-            .contains("12:12:12:12:12:12"));
+        crate::test_support::manual_time(async {
+            let recording = RecordingWriter::default();
+            let writer = WigleWriter::new(recording.clone()).unwrap();
+            let (tx, rx) = mpsc::channel(2);
+            let output = filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                writer,
+                Vec::new(),
+                ScanControl::new(true),
+            );
+            tokio::pin!(output);
+            // Observe the initial interval tick finish before queuing an observation.
+            pending_once(output.as_mut()).await;
+            let initial_flushes = recording.flushes.load(Ordering::Relaxed);
+            let event = airhound::scanner::BleAdvParser::parse(&[0x12; 6], -55, &[]);
+            tx.send(ScanEvent::Ble(event)).await.unwrap();
+            pending_once(output.as_mut()).await;
+            tokio::time::advance(std::time::Duration::from_secs(5)).await;
+            pending_once(output.as_mut()).await;
+            assert!(recording.flushes.load(Ordering::Relaxed) > initial_flushes);
+            let bytes = recording.bytes.lock().unwrap().clone();
+            assert!(String::from_utf8(bytes)
+                .unwrap()
+                .contains("12:12:12:12:12:12"));
 
-        let event = airhound::scanner::BleAdvParser::parse(&[0x34; 6], -55, &[]);
-        tx.send(ScanEvent::Ble(event)).await.unwrap();
-        drop(tx);
-        output.await.unwrap().unwrap();
-        let bytes = recording.bytes.lock().unwrap().clone();
-        assert!(String::from_utf8(bytes)
-            .unwrap()
-            .contains("34:34:34:34:34:34"));
+            let event = airhound::scanner::BleAdvParser::parse(&[0x34; 6], -55, &[]);
+            tx.send(ScanEvent::Ble(event)).await.unwrap();
+            drop(tx);
+            output.await.unwrap();
+            let bytes = recording.bytes.lock().unwrap().clone();
+            assert!(String::from_utf8(bytes)
+                .unwrap()
+                .contains("34:34:34:34:34:34"));
+        })
+        .await;
     }
     fn ble_match() -> ScanEvent {
         let mut event = airhound::scanner::BleAdvParser::parse(&[0x12; 6], -45, &[]);
@@ -2191,74 +2276,77 @@ mod tests {
 
     #[tokio::test]
     async fn policies_apply_across_ble_wifi_without_changing_evidence_or_retention() {
-        use airhound::evidence::AlertPolicy;
-        let mut baseline = None;
-        for policy in [
-            AlertPolicy::RulesAndWatchlist,
-            AlertPolicy::WatchlistOnly,
-            AlertPolicy::AllMatches,
-            AlertPolicy::Silent,
-        ] {
-            let output = RecordingWriter::default();
-            let csv = RecordingWriter::default();
-            run_session(
-                SessionPolicy::native(),
-                FilterConfig {
-                    alert_policy: policy,
-                    ..FilterConfig::new()
-                },
-                WigleWriter::new(csv.clone()).unwrap(),
-                output.clone(),
-                Scanners {
-                    ble: |tx: mpsc::Sender<ScanEvent>, _| async move {
-                        tx.send(ble_match()).await.unwrap();
-                        Ok(())
+        crate::test_support::manual_time(async {
+            use airhound::evidence::AlertPolicy;
+            let mut baseline = None;
+            for policy in [
+                AlertPolicy::RulesAndWatchlist,
+                AlertPolicy::WatchlistOnly,
+                AlertPolicy::AllMatches,
+                AlertPolicy::Silent,
+            ] {
+                let output = RecordingWriter::default();
+                let csv = RecordingWriter::default();
+                run_session(
+                    SessionPolicy::native(),
+                    FilterConfig {
+                        alert_policy: policy,
+                        ..FilterConfig::new()
                     },
-                    wifi: |tx: mpsc::Sender<ScanEvent>, _| async move {
-                        tx.send(wifi_match()).await.unwrap();
-                        Ok(())
+                    WigleWriter::new(csv.clone()).unwrap(),
+                    output.clone(),
+                    Scanners {
+                        ble: |tx: mpsc::Sender<ScanEvent>, _| async move {
+                            tx.send(ble_match()).await.unwrap();
+                            Ok(())
+                        },
+                        wifi: |tx: mpsc::Sender<ScanEvent>, _| async move {
+                            tx.send(wifi_match()).await.unwrap();
+                            Ok(())
+                        },
                     },
-                },
-                |_, _, _| std::future::pending(),
-                std::future::pending(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(recorded(&csv).lines().count(), 4);
-            let rows: Vec<serde_json::Value> = recorded(&output)
-                .lines()
-                .map(|s| serde_json::from_str(s).unwrap())
-                .collect();
-            let health = rows.iter().find(|r| r["type"] == "scanner_health").unwrap();
-            assert_eq!(health["alert_policy"], serde_json::json!(policy));
-            assert_eq!(health["alert_policy_scope"], "signature_evidence");
-            let mut evidence: Vec<_> = rows
-                .iter()
-                .filter(|r| r["type"] == "detection")
-                .cloned()
-                .collect();
-            assert_eq!(evidence.len(), 2);
-            evidence.sort_by_key(|r| r["scope"].as_str().unwrap().to_owned());
-            for row in &mut evidence {
-                assert_eq!(row["detection"]["policy"], serde_json::json!(policy));
-                assert_eq!(
-                    row["detection"]["alert"],
-                    if policy == AlertPolicy::AllMatches {
-                        "match"
-                    } else {
-                        "suppressed"
-                    }
-                );
-                row.as_object_mut().unwrap().remove("ts");
-                row["detection"].as_object_mut().unwrap().remove("policy");
-                row["detection"].as_object_mut().unwrap().remove("alert");
+                    |_, _, _| std::future::pending(),
+                    std::future::pending(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(recorded(&csv).lines().count(), 4);
+                let rows: Vec<serde_json::Value> = recorded(&output)
+                    .lines()
+                    .map(|s| serde_json::from_str(s).unwrap())
+                    .collect();
+                let health = rows.iter().find(|r| r["type"] == "scanner_health").unwrap();
+                assert_eq!(health["alert_policy"], serde_json::json!(policy));
+                assert_eq!(health["alert_policy_scope"], "signature_evidence");
+                let mut evidence: Vec<_> = rows
+                    .iter()
+                    .filter(|r| r["type"] == "detection")
+                    .cloned()
+                    .collect();
+                assert_eq!(evidence.len(), 2);
+                evidence.sort_by_key(|r| r["scope"].as_str().unwrap().to_owned());
+                for row in &mut evidence {
+                    assert_eq!(row["detection"]["policy"], serde_json::json!(policy));
+                    assert_eq!(
+                        row["detection"]["alert"],
+                        if policy == AlertPolicy::AllMatches {
+                            "match"
+                        } else {
+                            "suppressed"
+                        }
+                    );
+                    row.as_object_mut().unwrap().remove("ts");
+                    row["detection"].as_object_mut().unwrap().remove("policy");
+                    row["detection"].as_object_mut().unwrap().remove("alert");
+                }
+                if let Some(ref baseline) = baseline {
+                    assert_eq!(&evidence, baseline);
+                } else {
+                    baseline = Some(evidence);
+                }
             }
-            if let Some(ref baseline) = baseline {
-                assert_eq!(&evidence, baseline);
-            } else {
-                baseline = Some(evidence);
-            }
-        }
+        })
+        .await;
     }
 
     #[test]
@@ -2333,98 +2421,39 @@ mod tests {
 
     #[tokio::test]
     async fn session_records_all_observations_but_only_emits_matches() {
-        let csv = RecordingWriter::default();
-        let output = RecordingWriter::default();
-        run_session(
-            SessionPolicy::native(),
-            FilterConfig::new(),
-            WigleWriter::new(csv.clone()).unwrap(),
-            output.clone(),
-            Scanners {
-                ble: |tx: mpsc::Sender<ScanEvent>, _control| async move {
-                    tx.send(ble_match()).await.unwrap();
-                    tx.send(ScanEvent::Ble(airhound::scanner::BleAdvParser::parse(
-                        &[0x56; 6],
-                        -55,
-                        &[],
-                    )))
-                    .await
-                    .unwrap();
-                    let ScanEvent::Ble(mut weak) = ble_match() else {
-                        unreachable!()
-                    };
-                    weak.rssi = -110;
-                    tx.send(ScanEvent::Ble(weak)).await.unwrap();
-                    Ok(())
-                },
-                wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
-                    tx.send(wifi_match()).await.unwrap();
-                    let ScanEvent::WiFi(mut other) = wifi_match() else {
-                        unreachable!()
-                    };
-                    other.ssid = "Home".try_into().unwrap();
-                    tx.send(ScanEvent::WiFi(other)).await.unwrap();
-                    Ok(())
-                },
-            },
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        )
-        .await
-        .unwrap();
-        let csv = recorded(&csv);
-        assert_eq!(csv.lines().count(), 7, "{csv}");
-        assert!(csv.contains("56:56:56:56:56:56"));
-        assert!(csv.contains("-110"));
-        let all: Vec<serde_json::Value> = recorded(&output)
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
-        let observations: Vec<_> = all
-            .iter()
-            .filter(|r| r["type"] == "wifi_observation")
-            .collect();
-        assert_eq!(observations.len(), 2);
-        assert!(observations.iter().any(|r| r["ssid"] == "Home"));
-        let evidence: Vec<_> = all.iter().filter(|r| r["type"] == "detection").collect();
-        assert_eq!(evidence.len(), 2);
-        for e in evidence {
-            assert_eq!(e["detection"]["alert"], "suppressed");
-            assert!(all
-                .iter()
-                .any(|r| r["mac"] == e["id"] && r["ts"] == e["ts"]));
-        }
-        let messages = data_output(&output);
-        assert_eq!(messages.lines().count(), 2, "{messages}");
-        assert!(messages.contains("Flock-123456"));
-        assert!(messages.contains("FS Ext Battery"));
-        assert!(messages.contains("0x180A"));
-        assert!(!messages.contains("Home"));
-    }
-
-    #[tokio::test]
-    async fn disabled_adapters_are_not_opened_and_backend_failure_is_isolated() {
-        for ble_enabled in [true, false] {
+        crate::test_support::manual_time(async {
+            let csv = RecordingWriter::default();
             let output = RecordingWriter::default();
-            let config = FilterConfig {
-                ble_enabled,
-                wifi_enabled: !ble_enabled,
-                ..FilterConfig::new()
-            };
             run_session(
                 SessionPolicy::native(),
-                config,
-                WigleWriter::new(Vec::new()).unwrap(),
+                FilterConfig::new(),
+                WigleWriter::new(csv.clone()).unwrap(),
                 output.clone(),
                 Scanners {
-                    ble: move |_: mpsc::Sender<ScanEvent>, _control| async move {
-                        assert!(ble_enabled, "disabled BLE adapter opened");
-                        Err(io::Error::other("adapter unavailable"))
+                    ble: |tx: mpsc::Sender<ScanEvent>, _control| async move {
+                        tx.send(ble_match()).await.unwrap();
+                        tx.send(ScanEvent::Ble(airhound::scanner::BleAdvParser::parse(
+                            &[0x56; 6],
+                            -55,
+                            &[],
+                        )))
+                        .await
+                        .unwrap();
+                        let ScanEvent::Ble(mut weak) = ble_match() else {
+                            unreachable!()
+                        };
+                        weak.rssi = -110;
+                        tx.send(ScanEvent::Ble(weak)).await.unwrap();
+                        Ok(())
                     },
-                    wifi: move |tx: mpsc::Sender<ScanEvent>, _control| async move {
-                        assert!(!ble_enabled, "disabled WiFi adapter opened");
+                    wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
                         tx.send(wifi_match()).await.unwrap();
-                        Err(io::Error::other("adapter disconnected"))
+                        let ScanEvent::WiFi(mut other) = wifi_match() else {
+                            unreachable!()
+                        };
+                        other.ssid = "Home".try_into().unwrap();
+                        tx.send(ScanEvent::WiFi(other)).await.unwrap();
+                        Ok(())
                     },
                 },
                 |_, _, _| std::future::pending(),
@@ -2432,99 +2461,170 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(
-                data_output(&output).lines().count(),
-                usize::from(!ble_enabled)
-            );
-        }
-        let output = RecordingWriter::default();
-        run_session(
-            SessionPolicy::native(),
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            output.clone(),
-            Scanners {
-                ble: |_, _| async { Err(io::Error::other("permission denied")) },
-                wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
-                    tx.send(wifi_match()).await.unwrap();
-                    Ok(())
-                },
-            },
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(data_output(&output).lines().count(), 1);
+            let csv = recorded(&csv);
+            assert_eq!(csv.lines().count(), 7, "{csv}");
+            assert!(csv.contains("56:56:56:56:56:56"));
+            assert!(csv.contains("-110"));
+            let all: Vec<serde_json::Value> = recorded(&output)
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let observations: Vec<_> = all
+                .iter()
+                .filter(|r| r["type"] == "wifi_observation")
+                .collect();
+            assert_eq!(observations.len(), 2);
+            assert!(observations.iter().any(|r| r["ssid"] == "Home"));
+            let evidence: Vec<_> = all.iter().filter(|r| r["type"] == "detection").collect();
+            assert_eq!(evidence.len(), 2);
+            for e in evidence {
+                assert_eq!(e["detection"]["alert"], "suppressed");
+                assert!(all
+                    .iter()
+                    .any(|r| r["mac"] == e["id"] && r["ts"] == e["ts"]));
+            }
+            let messages = data_output(&output);
+            assert_eq!(messages.lines().count(), 2, "{messages}");
+            assert!(messages.contains("Flock-123456"));
+            assert!(messages.contains("FS Ext Battery"));
+            assert!(messages.contains("0x180A"));
+            assert!(!messages.contains("Home"));
+        })
+        .await;
     }
 
     #[tokio::test]
-    async fn session_shutdown_drains_queued_events_and_reports_signal_failure() {
-        for signal_fails in [false, true] {
+    async fn disabled_adapters_are_not_opened_and_backend_failure_is_isolated() {
+        crate::test_support::manual_time(async {
+            for ble_enabled in [true, false] {
+                let output = RecordingWriter::default();
+                let config = FilterConfig {
+                    ble_enabled,
+                    wifi_enabled: !ble_enabled,
+                    ..FilterConfig::new()
+                };
+                run_session(
+                    SessionPolicy::native(),
+                    config,
+                    WigleWriter::new(Vec::new()).unwrap(),
+                    output.clone(),
+                    Scanners {
+                        ble: move |_: mpsc::Sender<ScanEvent>, _control| async move {
+                            assert!(ble_enabled, "disabled BLE adapter opened");
+                            Err(io::Error::other("adapter unavailable"))
+                        },
+                        wifi: move |tx: mpsc::Sender<ScanEvent>, _control| async move {
+                            assert!(!ble_enabled, "disabled WiFi adapter opened");
+                            tx.send(wifi_match()).await.unwrap();
+                            Err(io::Error::other("adapter disconnected"))
+                        },
+                    },
+                    |_, _, _| std::future::pending(),
+                    std::future::pending(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    data_output(&output).lines().count(),
+                    usize::from(!ble_enabled)
+                );
+            }
             let output = RecordingWriter::default();
-            let (ready, wait) = tokio::sync::oneshot::channel();
-            let result = run_session(
+            run_session(
                 SessionPolicy::native(),
                 FilterConfig::new(),
                 WigleWriter::new(Vec::new()).unwrap(),
                 output.clone(),
                 Scanners {
-                    ble: move |tx: mpsc::Sender<ScanEvent>, _control| async move {
-                        tx.send(ble_match()).await.unwrap();
-                        ready.send(()).unwrap();
-                        let _hold_sender = tx;
-                        std::future::pending().await
+                    ble: |_, _| async { Err(io::Error::other("permission denied")) },
+                    wifi: |tx: mpsc::Sender<ScanEvent>, _control| async move {
+                        tx.send(wifi_match()).await.unwrap();
+                        Ok(())
                     },
-                    wifi: |_, _| async { Ok(()) },
                 },
                 |_, _, _| std::future::pending(),
-                async move {
-                    wait.await.unwrap();
-                    if signal_fails {
-                        Err(io::ErrorKind::Interrupted.into())
-                    } else {
-                        Ok(())
-                    }
-                },
+                std::future::pending(),
             )
-            .await;
-            assert_eq!(result.is_err(), signal_fails);
-            if let Err(error) = result {
-                assert_eq!(error.kind(), io::ErrorKind::Interrupted);
-            }
+            .await
+            .unwrap();
             assert_eq!(data_output(&output).lines().count(), 1);
-        }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn session_shutdown_drains_queued_events_and_reports_signal_failure() {
+        crate::test_support::manual_time(async {
+            for signal_fails in [false, true] {
+                let output = RecordingWriter::default();
+                let (ready, wait) = tokio::sync::oneshot::channel();
+                let result = run_session(
+                    SessionPolicy::native(),
+                    FilterConfig::new(),
+                    WigleWriter::new(Vec::new()).unwrap(),
+                    output.clone(),
+                    Scanners {
+                        ble: move |tx: mpsc::Sender<ScanEvent>, control| async move {
+                            tx.send(ble_match()).await.unwrap();
+                            ready.send(()).unwrap();
+                            let _hold_sender = tx;
+                            wait_shutdown(control).await
+                        },
+                        wifi: |_, _| async { Ok(()) },
+                    },
+                    |_, _, _| std::future::pending(),
+                    async move {
+                        wait.await.unwrap();
+                        if signal_fails {
+                            Err(io::ErrorKind::Interrupted.into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                )
+                .await;
+                assert_eq!(result.is_err(), signal_fails);
+                if let Err(error) = result {
+                    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+                }
+                assert_eq!(data_output(&output).lines().count(), 1);
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn broken_event_output_stops_session_and_drops_scanners() {
-        let (tx, mut dropped) = tokio::sync::mpsc::unbounded_channel();
-        struct OnDrop(tokio::sync::mpsc::UnboundedSender<()>);
-        impl Drop for OnDrop {
-            fn drop(&mut self) {
-                let _ = self.0.send(());
+        crate::test_support::manual_time(async {
+            let (tx, mut dropped) = tokio::sync::mpsc::unbounded_channel();
+            struct OnDrop(tokio::sync::mpsc::UnboundedSender<()>);
+            impl Drop for OnDrop {
+                fn drop(&mut self) {
+                    let _ = self.0.send(());
+                }
             }
-        }
-        let result = run_session(
-            SessionPolicy::native(),
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            FailingWriter,
-            Scanners {
-                ble: move |events: mpsc::Sender<ScanEvent>, _control| async move {
-                    let _drop = OnDrop(tx);
-                    events.send(ble_match()).await.unwrap();
-                    let _hold_sender = events;
-                    std::future::pending().await
+            let result = run_session(
+                SessionPolicy::native(),
+                FilterConfig::new(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                FailingWriter,
+                Scanners {
+                    ble: move |events: mpsc::Sender<ScanEvent>, control| async move {
+                        let _drop = OnDrop(tx);
+                        let _ = events.send(ble_match()).await;
+                        let _hold_sender = events;
+                        wait_shutdown(control).await
+                    },
+                    wifi: |_, _| async { Ok(()) },
                 },
-                wifi: |_, _| async { Ok(()) },
-            },
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        )
+                |_, _, _| std::future::pending(),
+                std::future::pending(),
+            )
+            .await;
+            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+            assert_eq!(dropped.recv().await, Some(()));
+        })
         .await;
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
-        assert_eq!(dropped.recv().await, Some(()));
     }
 
     #[test]
@@ -2533,8 +2633,8 @@ mod tests {
         let name = default.to_str().unwrap();
         assert!(name.starts_with("airhound-") && name.ends_with(".csv"));
         assert!(chrono::NaiveDateTime::parse_from_str(&name[9..24], "%Y%m%d-%H%M%S").is_ok());
-        let path =
-            std::env::temp_dir().join(format!("airhound-prepared-{}.csv", std::process::id()));
+        let directory = crate::test_directory::create("airhound-prepared").unwrap();
+        let path = directory.join("output.csv");
         let mut args = Args::try_parse_from([
             "hostd",
             "--output",
@@ -2557,141 +2657,148 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         args.output = Some(path.join("missing/observations.csv"));
         assert!(prepare_output(&args).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
     }
     #[tokio::test]
     async fn remote_id_pipeline_filters_invalid_weak_and_disabled_events() {
-        use airhound::scanner::{OdidEvent, OdidSource};
-        // ASTM operator-ID message, preceded by transport counter.
-        let mut raw = vec![0, 0x52, 0];
-        raw.extend_from_slice(b"GBR-OP-123ABCD");
-        raw.resize(26, 0);
-        let valid = OdidEvent {
-            source: OdidSource::WiFiNan,
-            mac: [0x78; 6],
-            rssi: -50,
-            raw_data: heapless::Vec::from_slice(&raw).unwrap(),
-        };
-        for enabled in [true, false] {
-            let output = RecordingWriter::default();
-            let (tx, rx) = mpsc::channel(4);
-            tx.send(ScanEvent::Odid(valid.clone())).await.unwrap();
-            let mut weak = valid.clone();
-            weak.rssi = -120;
-            tx.send(ScanEvent::Odid(weak)).await.unwrap();
-            let mut invalid = valid.clone();
-            invalid.raw_data.clear();
-            tx.send(ScanEvent::Odid(invalid)).await.unwrap();
-            drop(tx);
-            filter_task(
-                rx,
-                Arc::new(Mutex::new(FilterConfig {
-                    wifi_enabled: enabled,
-                    ..FilterConfig::new()
-                })),
-                Arc::new(MacIndex::from_defaults()),
-                Instant::now(),
-                WigleWriter::new(Vec::new()).unwrap(),
-                output.clone(),
-                ScanControl::new(true),
-            )
-            .await
-            .unwrap();
-            let text = data_output(&output);
-            assert_eq!(text.lines().count(), usize::from(enabled), "{text}");
-            if enabled {
-                assert!(text.contains("GBR-OP-123ABCD"));
-                assert!(text.contains("wifi_nan"));
+        crate::test_support::manual_time(async {
+            use airhound::scanner::{OdidEvent, OdidSource};
+            // ASTM operator-ID message, preceded by transport counter.
+            let mut raw = vec![0, 0x52, 0];
+            raw.extend_from_slice(b"GBR-OP-123ABCD");
+            raw.resize(26, 0);
+            let valid = OdidEvent {
+                source: OdidSource::WiFiNan,
+                mac: [0x78; 6],
+                rssi: -50,
+                raw_data: heapless::Vec::from_slice(&raw).unwrap(),
+            };
+            for enabled in [true, false] {
+                let output = RecordingWriter::default();
+                let (tx, rx) = mpsc::channel(4);
+                tx.send(ScanEvent::Odid(valid.clone())).await.unwrap();
+                let mut weak = valid.clone();
+                weak.rssi = -120;
+                tx.send(ScanEvent::Odid(weak)).await.unwrap();
+                let mut invalid = valid.clone();
+                invalid.raw_data.clear();
+                tx.send(ScanEvent::Odid(invalid)).await.unwrap();
+                drop(tx);
+                filter_task(
+                    rx,
+                    Arc::new(Mutex::new(FilterConfig {
+                        wifi_enabled: enabled,
+                        ..FilterConfig::new()
+                    })),
+                    Arc::new(MacIndex::from_defaults()),
+                    Instant::now(),
+                    WigleWriter::new(Vec::new()).unwrap(),
+                    output.clone(),
+                    ScanControl::new(true),
+                )
+                .await
+                .unwrap();
+                let text = data_output(&output);
+                assert_eq!(text.lines().count(), usize::from(enabled), "{text}");
+                if enabled {
+                    assert!(text.contains("GBR-OP-123ABCD"));
+                    assert!(text.contains("wifi_nan"));
+                }
             }
-        }
-        let mut frame = airhound::odid::parse_odid_service_info(&raw).unwrap();
-        frame.basic_id = Some(airhound::odid::BasicId {
-            ua_type: airhound::odid::UaType::HelicopterOrMultirotor,
-            id_type: airhound::odid::IdType::SerialNumber,
-            uas_id: "DRONE-123".try_into().unwrap(),
-        });
-        frame.location = Some(airhound::odid::Location {
-            status: airhound::odid::Status::Airborne,
-            direction: 90.,
-            speed_horizontal: 12.,
-            speed_vertical: 0.,
-            latitude: 40.,
-            longitude: -105.,
-            altitude_baro: 1600.,
-            altitude_geo: 1610.,
-            height_type: airhound::odid::HeightRef::OverTakeoff,
-            height: 10.,
-            horiz_accuracy: 1,
-            vert_accuracy: 1,
-            baro_accuracy: 1,
-            speed_accuracy: 1,
-            ts_accuracy: 1,
-            timestamp: Some(10.),
-        });
-        let mut output = Vec::new();
-        emit_odid(&frame, &valid, Instant::now(), &mut output).unwrap();
-        let text = String::from_utf8(output).unwrap();
-        for field in [
-            "DRONE-123",
-            "GBR-OP-123ABCD",
-            "\"lat\":40",
-            "\"lon\":-105",
-            "\"alt\":1610",
-            "\"speed\":12",
-        ] {
-            assert!(text.contains(field), "missing {field}: {text}");
-        }
-        assert_eq!(
-            emit_odid(&frame, &valid, Instant::now(), &mut FailingWriter)
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::BrokenPipe
-        );
+            let mut frame = airhound::odid::parse_odid_service_info(&raw).unwrap();
+            frame.basic_id = Some(airhound::odid::BasicId {
+                ua_type: airhound::odid::UaType::HelicopterOrMultirotor,
+                id_type: airhound::odid::IdType::SerialNumber,
+                uas_id: "DRONE-123".try_into().unwrap(),
+            });
+            frame.location = Some(airhound::odid::Location {
+                status: airhound::odid::Status::Airborne,
+                direction: 90.,
+                speed_horizontal: 12.,
+                speed_vertical: 0.,
+                latitude: 40.,
+                longitude: -105.,
+                altitude_baro: 1600.,
+                altitude_geo: 1610.,
+                height_type: airhound::odid::HeightRef::OverTakeoff,
+                height: 10.,
+                horiz_accuracy: 1,
+                vert_accuracy: 1,
+                baro_accuracy: 1,
+                speed_accuracy: 1,
+                ts_accuracy: 1,
+                timestamp: Some(10.),
+            });
+            let mut output = Vec::new();
+            emit_odid(&frame, &valid, Instant::now(), &mut output).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            for field in [
+                "DRONE-123",
+                "GBR-OP-123ABCD",
+                "\"lat\":40",
+                "\"lon\":-105",
+                "\"alt\":1610",
+                "\"speed\":12",
+            ] {
+                assert!(text.contains(field), "missing {field}: {text}");
+            }
+            assert_eq!(
+                emit_odid(&frame, &valid, Instant::now(), &mut FailingWriter)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::BrokenPipe
+            );
+        })
+        .await;
     }
     #[tokio::test]
     async fn input_worker_handles_eof_and_failed_streams() {
-        let config = Arc::new(Mutex::new(FilterConfig::new()));
-        let scanning = ScanControl::new(true);
-        let output = RecordingWriter::default();
-        input_command_loop(
-            io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}"),
-            output.clone(),
-            config.clone(),
-            Instant::now(),
-            &scanning,
-        )
-        .await;
-        assert!(!scanning.load(Ordering::Relaxed));
-        assert_eq!(data_output(&output).lines().count(), 3);
-        struct BrokenInput;
-        impl io::Read for BrokenInput {
-            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                Err(io::ErrorKind::ConnectionReset.into())
+        crate::test_support::manual_time(async {
+            let config = Arc::new(Mutex::new(FilterConfig::new()));
+            let scanning = ScanControl::new(true);
+            let output = RecordingWriter::default();
+            input_command_loop(
+                io::Cursor::new(b"{\"cmd\":\"stop\"}\n{\"cmd\":\"status\"}"),
+                output.clone(),
+                config.clone(),
+                Instant::now(),
+                &scanning,
+            )
+            .await;
+            assert!(!scanning.load(Ordering::Relaxed));
+            assert_eq!(data_output(&output).lines().count(), 3);
+            struct BrokenInput;
+            impl io::Read for BrokenInput {
+                fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                    Err(io::ErrorKind::ConnectionReset.into())
+                }
             }
-        }
-        input_command_loop(
-            io::BufReader::new(BrokenInput),
-            Vec::new(),
-            config.clone(),
-            Instant::now(),
-            &scanning,
-        )
-        .await;
-        input_command_loop(
-            io::Cursor::new(b"{\"cmd\":\"status\"}\n"),
-            FailingWriter,
-            config,
-            Instant::now(),
-            &scanning,
-        )
-        .await;
-        let (tx, rx) = mpsc::channel(1);
-        drop(rx);
-        tokio::task::spawn_blocking(move || {
-            read_commands(io::Cursor::new(b"{\"cmd\":\"start\"}\n"), tx)
+            input_command_loop(
+                io::BufReader::new(BrokenInput),
+                Vec::new(),
+                config.clone(),
+                Instant::now(),
+                &scanning,
+            )
+            .await;
+            input_command_loop(
+                io::Cursor::new(b"{\"cmd\":\"status\"}\n"),
+                FailingWriter,
+                config,
+                Instant::now(),
+                &scanning,
+            )
+            .await;
+            let (tx, rx) = mpsc::channel(1);
+            drop(rx);
+            tokio::task::spawn_blocking(move || {
+                read_commands(io::Cursor::new(b"{\"cmd\":\"start\"}\n"), tx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
         })
-        .await
-        .unwrap()
-        .unwrap();
+        .await;
     }
 
     #[test]
@@ -2726,56 +2833,135 @@ mod tests {
     }
     #[tokio::test]
     async fn remote_id_flows_from_backend_properties_without_mac_or_signature_gate() {
-        let rid_uuid = uuid::Uuid::parse_str("0000fffa-0000-1000-8000-00805f9b34fb").unwrap();
-        let custom_uuid = uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
-        let basic = |counter: u8| {
-            let mut payload = vec![0; 27];
-            payload[..4].copy_from_slice(&[0x0d, counter, 0x02, 0x12]);
-            payload[4..8].copy_from_slice(b"TEST");
-            payload
-        };
-        let hex = include_str!("../tests/fixtures/remote-id-service-data.hex").trim();
-        let long: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
-        let mut wrong_app = basic(1);
-        wrong_app[0] = 0;
-        let mut oversized = basic(1);
-        oversized.resize(ble_payload::MAX_RECORD_BYTES + 1, 0);
-        for enabled in [true, false] {
-            let cases = [
-                ("legacy1", rid_uuid, basic(1), Some(-45)),
-                ("legacy2", rid_uuid, basic(2), Some(-45)),
-                ("long", rid_uuid, long.clone(), Some(-45)),
-                ("wrong_uuid", custom_uuid, basic(1), Some(-45)),
-                ("wrong_app", rid_uuid, wrong_app.clone(), Some(-45)),
-                ("short", rid_uuid, vec![0x0d, 1, 0], Some(-45)),
-                ("truncated", rid_uuid, oversized.clone(), Some(-45)),
-                ("unknown_rssi", rid_uuid, basic(3), None),
-                ("weak", rid_uuid, basic(4), Some(-100)),
-            ];
-            let (tx, rx) = mpsc::channel(cases.len());
-            for (id, uuid, payload, rssi) in cases {
-                let mut props = btleplug::api::PeripheralProperties {
-                    rssi,
-                    ..Default::default()
-                };
-                props.service_data.insert(uuid, payload);
-                let mut event = ble::observation(id, &props, None);
-                if let ScanEvent::BleSnapshot { snapshot, .. } = &mut event {
-                    snapshot.receiver_id = Some("test-receiver".into());
+        crate::test_support::manual_time(async {
+            let rid_uuid = uuid::Uuid::parse_str("0000fffa-0000-1000-8000-00805f9b34fb").unwrap();
+            let custom_uuid =
+                uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
+            let basic = |counter: u8| {
+                let mut payload = vec![0; 27];
+                payload[..4].copy_from_slice(&[0x0d, counter, 0x02, 0x12]);
+                payload[4..8].copy_from_slice(b"TEST");
+                payload
+            };
+            let hex = include_str!("../tests/fixtures/remote-id-service-data.hex").trim();
+            let long: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+            let mut wrong_app = basic(1);
+            wrong_app[0] = 0;
+            let mut oversized = basic(1);
+            oversized.resize(ble_payload::MAX_RECORD_BYTES + 1, 0);
+            for enabled in [true, false] {
+                let cases = [
+                    ("legacy1", rid_uuid, basic(1), Some(-45)),
+                    ("legacy2", rid_uuid, basic(2), Some(-45)),
+                    ("long", rid_uuid, long.clone(), Some(-45)),
+                    ("wrong_uuid", custom_uuid, basic(1), Some(-45)),
+                    ("wrong_app", rid_uuid, wrong_app.clone(), Some(-45)),
+                    ("short", rid_uuid, vec![0x0d, 1, 0], Some(-45)),
+                    ("truncated", rid_uuid, oversized.clone(), Some(-45)),
+                    ("unknown_rssi", rid_uuid, basic(3), None),
+                    ("weak", rid_uuid, basic(4), Some(-100)),
+                ];
+                let (tx, rx) = mpsc::channel(cases.len());
+                for (id, uuid, payload, rssi) in cases {
+                    let mut props = btleplug::api::PeripheralProperties {
+                        rssi,
+                        ..Default::default()
+                    };
+                    props.service_data.insert(uuid, payload);
+                    let mut event = ble::observation(id, &props, None);
+                    if let ScanEvent::BleSnapshot { snapshot, .. } = &mut event {
+                        snapshot.receiver_id = Some("test-receiver".into());
+                    }
+                    tx.send(event).await.unwrap();
                 }
-                tx.send(event).await.unwrap();
+                drop(tx);
+                let csv = RecordingWriter::default();
+                let output = RecordingWriter::default();
+                let mut config = FilterConfig::new();
+                config.ble_enabled = enabled;
+                filter_task(
+                    rx,
+                    Arc::new(Mutex::new(config)),
+                    Arc::new(MacIndex::from_defaults()),
+                    Instant::now(),
+                    WigleWriter::new(csv.clone()).unwrap(),
+                    output.clone(),
+                    ScanControl::new(true),
+                )
+                .await
+                .unwrap();
+                let messages: Vec<serde_json::Value> = data_output(&output)
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                let decoded: Vec<_> = messages
+                    .iter()
+                    .filter(|m| m["type"] == "ble_remote_id")
+                    .collect();
+                assert_eq!(decoded.len(), if enabled { 4 } else { 0 });
+                if enabled {
+                    assert_eq!(decoded[0]["message_counter"], 1);
+                    assert_eq!(decoded[1]["message_counter"], 2);
+                    assert_eq!(decoded[2]["uas_id"], "SSEVTFG93700070");
+                    assert_eq!(decoded[3]["peripheral_id"], "unknown_rssi");
+                    assert!(decoded[3].get("rssi").is_none());
+                    let ordinary = messages
+                        .iter()
+                        .find(|m| {
+                            m["type"] == "ble_observation" && m["peripheral_id"] == "unknown_rssi"
+                        })
+                        .unwrap();
+                    assert!(ordinary["match"].as_array().unwrap().is_empty());
+                    for value in decoded {
+                        assert!(value.get("address").is_none());
+                        assert!(value.get("mac").is_none());
+                        assert_eq!(value["receiver_id"], "test-receiver");
+                        assert_eq!(value["packet_completeness"], "unknown");
+                    }
+                }
+                assert_eq!(
+                    recorded(&csv).lines().count(),
+                    2,
+                    "UUID identity must not fabricate CSV addresses"
+                );
             }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn backend_payloads_survive_conversion_filtering_and_output() {
+        crate::test_support::manual_time(async {
+            let mut props = btleplug::api::PeripheralProperties {
+                rssi: Some(-45),
+                ..Default::default()
+            };
+            let custom = uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
+            props.services = vec![custom];
+            props.manufacturer_data.insert(0, vec![]);
+            let mut find_my = vec![0; 27];
+            find_my[..2].copy_from_slice(&[0x12, 0x19]);
+            props.manufacturer_data.insert(0x4c, find_my);
+            props.service_data.insert(custom, vec![0x12, 0x19]);
+            let (tx, rx) = mpsc::channel(2);
+            tx.send(ble::observation("known-platform-id", &props, None))
+                .await
+                .unwrap();
+            props.manufacturer_data.remove(&0x4c);
+            // Identical bytes in the wrong service/company context must not match.
+            props.manufacturer_data.insert(1, vec![0x12, 0x19, 0xaa]);
+            tx.send(ble::observation("negative-platform-id", &props, None))
+                .await
+                .unwrap();
             drop(tx);
             let csv = RecordingWriter::default();
             let output = RecordingWriter::default();
-            let mut config = FilterConfig::new();
-            config.ble_enabled = enabled;
             filter_task(
                 rx,
-                Arc::new(Mutex::new(config)),
+                Arc::new(Mutex::new(FilterConfig::new())),
                 Arc::new(MacIndex::from_defaults()),
                 Instant::now(),
                 WigleWriter::new(csv.clone()).unwrap(),
@@ -2786,203 +2972,138 @@ mod tests {
             .unwrap();
             let messages: Vec<serde_json::Value> = data_output(&output)
                 .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
+                .map(|l| serde_json::from_str(l).unwrap())
                 .collect();
-            let decoded: Vec<_> = messages
-                .iter()
-                .filter(|m| m["type"] == "ble_remote_id")
-                .collect();
-            assert_eq!(decoded.len(), if enabled { 4 } else { 0 });
-            if enabled {
-                assert_eq!(decoded[0]["message_counter"], 1);
-                assert_eq!(decoded[1]["message_counter"], 2);
-                assert_eq!(decoded[2]["uas_id"], "SSEVTFG93700070");
-                assert_eq!(decoded[3]["peripheral_id"], "unknown_rssi");
-                assert!(decoded[3].get("rssi").is_none());
-                let ordinary = messages
-                    .iter()
-                    .find(|m| {
-                        m["type"] == "ble_observation" && m["peripheral_id"] == "unknown_rssi"
-                    })
-                    .unwrap();
-                assert!(ordinary["match"].as_array().unwrap().is_empty());
-                for value in decoded {
-                    assert!(value.get("address").is_none());
-                    assert!(value.get("mac").is_none());
-                    assert_eq!(value["receiver_id"], "test-receiver");
-                    assert_eq!(value["packet_completeness"], "unknown");
-                }
-            }
+            assert_eq!(messages.len(), 2);
+            assert_eq!(messages[0]["peripheral_id"], "known-platform-id");
+            assert!(messages[0]["address"].is_null());
             assert_eq!(
-                recorded(&csv).lines().count(),
-                2,
-                "UUID identity must not fabricate CSV addresses"
+                messages[0]["advertisement"]["advertised_services"][0],
+                custom.to_string()
             );
-        }
-    }
-
-    #[tokio::test]
-    async fn backend_payloads_survive_conversion_filtering_and_output() {
-        let mut props = btleplug::api::PeripheralProperties {
-            rssi: Some(-45),
-            ..Default::default()
-        };
-        let custom = uuid::Uuid::parse_str("1234fffa-1122-3344-5566-778899aabbcc").unwrap();
-        props.services = vec![custom];
-        props.manufacturer_data.insert(0, vec![]);
-        let mut find_my = vec![0; 27];
-        find_my[..2].copy_from_slice(&[0x12, 0x19]);
-        props.manufacturer_data.insert(0x4c, find_my);
-        props.service_data.insert(custom, vec![0x12, 0x19]);
-        let (tx, rx) = mpsc::channel(2);
-        tx.send(ble::observation("known-platform-id", &props, None))
-            .await
-            .unwrap();
-        props.manufacturer_data.remove(&0x4c);
-        // Identical bytes in the wrong service/company context must not match.
-        props.manufacturer_data.insert(1, vec![0x12, 0x19, 0xaa]);
-        tx.send(ble::observation("negative-platform-id", &props, None))
-            .await
-            .unwrap();
-        drop(tx);
-        let csv = RecordingWriter::default();
-        let output = RecordingWriter::default();
-        filter_task(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            Arc::new(MacIndex::from_defaults()),
-            Instant::now(),
-            WigleWriter::new(csv.clone()).unwrap(),
-            output.clone(),
-            ScanControl::new(true),
-        )
-        .await
-        .unwrap();
-        let messages: Vec<serde_json::Value> = data_output(&output)
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0]["peripheral_id"], "known-platform-id");
-        assert!(messages[0]["address"].is_null());
-        assert_eq!(
-            messages[0]["advertisement"]["advertised_services"][0],
-            custom.to_string()
-        );
-        assert_eq!(
-            messages[0]["advertisement"]["manufacturer_data"][0]["company_id"],
-            0
-        );
-        assert_eq!(
-            messages[0]["advertisement"]["service_data"][0]["payload"],
-            serde_json::json!([0x12, 0x19])
-        );
-        assert_eq!(messages[0]["advertisement"]["freshness"], "possibly_cached");
-        assert!(messages[0]["match"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|m| m["type"] == "ble_ad_bytes"));
-        assert!(messages[1]["match"].as_array().unwrap().is_empty());
-        assert_eq!(recorded(&csv).lines().count(), 2);
+            assert_eq!(
+                messages[0]["advertisement"]["manufacturer_data"][0]["company_id"],
+                0
+            );
+            assert_eq!(
+                messages[0]["advertisement"]["service_data"][0]["payload"],
+                serde_json::json!([0x12, 0x19])
+            );
+            assert_eq!(messages[0]["advertisement"]["freshness"], "possibly_cached");
+            assert!(messages[0]["match"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["type"] == "ble_ad_bytes"));
+            assert!(messages[1]["match"].as_array().unwrap().is_empty());
+            assert_eq!(recorded(&csv).lines().count(), 2);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn peripheral_ids_are_preserved_without_fake_mac_exports() {
-        let (tx, rx) = mpsc::channel(3);
-        let ScanEvent::Ble(mut event) = ble_match() else {
-            unreachable!()
-        };
-        event.mac = [0; 6];
-        for id in [
-            "11111111-1111-1111-1111-111111111111",
-            "22222222-2222-2222-2222-222222222222",
-        ] {
+        crate::test_support::manual_time(async {
+            let (tx, rx) = mpsc::channel(3);
+            let ScanEvent::Ble(mut event) = ble_match() else {
+                unreachable!()
+            };
+            event.mac = [0; 6];
+            for id in [
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ] {
+                tx.send(ScanEvent::BlePeripheral {
+                    event: event.clone(),
+                    id: id.into(),
+                    address: None,
+                })
+                .await
+                .unwrap();
+                event.name.clear();
+                event.service_uuids_16.clear();
+            }
             tx.send(ScanEvent::BlePeripheral {
-                event: event.clone(),
-                id: id.into(),
-                address: None,
+                event,
+                id: "33333333-3333-3333-3333-333333333333".into(),
+                address: Some([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]),
             })
             .await
             .unwrap();
-            event.name.clear();
-            event.service_uuids_16.clear();
-        }
-        tx.send(ScanEvent::BlePeripheral {
-            event,
-            id: "33333333-3333-3333-3333-333333333333".into(),
-            address: Some([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]),
+            drop(tx);
+            let csv = RecordingWriter::default();
+            let output = RecordingWriter::default();
+            filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                WigleWriter::new(csv.clone()).unwrap(),
+                output.clone(),
+                ScanControl::new(true),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                recorded(&csv).lines().count(),
+                3,
+                "UUID-only observations must not become WiGLE MAC rows"
+            );
+            let messages: Vec<serde_json::Value> = data_output(&output)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[2]["address"], "12:34:56:78:9A:BC");
+            assert_eq!(messages[2]["address_type"], "unknown");
+            assert!(!recorded(&csv).contains("00:00:00:00:00:00"));
+            assert!(recorded(&csv).contains("12:34:56:78:9A:BC"));
+            assert_ne!(messages[0]["peripheral_id"], messages[1]["peripheral_id"]);
+            assert!(messages
+                .iter()
+                .all(|m| m["type"] == "ble_observation" && m.get("mac").is_none()));
+            assert!(!messages[0]["match"].as_array().unwrap().is_empty());
+            assert!(messages[1]["match"].as_array().unwrap().is_empty());
         })
-        .await
-        .unwrap();
-        drop(tx);
-        let csv = RecordingWriter::default();
-        let output = RecordingWriter::default();
-        filter_task(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            Arc::new(MacIndex::from_defaults()),
-            Instant::now(),
-            WigleWriter::new(csv.clone()).unwrap(),
-            output.clone(),
-            ScanControl::new(true),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            recorded(&csv).lines().count(),
-            3,
-            "UUID-only observations must not become WiGLE MAC rows"
-        );
-        let messages: Vec<serde_json::Value> = data_output(&output)
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[2]["address"], "12:34:56:78:9A:BC");
-        assert_eq!(messages[2]["address_type"], "unknown");
-        assert!(!recorded(&csv).contains("00:00:00:00:00:00"));
-        assert!(recorded(&csv).contains("12:34:56:78:9A:BC"));
-        assert_ne!(messages[0]["peripheral_id"], messages[1]["peripheral_id"]);
-        assert!(messages
-            .iter()
-            .all(|m| m["type"] == "ble_observation" && m.get("mac").is_none()));
-        assert!(!messages[0]["match"].as_array().unwrap().is_empty());
-        assert!(messages[1]["match"].as_array().unwrap().is_empty());
+        .await;
     }
 
     #[tokio::test]
     async fn shutdown_allows_cooperative_scanner_cleanup() {
-        let (started, ready) = tokio::sync::oneshot::channel();
-        let (cleaned, cleanup) = tokio::sync::oneshot::channel();
-        run_session(
-            SessionPolicy::native(),
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            Vec::new(),
-            Scanners {
-                ble: move |_tx, control: ScanControl| async move {
-                    let mut state = control.subscribe();
-                    started.send(()).unwrap();
-                    state.changed().await.unwrap();
-                    assert!(state.borrow().shutdown);
-                    cleaned.send(()).unwrap();
+        crate::test_support::manual_time(async {
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (cleaned, cleanup) = tokio::sync::oneshot::channel();
+            run_session(
+                SessionPolicy::native(),
+                FilterConfig::new(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                Vec::new(),
+                Scanners {
+                    ble: move |_tx, control: ScanControl| async move {
+                        let mut state = control.subscribe();
+                        started.send(()).unwrap();
+                        state.changed().await.unwrap();
+                        assert!(state.borrow().shutdown);
+                        cleaned.send(()).unwrap();
+                        Ok(())
+                    },
+                    wifi: |_, _| async { Ok(()) },
+                },
+                |_, _, _| std::future::pending(),
+                async {
+                    ready.await.unwrap();
                     Ok(())
                 },
-                wifi: |_, _| async { Ok(()) },
-            },
-            |_, _, _| std::future::pending(),
-            async {
-                ready.await.unwrap();
-                Ok(())
-            },
-        )
-        .await
-        .unwrap();
-        cleanup.await.unwrap();
+            )
+            .await
+            .unwrap();
+            cleanup.await.unwrap();
+        })
+        .await;
     }
     #[tokio::test]
     async fn external_signal_estimates_preserve_provenance_and_never_enter_csv() {
+        crate::test_support::manual_time(async {
         let record = serde_json::json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","session_id":"synthetic","sequence":0,"bssid":"02:00:00:00:00:01","ssid_bytes":b"Flock-123456".to_vec(),"advertised_channel":6,"receive_channel":1,"elapsed_ms":22,"observed_at_unix_ms":1700000000022u64,"dwell_elapsed_ms":22,"channel_epoch":0,"rssi_dbm":null,"estimated_rssi_dbm":-121,"rssi_validated":false,"rssi_estimate_basis":"mt76_eeprom_formula","raw_rssi":[146,0,0,0],"full_calibration":false});
         let event = external_wifi::SessionValidator::default()
             .accept(&serde_json::to_vec(&record).unwrap())
@@ -3032,27 +3153,31 @@ mod tests {
         assert!(!value["match"].as_array().unwrap().is_empty());
         assert!(!recorded(&csv).contains("02:00:00:00:00:01"));
         assert!(!recorded(&csv).contains("Flock-123456"));
+        }).await;
     }
 
     #[tokio::test]
     async fn external_backend_failure_is_fatal_and_reports_shutdown_failure() {
-        let result = run_session(
-            SessionPolicy::external(),
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            Vec::new(),
-            Scanners {
-                ble: |_, _| async { Ok(()) },
-                wifi: |_, _| async { Err(io::Error::other("companion cleanup unverified")) },
-            },
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        )
+        crate::test_support::manual_time(async {
+            let result = run_session(
+                SessionPolicy::external(),
+                FilterConfig::new(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                Vec::new(),
+                Scanners {
+                    ble: |_, _| async { Ok(()) },
+                    wifi: |_, _| async { Err(io::Error::other("companion cleanup unverified")) },
+                },
+                |_, _, _| std::future::pending(),
+                std::future::pending(),
+            )
+            .await;
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("companion cleanup unverified"));
+        })
         .await;
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("companion cleanup unverified"));
     }
     #[test]
     fn packet_source_cli_constraints() {
@@ -3080,114 +3205,122 @@ mod tests {
     }
     #[tokio::test]
     async fn raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context() {
-        let (tx, rx) = mpsc::channel(8);
-        let ad = [6, 9, b'F', b'l', b'o', b'c', b'k', 3, 0xff, 0xc8, 0x09];
-        let mut packet = ble_packet::tests::packet(&ad);
-        packet.replay = true;
-        packet.source_id = "fixture".into();
-        packet.generation = 2;
-        packet.sequence = 7;
-        tx.send(ScanEvent::BlePacket(Box::new(packet.clone())))
-            .await
-            .unwrap();
-        let mut incomplete = packet.clone();
-        incomplete.packet_completeness = "extended_chain_incomplete";
-        tx.send(ScanEvent::BlePacket(Box::new(incomplete)))
-            .await
-            .unwrap();
-        let mut unknown = packet.clone();
-        unknown.rssi = None;
-        tx.send(ScanEvent::BlePacket(Box::new(unknown)))
-            .await
-            .unwrap();
-        drop(tx);
-        let csv = RecordingWriter::default();
-        let output = RecordingWriter::default();
-        filter_task(
-            rx,
-            Arc::new(Mutex::new(FilterConfig::new())),
-            Arc::new(MacIndex::from_defaults()),
-            Instant::now(),
-            WigleWriter::new(csv.clone()).unwrap(),
-            output.clone(),
-            ScanControl::new(true),
-        )
-        .await
-        .unwrap();
-        let messages: Vec<serde_json::Value> = data_output(&output)
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
-        assert_eq!(messages.len(), 3);
-        let m = &messages[0];
-        assert_eq!(m["type"], "ble_packet_observation");
-        assert_eq!(m["source_id"], "fixture");
-        assert_eq!(m["captured_at_us"], 1_700_000_000_123_456u64);
-        assert_eq!(m["generation"], 2);
-        assert_eq!(m["sequence"], 7);
-        assert_eq!(m["detection"]["basis"], "observed_fields");
-        assert!(!m["detection"]["rules"].as_array().unwrap().is_empty());
-        assert!(messages[1]["detection"].is_null());
-        assert!(messages[2]["detection"].is_null());
-        let rows = recorded(&csv);
-        assert_eq!(rows.lines().count(), 3);
-        assert!(rows.contains("2023-11-14 22:13:20"));
-    }
-    #[tokio::test]
-    async fn explicit_ble_source_failure_is_fatal() {
-        let result = run_session(
-            SessionPolicy::native().with_fatal_ble(true),
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            Vec::new(),
-            Scanners {
-                ble: |_tx, _control| async { Err(io::Error::other("fixture source failure")) },
-                wifi: |_tx, _control| async { std::future::pending::<io::Result<()>>().await },
-            },
-            |_, _, _| async {},
-            std::future::pending(),
-        )
-        .await;
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("fixture source failure"));
-    }
-    #[tokio::test]
-    async fn queued_replay_survives_pause_and_live_queue_drains_on_shutdown() {
-        for replay in [false, true] {
-            let control = ScanControl::new(true);
-            let mut packet = ble_packet::tests::packet(&[]);
-            packet.replay = replay;
-            let (tx, rx) = mpsc::channel(2);
-            tx.send(ScanEvent::BlePacket(Box::new(packet)))
+        crate::test_support::manual_time(async {
+            let (tx, rx) = mpsc::channel(8);
+            let ad = [6, 9, b'F', b'l', b'o', b'c', b'k', 3, 0xff, 0xc8, 0x09];
+            let mut packet = ble_packet::tests::packet(&ad);
+            packet.replay = true;
+            packet.source_id = "fixture".into();
+            packet.generation = 2;
+            packet.sequence = 7;
+            tx.send(ScanEvent::BlePacket(Box::new(packet.clone())))
+                .await
+                .unwrap();
+            let mut incomplete = packet.clone();
+            incomplete.packet_completeness = "extended_chain_incomplete";
+            tx.send(ScanEvent::BlePacket(Box::new(incomplete)))
+                .await
+                .unwrap();
+            let mut unknown = packet.clone();
+            unknown.rssi = None;
+            tx.send(ScanEvent::BlePacket(Box::new(unknown)))
                 .await
                 .unwrap();
             drop(tx);
-            if replay {
-                control.store(false, Ordering::Relaxed);
-            } else {
-                control.shutdown();
-            }
+            let csv = RecordingWriter::default();
             let output = RecordingWriter::default();
-            let consume = filter_task(
+            filter_task(
                 rx,
                 Arc::new(Mutex::new(FilterConfig::new())),
                 Arc::new(MacIndex::from_defaults()),
                 Instant::now(),
-                WigleWriter::new(Vec::new()).unwrap(),
+                WigleWriter::new(csv.clone()).unwrap(),
                 output.clone(),
-                control.clone(),
-            );
-            let resume = async {
+                ScanControl::new(true),
+            )
+            .await
+            .unwrap();
+            let messages: Vec<serde_json::Value> = data_output(&output)
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            assert_eq!(messages.len(), 3);
+            let m = &messages[0];
+            assert_eq!(m["type"], "ble_packet_observation");
+            assert_eq!(m["source_id"], "fixture");
+            assert_eq!(m["captured_at_us"], 1_700_000_000_123_456u64);
+            assert_eq!(m["generation"], 2);
+            assert_eq!(m["sequence"], 7);
+            assert_eq!(m["detection"]["basis"], "observed_fields");
+            assert!(!m["detection"]["rules"].as_array().unwrap().is_empty());
+            assert!(messages[1]["detection"].is_null());
+            assert!(messages[2]["detection"].is_null());
+            let rows = recorded(&csv);
+            assert_eq!(rows.lines().count(), 3);
+            assert!(rows.contains("2023-11-14 22:13:20"));
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn explicit_ble_source_failure_is_fatal() {
+        crate::test_support::manual_time(async {
+            let result = run_session(
+                SessionPolicy::native().with_fatal_ble(true),
+                FilterConfig::new(),
+                WigleWriter::new(Vec::new()).unwrap(),
+                Vec::new(),
+                Scanners {
+                    ble: |_tx, _control| async { Err(io::Error::other("fixture source failure")) },
+                    wifi: |_tx, control| async { wait_shutdown(control).await },
+                },
+                |_, _, _| async {},
+                std::future::pending(),
+            )
+            .await;
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("fixture source failure"));
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn queued_replay_survives_pause_and_live_queue_drains_on_shutdown() {
+        crate::test_support::manual_time(async {
+            for replay in [false, true] {
+                let control = ScanControl::new(true);
+                let mut packet = ble_packet::tests::packet(&[]);
+                packet.replay = replay;
+                let (tx, rx) = mpsc::channel(2);
+                tx.send(ScanEvent::BlePacket(Box::new(packet)))
+                    .await
+                    .unwrap();
+                drop(tx);
                 if replay {
-                    tokio::task::yield_now().await;
+                    control.store(false, Ordering::Relaxed);
+                } else {
+                    control.shutdown();
+                }
+                let output = RecordingWriter::default();
+                let consume = filter_task(
+                    rx,
+                    Arc::new(Mutex::new(FilterConfig::new())),
+                    Arc::new(MacIndex::from_defaults()),
+                    Instant::now(),
+                    WigleWriter::new(Vec::new()).unwrap(),
+                    output.clone(),
+                    control.clone(),
+                );
+                tokio::pin!(consume);
+                if replay {
+                    pending_once(consume.as_mut()).await;
+                    assert!(!data_output(&output).contains("ble_packet_observation"));
                     control.store(true, Ordering::Relaxed);
                 }
-            };
-            let (result, ()) = tokio::join!(consume, resume);
-            result.unwrap();
-            assert!(data_output(&output).contains("ble_packet_observation"));
-        }
+                consume.await.unwrap();
+                assert!(data_output(&output).contains("ble_packet_observation"));
+            }
+        })
+        .await;
     }
 }
