@@ -10,7 +10,11 @@ before the next yield. Firmware adds no framebuffer, DMA or heap allocation.
 
 Startup remains synchronous: display reset, splash, two-second wait, splash
 cleanup and complete first status frame all precede DISPLAY_READY. XIAO does not
-compile this M5 renderer. The UART's 20 ms line deadline is unchanged.
+compile this M5 renderer. The cooperative UART writer uses a 40 ms watchdog
+since its last validated positive FIFO acceptance and an immutable length-aware
+total allowance capped at 200 ms. Timeout-only LF resynchronization retains a
+separate 20 ms budget. These budgets are checked when the writer is polled;
+they do not establish a hard scheduler-latency bound.
 
 The previous full-frame draw could monopolize one shared executor poll. The
 nominal RGB565 pixel payload is about 44,400 bytes per frame (8.88 ms at 40 MHz),
@@ -27,9 +31,9 @@ check one row/divider per poll, actual cooperative UART poll opportunities, and
 cancellation followed by a complete different page. Removing yields reproduces
 the scheduling-test failure. Synthetic clocks make no hardware latency claim.
 
-Before hardware acceptance, the exact combined firmware must pass both target
-builds and existing stack/static-memory gates. Measure maximum render-step time
-and UART poll gaps under both pages, button changes, maximum-width values and
-long output records. If a row is still too slow, smaller glyph batches are the
-next bounded change; do not silently relax the UART deadline or turn recovered
-timeouts into lossless acceptance.
+Each target image must pass both target builds and existing stack/static-memory
+gates. Maximum render-step duration remains unmeasured; UART poll gaps are not a
+substitute for that measurement. Further timing work should cover both pages,
+button changes, maximum-width values and long output records. If a row is too
+slow, smaller glyph batches are the next bounded change; do not silently relax
+the UART service budgets or turn recovered timeouts into lossless acceptance.
