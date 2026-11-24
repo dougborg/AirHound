@@ -194,6 +194,10 @@ mod tests {
             &self.path
         }
     }
+    fn assert_reaped(pid: i32) {
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+    }
     #[tokio::test]
     async fn cancelled_caller_keeps_ownership_until_child_exit_and_reap() {
         crate::test_support::manual_time(async {
@@ -219,11 +223,7 @@ mod tests {
             drop(child); // Simulates a caller future being cancelled without Finish.
             completion.await.unwrap().unwrap();
             let guard = airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap();
-            assert_eq!(
-                unsafe { libc::kill(pid, 0) },
-                -1,
-                "ownership released before child exited"
-            );
+            assert_reaped(pid);
             drop(guard);
             let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
             let command = Command::new("/nonexistent/airhound-helper");
@@ -270,7 +270,7 @@ mod tests {
                 child.finish().await.unwrap();
                 let _guard = airhound_hostd::serial_lease::acquire(endpoint.path())
                     .expect("Finish must release ownership before returning");
-                assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
+                assert_reaped(pid);
             }
         })
         .await;
@@ -318,7 +318,7 @@ mod tests {
             parent.write_all(b"x").await.unwrap();
             completion.await.unwrap().unwrap();
             let _guard = airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap();
-            assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+            assert_reaped(pid);
         })
         .await;
     }
