@@ -58,6 +58,14 @@ pub enum Delivery {
     UartClosed(BleAdmission),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UartOutcome {
+    Sent,
+    /// Original record was lost; only its delimiter was recovered.
+    TimeoutResynchronized,
+    Closed,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
     pub occupied: u16,
@@ -341,6 +349,7 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
             len: entry.1,
             live: true,
             ble_enqueued: false,
+            pending_failure: None,
             task_only: PhantomData,
         })
     }
@@ -509,6 +518,7 @@ pub struct Draining<'a, M: RawMutex, const N: usize, const R: usize> {
     len: usize,
     live: bool,
     ble_enqueued: bool,
+    pending_failure: Option<Reason>,
     task_only: PhantomData<*mut ()>,
 }
 impl<M: RawMutex, const N: usize, const R: usize> Draining<'_, M, N, R> {
@@ -536,8 +546,60 @@ impl<M: RawMutex, const N: usize, const R: usize> Draining<'_, M, N, R> {
     pub fn fail(mut self, reason: Reason) {
         self.live = false;
         self.pool.close();
-        self.pool
-            .release(self.index, Some(reason), self.ble_enqueued, true);
+        self.pool.release(
+            self.index,
+            Some(self.pending_failure.unwrap_or(reason)),
+            self.ble_enqueued,
+            true,
+        );
+    }
+
+    /// Sole-writer adapter. BLE admission happens once before this operation.
+    /// A timeout may leave a prefix in the FIFO; retain the exclusive lease
+    /// until an LF is accepted, or close on resync failure/cancellation/panic.
+    /// Neither the damaged payload nor BLE delivery is retried.
+    #[cfg(any(feature = "firmware", test))]
+    pub async fn write_cooperative<E>(
+        mut self,
+        mut output_step: impl FnMut(&[u8], &mut usize) -> Result<crate::serial_output::Step, E>,
+        mut now_micros: impl FnMut() -> u64,
+        mut poll_gap: impl FnMut(u64),
+    ) -> UartOutcome {
+        use crate::serial_output::{drain_cooperative, resynchronize_lf, LineError};
+        match drain_cooperative(
+            self.bytes(),
+            &mut output_step,
+            &mut now_micros,
+            &mut poll_gap,
+        )
+        .await
+        {
+            Ok(()) => {
+                self.complete();
+                UartOutcome::Sent
+            }
+            Err(LineError::Timeout) => {
+                // Defer exactly one loss attribution until release; Drop must
+                // preserve this original reason if recovery is cancelled.
+                self.pending_failure = Some(Reason::Timeout);
+                if resynchronize_lf(&mut output_step, &mut now_micros, &mut poll_gap)
+                    .await
+                    .is_ok()
+                {
+                    self.live = false;
+                    self.pool
+                        .release(self.index, Some(Reason::Timeout), self.ble_enqueued, true);
+                    UartOutcome::TimeoutResynchronized
+                } else {
+                    self.fail(Reason::Timeout);
+                    UartOutcome::Closed
+                }
+            }
+            Err(_) => {
+                self.fail(Reason::Write);
+                UartOutcome::Closed
+            }
+        }
     }
 }
 impl<M: RawMutex, const N: usize, const R: usize> Drop for Draining<'_, M, N, R> {
@@ -545,8 +607,12 @@ impl<M: RawMutex, const N: usize, const R: usize> Drop for Draining<'_, M, N, R>
         if self.live {
             // Cancellation may follow partial output: never splice another line.
             self.pool.close();
-            self.pool
-                .release(self.index, Some(Reason::Cancelled), self.ble_enqueued, true);
+            self.pool.release(
+                self.index,
+                Some(self.pending_failure.unwrap_or(Reason::Cancelled)),
+                self.ble_enqueued,
+                true,
+            );
         }
     }
 }
@@ -560,6 +626,239 @@ mod tests {
         task::{Context, Poll, Waker},
     };
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+    #[test]
+    fn display_delayed_prefix_resynchronizes_before_next_health_without_ble_retry() {
+        use crate::serial_output::Step;
+        use core::cell::{Cell, RefCell};
+        let pool = pool::<8, 2>();
+        let _owner = pool.writer_owner().unwrap();
+        let damaged = [b'x'; 512];
+        let health = b"{\"type\":\"status\",\"uptime\":30}\n";
+        let next = b"{\"type\":\"stream_stats\",\"output_drops\":1}\n";
+        assert!(send(&pool, Kind::Observation, &damaged, 0));
+        assert!(send(&pool, Kind::Health, health, 0));
+        assert!(send(&pool, Kind::Health, next, 0));
+        let uart = RefCell::new(std::vec::Vec::new());
+        let ble = RefCell::new(std::vec::Vec::new());
+        let now = Cell::new(0);
+        let mut line = pool.take(0).unwrap();
+        ble.borrow_mut().push(line.bytes().to_vec());
+        line.mark_ble_enqueued();
+        let mut write = std::boxed::Box::pin(line.write_cooperative(
+            |chunk, count| {
+                if uart.borrow().is_empty() || chunk == b"\n" {
+                    uart.borrow_mut().extend_from_slice(chunk);
+                    *count = chunk.len();
+                    Ok::<_, ()>(Step::Complete)
+                } else {
+                    // FIFO contention consumed part of the original budget.
+                    now.set(12_000);
+                    Ok(Step::Blocked)
+                }
+            },
+            || now.get(),
+            |gap| pool.poll_gap(gap),
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(uart.borrow().len(), 16);
+        // Model one ordinary display redraw's minimum pixel-wire time. This
+        // demonstrates budget behavior; it does not measure hardware latency.
+        now.set(now.get() + 8_880);
+        assert_eq!(
+            write.as_mut().poll(&mut cx),
+            Poll::Ready(UartOutcome::TimeoutResynchronized)
+        );
+        drop(write);
+        assert_eq!(&uart.borrow()[..], &[&damaged[..16], b"\n"].concat());
+        assert!(!pool.stats().closed);
+        for expected in [health.as_slice(), next.as_slice()] {
+            let mut line = pool.take(now.get()).unwrap();
+            assert_eq!(line.bytes(), expected);
+            ble.borrow_mut().push(line.bytes().to_vec());
+            line.mark_ble_enqueued();
+            let mut write = std::boxed::Box::pin(line.write_cooperative(
+                |chunk, count| {
+                    uart.borrow_mut().extend_from_slice(chunk);
+                    *count = chunk.len();
+                    Ok::<_, ()>(Step::Complete)
+                },
+                || now.get(),
+                |_| {},
+            ));
+            assert_eq!(write.as_mut().poll(&mut cx), Poll::Ready(UartOutcome::Sent));
+        }
+        let wire = uart.borrow();
+        let lines: std::vec::Vec<_> = wire.split(|b| *b == b'\n').collect();
+        #[derive(serde::Deserialize)]
+        struct Health {
+            uptime: u64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Stream {
+            output_drops: u64,
+        }
+        assert!(serde_json_core::from_slice::<Health>(lines[0]).is_err());
+        let (parsed, used) = serde_json_core::from_slice::<Health>(lines[1]).unwrap();
+        assert_eq!(used, lines[1].len());
+        assert_eq!(parsed.uptime, 30);
+        let (parsed, used) = serde_json_core::from_slice::<Stream>(lines[2]).unwrap();
+        assert_eq!(used, lines[2].len());
+        assert_eq!(parsed.output_drops, 1);
+        assert_eq!(
+            *ble.borrow(),
+            [damaged.to_vec(), health.to_vec(), next.to_vec()]
+        );
+        let stats = pool.stats();
+        assert_eq!(stats.drops, 1);
+        assert_eq!(stats.by_reason[Reason::Timeout as usize], 1);
+        assert_eq!(stats.uart_lost_after_ble_enqueue, 1);
+        assert_eq!(stats.occupied, 0);
+        assert!(!stats.closed);
+    }
+
+    #[test]
+    fn blocked_resync_has_its_own_absolute_bound_and_never_writes_next_json() {
+        use crate::serial_output::{Step, RESYNC_BUDGET_US};
+        use core::cell::{Cell, RefCell};
+        let pool = pool::<4, 1>();
+        let _owner = pool.writer_owner().unwrap();
+        assert!(send(&pool, Kind::Observation, &[b'x'; 512], 0));
+        assert!(send(&pool, Kind::Health, b"{\"next\":true}\n", 0));
+        let now = Cell::new(0);
+        let uart = RefCell::new(std::vec::Vec::new());
+        let mut line = pool.take(0).unwrap();
+        line.mark_ble_enqueued();
+        let mut write = std::boxed::Box::pin(line.write_cooperative(
+            |chunk, count| {
+                if chunk == b"\n" {
+                    return Ok::<_, ()>(Step::Blocked);
+                }
+                uart.borrow_mut().extend_from_slice(chunk);
+                *count = chunk.len();
+                Ok(Step::Complete)
+            },
+            || now.get(),
+            |_| {},
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        now.set(20_000);
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(pool.stats().occupied, 2, "damaged lease remains exclusive");
+        now.set(20_000 + RESYNC_BUDGET_US - 1);
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        now.set(20_000 + RESYNC_BUDGET_US);
+        assert_eq!(
+            write.as_mut().poll(&mut cx),
+            Poll::Ready(UartOutcome::Closed)
+        );
+        drop(write);
+        assert_eq!(&uart.borrow()[..], &[b'x'; 64]);
+        assert!(pool.stats().closed);
+        assert_eq!(pool.stats().queued, 1);
+        assert_eq!(pool.stats().drops, 1);
+        assert_eq!(pool.stats().by_reason[Reason::Timeout as usize], 1);
+        assert_eq!(pool.stats().uart_lost_after_ble_enqueue, 1);
+    }
+
+    #[test]
+    fn cancellation_during_lf_retains_original_timeout_once_and_closes() {
+        use crate::serial_output::Step;
+        use core::cell::Cell;
+        let pool = pool::<4, 1>();
+        let _owner = pool.writer_owner().unwrap();
+        assert!(send(&pool, Kind::Observation, &[b'x'; 512], 0));
+        let now = Cell::new(0);
+        let mut line = pool.take(0).unwrap();
+        line.mark_ble_enqueued();
+        let mut write = std::boxed::Box::pin(line.write_cooperative(
+            |chunk, count| {
+                if chunk == b"\n" {
+                    return Ok::<_, ()>(Step::Blocked);
+                }
+                *count = chunk.len();
+                Ok(Step::Complete)
+            },
+            || now.get(),
+            |_| {},
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        now.set(20_000);
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        drop(write);
+        let stats = pool.stats();
+        assert!(stats.closed);
+        assert_eq!(stats.occupied, 0);
+        assert_eq!(stats.drops, 1);
+        assert_eq!(stats.by_reason[Reason::Timeout as usize], 1);
+        assert_eq!(stats.by_reason[Reason::Cancelled as usize], 0);
+        assert_eq!(stats.uart_lost_after_ble_enqueue, 1);
+    }
+
+    #[test]
+    fn resync_hardware_error_or_panic_gate_closes_without_payload_retry() {
+        use crate::serial_output::Step;
+        use core::cell::{Cell, RefCell};
+        for cause in ["UART error", "PANICKED ownership gate"] {
+            let pool = pool::<4, 1>();
+            let _owner = pool.writer_owner().unwrap();
+            assert!(send(&pool, Kind::Observation, &[b'x'; 512], 0));
+            let now = Cell::new(0);
+            let uart = RefCell::new(std::vec::Vec::new());
+            let mut write = std::boxed::Box::pin(pool.take(0).unwrap().write_cooperative(
+                |chunk, count| {
+                    if chunk == b"\n" {
+                        return Err(cause);
+                    }
+                    uart.borrow_mut().extend_from_slice(chunk);
+                    *count = chunk.len();
+                    Ok(Step::Complete)
+                },
+                || now.get(),
+                |_| {},
+            ));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+            now.set(20_000);
+            assert_eq!(
+                write.as_mut().poll(&mut cx),
+                Poll::Ready(UartOutcome::Closed)
+            );
+            drop(write);
+            assert_eq!(&uart.borrow()[..], &[b'x'; 64]);
+            assert!(pool.stats().closed);
+            assert_eq!(pool.stats().drops, 1);
+            assert_eq!(pool.stats().by_reason[Reason::Timeout as usize], 1);
+        }
+    }
+
+    #[test]
+    fn hard_uart_failure_never_attempts_delimiter_recovery() {
+        let pool = pool::<4, 1>();
+        let _owner = pool.writer_owner().unwrap();
+        assert!(send(&pool, Kind::Health, b"{\"health\":true}\n", 0));
+        let calls = core::cell::Cell::new(0);
+        let mut write = std::boxed::Box::pin(pool.take(0).unwrap().write_cooperative(
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Err(())
+            },
+            || 0,
+            |_| {},
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(
+            write.as_mut().poll(&mut cx),
+            Poll::Ready(UartOutcome::Closed)
+        );
+        drop(write);
+        assert_eq!(calls.get(), 1);
+        assert!(pool.stats().closed);
+        assert_eq!(pool.stats().by_reason[Reason::Write as usize], 1);
+    }
     type TestPool<const N: usize, const R: usize> = Pool<NoopRawMutex, N, R>;
     fn pool<const N: usize, const R: usize>() -> Box<TestPool<N, R>> {
         let mut storage = Box::<TestPool<N, R>>::new_uninit();
