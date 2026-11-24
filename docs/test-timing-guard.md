@@ -65,7 +65,7 @@ failure or describe its entries as reviewed exceptions.
 
 ## Reviewed composition checkpoint
 
-The reviewed source composition classifies all 441 detected sites with exact
+The reviewed source composition classifies all 440 detected sites with exact
 context identities: controlled clocks, causal events, fixed inputs, fixture hang
 guards, measurements, and identified production scopes. Superseded dispositions
 were removed; the original 766-entry migration inventory remains unchanged.
