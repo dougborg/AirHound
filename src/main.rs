@@ -508,7 +508,7 @@ async fn main(spawner: embassy_executor::Spawner) {
             // The library's legacy scan enables controller duplicate filtering.
             // Keep reporting repeated advertisements for fresh RSSI/time evidence
             // across recordings without restarting the autonomous radio session.
-            let _session = match airhound::ble_scan_control::start_continuous_scan(
+            let session = match airhound::ble_scan_control::start_continuous_scan(
                 scanner.scan(&config).await,
                 |command| stack.command(command),
             )
@@ -528,11 +528,9 @@ async fn main(spawner: embassy_executor::Spawner) {
             log::info!("WiFi sniffer initialized in promiscuous mode");
             log::info!("BLE scan started (active, continuous, duplicate filtering disabled)");
             log::info!("Radio capture ready: ms={}", Instant::now().as_millis());
-            // Session stays alive as long as _session exists.
-            // Reports flow through ScanEventHandler on the runner.
-            loop {
-                Timer::after(Duration::from_secs(60)).await;
-            }
+            // Reports flow through ScanEventHandler on the runner. Retain the
+            // RAII session until cancellation without an otherwise idle timer.
+            airhound::ble_scan_control::retain_scan_session(session).await;
         },
         // ── GATT server: advertise, connect, notify ─────────────────────
         async {

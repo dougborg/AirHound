@@ -34,6 +34,17 @@ where
     Ok(session)
 }
 
+/// Keep a started scan session alive without scheduling periodic wakeups.
+///
+/// The future owns the session before its first poll and throughout the pending
+/// await. Cancelling/dropping it runs the session's normal RAII teardown exactly
+/// once. The explicit use after the await keeps ownership across suspension;
+/// no timer, allocation, or separate task is needed.
+pub async fn retain_scan_session<S>(session: S) {
+    core::future::pending::<()>().await;
+    drop(session);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +63,42 @@ mod tests {
         fn drop(&mut self) {
             self.0.set(self.0.get() + 1);
         }
+    }
+
+    #[test]
+    fn retained_session_never_schedules_a_wakeup_and_drops_on_cancellation() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        struct Wakes(AtomicUsize);
+        impl std::task::Wake for Wakes {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let drops = Rc::new(Cell::new(0));
+        let wakes = Arc::new(Wakes(AtomicUsize::new(0)));
+        let waker = Waker::from(wakes.clone());
+        {
+            let operation = retain_scan_session(Session(drops.clone()));
+            let mut operation = pin!(operation);
+            let mut cx = Context::from_waker(&waker);
+            assert!(operation.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(drops.get(), 0, "pending scan must retain its session");
+            assert_eq!(wakes.0.load(Ordering::Relaxed), 0);
+        }
+        assert_eq!(drops.get(), 1, "cancellation must release the session once");
+        assert_eq!(wakes.0.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn unpolled_retained_session_is_also_owned_and_released() {
+        let drops = Rc::new(Cell::new(0));
+        let operation = retain_scan_session(Session(drops.clone()));
+        assert_eq!(drops.get(), 0);
+        drop(operation);
+        assert_eq!(drops.get(), 1);
     }
 
     #[test]
