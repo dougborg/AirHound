@@ -59,7 +59,16 @@ pub(crate) async fn scan(
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
 ) -> io::Result<()> {
-    scan_inner(endpoint, decoder, None, tx, control).await
+    scan_inner(
+        endpoint,
+        decoder,
+        None,
+        tx,
+        control,
+        #[cfg(test)]
+        None,
+    )
+    .await
 }
 
 pub(crate) async fn scan_adb(
@@ -68,7 +77,16 @@ pub(crate) async fn scan_adb(
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
 ) -> io::Result<()> {
-    scan_inner(String::new(), decoder, Some(adb), tx, control).await
+    scan_inner(
+        String::new(),
+        decoder,
+        Some(adb),
+        tx,
+        control,
+        #[cfg(test)]
+        None,
+    )
+    .await
 }
 
 async fn scan_inner(
@@ -77,6 +95,7 @@ async fn scan_inner(
     adb: Option<airhound_hostd::session::RayhunterAdb>,
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
+    #[cfg(test)] ingress_witness: Option<mpsc::Sender<u64>>,
 ) -> io::Result<()> {
     let hash = decoder_hash(&decoder).await?;
     let adb_hash = match &adb {
@@ -225,6 +244,14 @@ async fn scan_inner(
                     valid = true;
                     control.set_health(Scanner::Cellular, Phase::Running, "rayhunter_subscription");
                 }
+                // Per-invocation test witness: the snapshot is complete, but
+                // this record has not entered the bounded output queue yet.
+                #[cfg(test)]
+                if let (Some(witness), Some(tick)) =
+                    (&ingress_witness, record["event"]["tick"].as_u64())
+                {
+                    let _ = witness.try_send(tick);
+                }
                 let event = ScanEvent::Cellular { record, generation };
                 // Bounded backpressure propagates to the raw server, whose sequence gaps
                 // are explicit. Never silently drop raw chunks in the host adapter.
@@ -292,6 +319,9 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
+            Self::with_interval(0.02)
+        }
+        fn with_interval(seconds: f64) -> Self {
             let root = std::env::temp_dir().join(format!(
                 "airhound-cellular-fixture-{}-{}-{}",
                 std::process::id(),
@@ -310,8 +340,8 @@ tick=0
 while True:
  print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid(),'tick':tick}),flush=True)
  tick+=1
- time.sleep(.02)
-"#).unwrap();
+ time.sleep(INTERVAL)
+"#.replace("INTERVAL", &seconds.to_string())).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
             Self { root, script }
         }
@@ -352,7 +382,9 @@ while True:
         use crate::gpsd::tests::{feed, ready, tpv};
         use std::sync::{Arc, Mutex};
         for initially_available in [false, true] {
-            let f = Fixture::new();
+            // Slower than the old 120 ms sleep: the witness must synchronize
+            // real ingress, rather than rely on helper scheduling speed.
+            let f = Fixture::with_interval(0.2);
             let gps = ready();
             if initially_available {
                 feed(&gps, tpv(chrono::Utc::now()));
@@ -360,16 +392,25 @@ while True:
             let control = ScanControl::new(true);
             control.set_location_source(gps.clone());
             let (tx, mut rx) = mpsc::channel(1);
-            let task = tokio::spawn(scan(
+            let (witness_tx, mut witness_rx) = mpsc::channel(8);
+            let task = tokio::spawn(scan_inner(
                 "ws://127.0.0.1:9/raw-diag".into(),
                 f.script.clone(),
+                None,
                 tx,
                 control.clone(),
+                Some(witness_tx),
             ));
             let (child, _) = pid(&mut rx).await;
-            // One event occupies the channel; the following event has already
-            // reached host ingress and waits for that single slot to be freed.
-            tokio::time::sleep(Duration::from_millis(120)).await;
+            // pid() consumed tick 0. Tick 1 fills the only queue slot;
+            // witnessing tick 2 proves its location snapshot predates the
+            // GPS change, regardless of helper or coverage scheduling delays.
+            timeout(Duration::from_secs(4), async {
+                while witness_rx.recv().await.unwrap() != 2 {}
+            })
+            .await
+            .unwrap();
+            assert_eq!(rx.len(), 1, "tick 2 must face a full output queue");
             let changed_at = chrono::Utc::now();
             let mut later = tpv(changed_at);
             later["lat"] = 11.0.into();
