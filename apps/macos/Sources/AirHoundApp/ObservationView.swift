@@ -78,7 +78,10 @@ struct MainView: View {
           } else if observations.isEmpty && model.session.savedPages != nil {
             ContentUnavailableView(
               "No observations on this page", systemImage: "list.bullet",
-              description: Text("This page may contain status records. Continue with Next page."))
+              description: Text(
+                model.session.savedPages?.hasMore == true
+                  ? "This page may contain status records. Continue with Next page."
+                  : "This page contains no observations."))
           } else if observations.isEmpty {
             ContentUnavailableView(
               "Open a recording", systemImage: "doc.text",
