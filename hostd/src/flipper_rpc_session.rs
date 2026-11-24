@@ -1588,7 +1588,7 @@ mod tests {
     }
     #[test]
     fn real_unix_stream_bytes_complete_without_clock_progress() {
-        let (mut io, other) = UnixStream::pair().unwrap();
+        let (io, other) = UnixStream::pair().unwrap();
         // Only a broken-fixture guard. Protocol correctness uses the frozen
         // injected clock and completed peer I/O, never this wall-clock limit.
         io.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
@@ -1599,7 +1599,11 @@ mod tests {
         other
             .set_write_timeout(Some(Duration::from_secs(30)))
             .unwrap();
-        let peer = peer(other, Fault::None);
+        let peer = test_transport::SocketPeer {
+            abort: io.try_clone().unwrap(),
+            thread: Some(peer(test_transport::GuardedIo(other), Fault::None)),
+        };
+        let mut io = test_transport::GuardedIo(io);
         let clock = test_transport::ManualClock::new();
         let start = clock.now();
         let stop = std::cell::Cell::new(false);
@@ -1678,5 +1682,66 @@ mod tests {
                 "one read just before deadline, none at deadline"
             );
         }
+    }
+    #[test]
+    fn real_socket_guard_expiry_is_terminal_with_frozen_correctness_time() {
+        struct Expired;
+        impl Read for Expired {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::TimedOut.into())
+            }
+        }
+        impl Write for Expired {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let clock = test_transport::ManualClock::new();
+        let start = clock.now();
+        let mut io = test_transport::GuardedIo(Expired);
+        assert_eq!(
+            read_until(&mut io, &clock, b"prompt", 128, start + ACK_TIMEOUT)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+        assert_eq!(
+            write_bounded(&mut io, &clock, b"command", start + ACK_TIMEOUT)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Other
+        );
+        assert_eq!(clock.now(), start);
+    }
+
+    #[test]
+    fn real_socket_peer_is_joined_after_assertion_unwind() {
+        let (io, mut other) = UnixStream::pair().unwrap();
+        let (entered, ready) = std::sync::mpsc::sync_channel(1);
+        let (finished, done) = std::sync::mpsc::sync_channel(1);
+        let thread = std::thread::spawn(move || {
+            entered.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(other.read(&mut byte).unwrap(), 0);
+            finished.send(()).unwrap();
+        });
+        ready
+            .recv_timeout(Duration::from_secs(30))
+            .expect("peer startup hang guard");
+        let owned = test_transport::SocketPeer {
+            abort: io.try_clone().unwrap(),
+            thread: Some(thread),
+        };
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _owned = owned;
+            panic!("injected fixture assertion");
+        }));
+        assert!(caught.is_err());
+        // Drop completed join, so this is one immediate completion assertion.
+        done.try_recv()
+            .expect("peer must be reaped before unwind completes");
     }
 }
