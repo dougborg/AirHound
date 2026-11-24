@@ -345,6 +345,8 @@ where
     )?;
     let location_task = gps.map(|options| {
         let source = gpsd::Source::new(options.device.clone());
+        #[cfg(test)]
+        let source = control.fixture_location_source().unwrap_or(source);
         control.set_location_source(source.clone());
         tokio::spawn(gpsd::run(options, source, control.subscribe()))
     });

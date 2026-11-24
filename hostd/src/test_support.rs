@@ -53,14 +53,25 @@ impl TimerWitness {
         future: F,
         fired: impl Fn(&F::Output) -> bool,
     ) -> F::Output {
-        tokio::pin!(future);
         let mut registered = false;
+        self.observe_persistent(deadline, future, &mut registered, fired)
+            .await
+    }
+    /// Preserve registration across select cancellation of the same deadline.
+    pub async fn observe_persistent<F: Future>(
+        self,
+        deadline: Instant,
+        future: F,
+        registered: &mut bool,
+        fired: impl Fn(&F::Output) -> bool,
+    ) -> F::Output {
+        tokio::pin!(future);
         std::future::poll_fn(|cx| {
             let result = future.as_mut().poll(cx);
             match &result {
                 Poll::Pending => {
-                    if !registered {
-                        registered = true;
+                    if !*registered {
+                        *registered = true;
                         let _ = self
                             .events
                             .send(TimerEvent::Registered(deadline, cx.waker().clone()));
@@ -68,6 +79,7 @@ impl TimerWitness {
                     let _ = self.events.send(TimerEvent::Pending(Instant::now()));
                 }
                 Poll::Ready(value) if fired(value) => {
+                    *registered = false;
                     let _ = self.events.send(TimerEvent::Fired);
                 }
                 _ => {}

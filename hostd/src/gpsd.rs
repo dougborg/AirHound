@@ -417,6 +417,9 @@ pub(crate) mod tests {
         );
         source
     }
+    pub(crate) fn observe(source: &Source, updates: Arc<tokio::sync::Notify>) {
+        source.0.lock().unwrap().updates = Some(updates);
+    }
     pub(crate) fn set_clock(source: &Source, wall: DateTime<Utc>, monotonic: Instant) {
         source.0.lock().unwrap().clock = Some((wall, monotonic));
     }
