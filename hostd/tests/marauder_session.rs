@@ -83,23 +83,10 @@ mod replay {
             .await
             .unwrap();
         let run = started["run_id"].as_str().unwrap().to_owned();
-        let wal = PathBuf::from(format!("{}-wal", database.display()));
-        let mut completed = crate::support::FileEvents::new(&[&database, &wal]).unwrap();
-        completed
-            .until(|| {
-                assert!(
-                    service.child.child.try_wait()?.is_none(),
-                    "service exited during replay"
-                );
-                let reader = airhound_hostd::storage::Reader::open(&database)?;
-                let terminal = reader
-                    .runs(100)?
-                    .into_iter()
-                    .find(|row| row.id == run)
-                    .is_some_and(|row| row.state == "finished");
-                Ok(terminal.then_some(()))
-            })
-            .unwrap();
+        // WAL writes can precede the transaction's visible commit. Await the
+        // exact run's post-commit witness, including if it arrived before Start
+        // returned, then independently verify durable history through the API.
+        service.child.wait_for_terminal_commit(&run).unwrap();
         drop(client);
         // A fresh authenticated client sees the completed durable recording.
         let mut client = Client::connect(&socket, Duration::from_secs(3))
