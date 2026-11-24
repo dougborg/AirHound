@@ -127,104 +127,52 @@ fn acquire_in(directory: &Path, identity: &str, uid: u32) -> io::Result<Lease> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        io::{Read, Write},
-        process::{Child, ChildStdout, Command, ExitStatus, Stdio},
-        time::{Duration, Instant},
+    use crate::owned_child::OwnedChild;
+    use std::process::Stdio;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+        process::{ChildStdout, Command},
     };
-    struct OwnedChild(Child);
-    impl OwnedChild {
-        fn wait_bounded(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
-            let deadline = Instant::now() + timeout;
-            loop {
-                if let Some(status) = self.0.try_wait()? {
-                    return Ok(status);
-                }
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "test helper did not exit",
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-        fn terminate_and_reap(&mut self) -> io::Result<()> {
-            if self.0.try_wait()?.is_none() {
-                self.0.kill()?;
-            }
-            // Only wait after exit was observed or SIGKILL was issued.
-            self.0.wait()?;
-            Ok(())
-        }
-    }
-    impl Drop for OwnedChild {
-        fn drop(&mut self) {
-            let _ = self.terminate_and_reap();
-        }
-    }
-    fn read_line_bounded(output: &mut ChildStdout, timeout: Duration) -> io::Result<String> {
-        let fd = output.as_raw_fd();
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let deadline = Instant::now() + timeout;
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    async fn read_line(output: &mut BufReader<ChildStdout>) -> io::Result<String> {
         let mut line = Vec::new();
-        loop {
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "test helper response timed out",
-                ));
-            }
-            let mut byte = [0];
-            match output.read(&mut byte) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "test helper closed stdout",
-                    ))
-                }
-                Ok(_) => {
-                    line.push(byte[0]);
-                    if byte[0] == b'\n' {
-                        return String::from_utf8(line)
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
-                    }
-                    if line.len() > 4096 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "test helper line exceeds limit",
-                        ));
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => (),
-                Err(e) => return Err(e),
-            }
+        output.take(4097).read_until(b'\n', &mut line).await?;
+        if line.len() > 4096 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "test helper line exceeds limit",
+            ));
         }
+        if line.last() != Some(&b'\n') {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "test helper closed stdout",
+            ));
+        }
+        String::from_utf8(line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-    #[test]
-    fn unresponsive_test_child_times_out_and_is_reaped() {
-        let mut child = OwnedChild(
-            Command::new("python3")
-                .args(["-c", "import time;time.sleep(30)"])
+    #[tokio::test]
+    async fn idle_test_child_is_cancelled_and_reaped_on_request() {
+        crate::test_support::manual_time(async {
+            let process = Command::new("python3")
+                .args([
+                    "-c",
+                    "import signal;print('ready',flush=True);signal.pause()",
+                ])
                 .stdout(Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
-                .unwrap(),
-        );
-        let mut output = child.0.stdout.take().unwrap();
-        assert_eq!(
-            read_line_bounded(&mut output, Duration::from_millis(50))
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::TimedOut
-        );
-        child.terminate_and_reap().unwrap();
-        assert!(child.0.try_wait().unwrap().is_some());
+                .unwrap();
+            let pid = process.id().unwrap();
+            let mut child = OwnedChild::new(process, None).unwrap();
+            let mut output = BufReader::new(child.stdout.take().unwrap());
+            assert_eq!(read_line(&mut output).await.unwrap(), "ready\n");
+            assert!(!child.finish().await.unwrap().success());
+            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        })
+        .await;
     }
     #[test]
     fn alias_keys_match_python_contract() {
@@ -243,10 +191,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "airhound-lease-fixture-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let uid = unsafe { libc::geteuid() };
         fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
@@ -275,10 +220,11 @@ mod tests {
         assert!(acquire(&path).is_err());
         fs::remove_dir_all(root).unwrap();
     }
-    #[test]
-    fn python_and_rust_owners_exclude_each_other_before_uart_access() {
+    #[tokio::test]
+    async fn python_and_rust_owners_exclude_each_other_before_uart_access() {
+        crate::test_support::manual_time(async {
         let script = r#"
-import importlib.util,os,pty,select,sys
+import importlib.util,os,pty,sys
 s=importlib.util.spec_from_file_location('helper',sys.argv[1]);h=importlib.util.module_from_spec(s);s.loader.exec_module(h)
 m,slave=pty.openpty();port=os.ttyname(slave)
 if sys.argv[2]=='python_first':
@@ -292,45 +238,46 @@ else:
    fd=os.open(port,os.O_RDWR|os.O_NOCTTY);os.write(fd,b'BAD');os.close(fd)
   print('incorrectly_acquired',flush=True)
  except RuntimeError:
-  print('denied_without_bytes' if not select.select([m],[],[],.1)[0] else 'uart_bytes',flush=True)
+  os.set_blocking(m,False)
+  try:os.read(m,1);result='uart_bytes'
+  except BlockingIOError:result='denied_without_bytes'
+  print(result,flush=True)
  sys.stdin.readline()
 os.close(m);os.close(slave)
 "#;
         for mode in ["python_first", "rust_first"] {
             let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/sniffle-source.py");
-            let mut child = OwnedChild(
-                Command::new("python3")
+            let mut process = Command::new("python3")
                     .args(["-B", "-c", script])
                     .arg(helper)
                     .arg(mode)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::inherit())
+                    .kill_on_drop(true)
                     .spawn()
-                    .unwrap(),
-            );
-            let mut input = child.0.stdin.take().unwrap();
-            let mut output = child.0.stdout.take().unwrap();
-            let line = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
+                    .unwrap();
+            let mut input = process.stdin.take().unwrap();
+            let mut child = OwnedChild::new(process, None).unwrap();
+            let mut output = BufReader::new(child.stdout.take().unwrap());
+            let line = read_line(&mut output).await.unwrap();
             let port = line.trim();
             if mode == "python_first" {
                 assert_eq!(acquire(port).unwrap_err().kind(), io::ErrorKind::WouldBlock);
-                writeln!(input, "release").unwrap();
-                let released = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
+                input.write_all(b"release\n").await.unwrap();
+                let released = read_line(&mut output).await.unwrap();
                 assert_eq!(released.trim(), "released");
                 let _lease = acquire(port).unwrap();
-                writeln!(input, "finish").unwrap();
+                input.write_all(b"finish\n").await.unwrap();
             } else {
                 let _lease = acquire(port).unwrap();
-                writeln!(input, "attempt").unwrap();
-                let response = read_line_bounded(&mut output, Duration::from_secs(5)).unwrap();
+                input.write_all(b"attempt\n").await.unwrap();
+                let response = read_line(&mut output).await.unwrap();
                 assert_eq!(response.trim(), "denied_without_bytes");
-                writeln!(input, "finish").unwrap();
+                input.write_all(b"finish\n").await.unwrap();
             }
-            assert!(child
-                .wait_bounded(Duration::from_secs(5))
-                .unwrap()
-                .success());
+            assert!(child.wait().await.unwrap().success());
         }
+        }).await;
     }
 }
