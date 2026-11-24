@@ -20,8 +20,12 @@ it. First saved-view visual proof and full-rig controls remain separate gaps.
 The staged `8ba1e90` live-selection improvement is not installed or accepted in the
 actual window; unsuccessful window-acquisition preparation did not alter the app.
 
-The M5 now runs `3597e59` / `0.2.0`; its ten-minute observer is in progress,
-with no acceptance pass yet. The prior `5c3d9eb` first ten-minute observer had both media,
+The M5 now runs `3597e59` / `0.2.0`. Its ten-minute observer retained both media,
+full periodic health and zero sampled scan/output/timeouts, but the original
+strict verdict remains failed for the historical poll-gap target and new memory
+minima. A separate engineering review supports bounded follow-up testing because
+current service budgets and recurrent memory recovery held; no heap reserve,
+leak-free operation or endurance guarantee follows. The prior `5c3d9eb` first ten-minute observer had both media,
 complete periodic health and zero sampled loss/timeouts, but failed the sampled
 memory-recovery criterion. A separate no-reset continuation recovered repeatedly
 to the later memory plateau, yet retained 16 scan drops and a 23,006µs writer poll gap;
