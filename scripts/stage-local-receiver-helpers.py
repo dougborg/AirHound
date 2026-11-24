@@ -47,25 +47,32 @@ def tree(source, target):
 
 
 def helper_capabilities(python, helper):
-    """Explicit setup inspection, bounded independently of untrusted output."""
+    """Inspect within an exclusive query deadline; cleanup has its own bound."""
     process = subprocess.Popen([str(python), '-I', '-B', str(helper), '--capabilities'],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     output = bytearray()
     deadline = time.monotonic() + 3
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise ValueError('helper capability query timed out')
+        return budget
+
     try:
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if not select.select([process.stdout], [], [], remaining())[0]:
                 raise ValueError('helper capability query timed out')
-            if not select.select([process.stdout], [], [], remaining)[0]:
-                raise ValueError('helper capability query timed out')
+            remaining()  # Readiness delivered at/after the deadline is too late.
             chunk = os.read(process.stdout.fileno(), 4097 - len(output))
             if not chunk:
                 break
             output.extend(chunk)
             if len(output) > 4096:
                 raise ValueError('helper capability report exceeds limit')
-        if process.wait(timeout=max(.01, deadline-time.monotonic())) != 0:
+        exit_code = process.wait(timeout=remaining())
+        remaining()  # EOF/exit must not renew the query allowance.
+        if exit_code != 0:
             raise ValueError('helper capability query failed')
         report = json.loads(output)
         required = {'borrowed_serial_lease_v1', 'structured_errors_v1'}
@@ -76,6 +83,7 @@ def helper_capabilities(python, helper):
                        or any(not (c.isalnum() or c in '_-') for c in v) for v in capabilities)
                 or not required.issubset(capabilities)):
             raise ValueError('helper lacks supervised recovery capabilities')
+        remaining()  # Parsing/validation cannot turn a late result into success.
         return capabilities
     finally:
         if process.poll() is None:
