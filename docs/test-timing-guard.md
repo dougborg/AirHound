@@ -74,10 +74,12 @@ Disappearing fingerprints do not establish correctness by themselves.
 This policy depends on the source migrations in #332, #338 and #340, the firmware
 idle-wait change in #341, and the guard in #339. It must travel with those source
 changes, not be applied as exceptions to their older implementations. Real-service
-integration tests retain qualified startup/protocol budgets. Operational polling,
-the receiver-helper late-EOF deadline boundary, and the Sniffle startup settle
-remain production followups; their classification does not establish that these
-delays are optimal or required.
+integration tests retain qualified startup/protocol budgets. Operational polling
+and the Sniffle startup settle remain production followups;
+their classification does not establish that these delays are optimal or required.
+The receiver-helper capability query now enforces its exclusive deadline through
+EOF, child exit and decoded-result acceptance; its separate bounded cleanup is
+retained.
 
 The adversarial suite exercises aliases, external modules and both path-attribute
 orders, embedded scripts, clock variants, context changes, malformed policy,
