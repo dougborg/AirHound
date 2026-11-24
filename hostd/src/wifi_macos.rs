@@ -795,7 +795,7 @@ mod tests {
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             control.store(false, Ordering::Relaxed);
             pending_once(task.as_mut()).await;
-            first_result.send(Ok(Ok(vec![network()]))).unwrap();
+            assert!(first_result.send(Ok(Ok(vec![network()]))).is_ok());
             pending_once(task.as_mut()).await;
             assert!(matches!(
                 rx.try_recv(),
@@ -805,7 +805,7 @@ mod tests {
             control.store(true, Ordering::Relaxed);
             pending_once(task.as_mut()).await;
             assert_eq!(calls.load(Ordering::Relaxed), 2);
-            second_result.send(Ok(Ok(vec![network()]))).unwrap();
+            assert!(second_result.send(Ok(Ok(vec![network()]))).is_ok());
             pending_once(task.as_mut()).await;
             assert!(matches!(
                 rx.recv().await,
