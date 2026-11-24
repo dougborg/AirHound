@@ -1,4 +1,4 @@
-//! WiFi scanner for macOS using `wifi_scan` crate (CoreWLAN wrapper).
+//! CoreWLAN scan snapshots with bounded, explicitly attributed native metadata.
 
 use std::time::Duration;
 
@@ -8,7 +8,240 @@ use crate::health::{Phase, Scanner};
 use crate::ScanEvent;
 use airhound::comm;
 use airhound::scanner::{FrameType, WiFiEvent};
+use airhound_hostd::wifi_metadata::{BoundedBytes, Metadata, MAX_IE_BYTES, MAX_SSID_BYTES};
+use objc2_core_wlan::{
+    CWChannelBand, CWChannelWidth, CWNetwork, CWPHYMode, CWSecurity, CWWiFiClient,
+};
 use wifi_scan::WifiSecurity;
+
+/// Owned host-only snapshot; no Objective-C objects cross the worker boundary.
+#[derive(Default)]
+struct Network {
+    mac: String,
+    ssid: String,
+    channel: u32,
+    signal_level: i32,
+    security: Vec<WifiSecurity>,
+    frequency_mhz: Option<u16>,
+    legacy_ies: heapless::Vec<u8, 64>,
+    metadata: Metadata,
+}
+
+/// Preserve only complete elements for the legacy small ODID parser. Full bounded
+/// bytes and truncation evidence are independently retained in the host metadata.
+fn legacy_ies(bytes: &[u8]) -> heapless::Vec<u8, 64> {
+    let mut out = heapless::Vec::new();
+    let mut offset = 0;
+    while bytes.len().saturating_sub(offset) >= 2 {
+        let end = offset + 2 + usize::from(bytes[offset + 1]);
+        if end > bytes.len() || end > out.capacity() {
+            break;
+        }
+        let _ = out.extend_from_slice(&bytes[offset..end]);
+        offset = end;
+    }
+    out
+}
+
+/// Channel-raster conversion requires an explicit API-reported band. This is
+/// an operating-channel frequency, not per-frame radiotap receive metadata.
+fn frequency(band: CWChannelBand, channel: u32) -> Option<u16> {
+    let mhz = match (band, channel) {
+        (CWChannelBand::Band2GHz, 1..=13) => 2407 + 5 * channel,
+        (CWChannelBand::Band2GHz, 14) => 2484,
+        (CWChannelBand::Band5GHz, 182..=196) => 4000 + 5 * channel,
+        (CWChannelBand::Band5GHz, 1..=179) => 5000 + 5 * channel,
+        (CWChannelBand::Band6GHz, 2) => 5935,
+        (CWChannelBand::Band6GHz, 1..=233) => 5950 + 5 * channel,
+        _ => return None,
+    };
+    u16::try_from(mhz).ok()
+}
+
+fn native_scan() -> Result<Vec<Network>, wifi_scan::Error> {
+    // CoreWLAN uses autoreleased Foundation collections. Retain all framework
+    // objects in this dedicated synchronous worker and copy bounded data out.
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let client = CWWiFiClient::sharedWiFiClient();
+        let interface = client
+            .interface()
+            .ok_or_else(|| wifi_scan::Error::ScanFailed("No WiFi interface found".into()))?;
+        let networks = interface
+            .scanForNetworksWithName_error(None)
+            .map_err(|_| wifi_scan::Error::ScanFailed("CoreWLAN scan failed".into()))?;
+        Ok(networks.allObjects().iter().map(|n| snapshot(&n)).collect())
+    })
+}
+
+/// All accessors are documented public CoreWLAN snapshot properties; no private
+/// selectors, monitor mode, association changes, or permission bypasses.
+unsafe fn snapshot(network: &CWNetwork) -> Network {
+    let mut result = Network {
+        mac: network.bssid().map(|v| v.to_string()).unwrap_or_default(),
+        ssid: network.ssid().map(|v| v.to_string()).unwrap_or_default(),
+        signal_level: network
+            .rssiValue()
+            .clamp(i32::MIN as isize, i32::MAX as isize) as i32,
+        metadata: Metadata {
+            source: "corewlan_scan_snapshot",
+            noise_dbm: i16::try_from(network.noiseMeasurement()).ok(),
+            beacon_interval_ms: u32::try_from(network.beaconInterval()).ok(),
+            country_code: network.countryCode().map(|v| v.to_string()),
+            ibss: Some(network.ibss()),
+            ..Metadata::default()
+        },
+        ..Network::default()
+    };
+    if let Some(channel) = network.wlanChannel() {
+        let band = channel.channelBand();
+        result.channel = u32::try_from(channel.channelNumber()).unwrap_or(0);
+        result.frequency_mhz = frequency(band, result.channel);
+        result.metadata.band = match band {
+            CWChannelBand::Band2GHz => Some("2.4GHz"),
+            CWChannelBand::Band5GHz => Some("5GHz"),
+            CWChannelBand::Band6GHz => Some("6GHz"),
+            _ => None,
+        };
+        result.metadata.frequency_provenance = result
+            .frequency_mhz
+            .map(|_| "derived_from_corewlan_band_channel");
+        result.metadata.channel_width_mhz = match channel.channelWidth() {
+            CWChannelWidth::Width20MHz => Some(20),
+            CWChannelWidth::Width40MHz => Some(40),
+            CWChannelWidth::Width80MHz => Some(80),
+            CWChannelWidth::Width160MHz => Some(160),
+            _ => None,
+        };
+    }
+    // NSData is held alive, never mutated here, and copied before leaving this
+    // worker. Bound retained bytes before allocation, not after a full to_vec.
+    if let Some(data) = network.ssidData() {
+        result.metadata.ssid_bytes =
+            Some(BoundedBytes::new(data.as_bytes_unchecked(), MAX_SSID_BYTES));
+    }
+    if let Some(data) = network.informationElementData() {
+        let bytes = data.as_bytes_unchecked();
+        result.legacy_ies = legacy_ies(bytes);
+        result.metadata.information_elements = Some(BoundedBytes::new(bytes, MAX_IE_BYTES));
+    }
+    for (mode, name) in [
+        (CWPHYMode::Mode11a, "802.11a"),
+        (CWPHYMode::Mode11b, "802.11b"),
+        (CWPHYMode::Mode11g, "802.11g"),
+        (CWPHYMode::Mode11n, "802.11n"),
+        (CWPHYMode::Mode11ac, "802.11ac"),
+        (CWPHYMode::Mode11ax, "802.11ax"),
+    ] {
+        if network.supportsPHYMode(mode) {
+            result.metadata.advertised_phy_modes.push(name);
+        }
+    }
+    (result.security, result.metadata.security_modes) =
+        security_modes(|mode| network.supportsSecurity(mode));
+    result
+}
+
+/// Public API query list, separate from advertised RSN parsing. Generic group
+/// results stay unspecified rather than inventing an AKM/cipher or key length.
+fn security_modes(
+    mut supported: impl FnMut(CWSecurity) -> bool,
+) -> (Vec<WifiSecurity>, Vec<&'static str>) {
+    let mut security = Vec::new();
+    let mut names = Vec::new();
+    for (mode, legacy, name) in [
+        (CWSecurity::None, WifiSecurity::Open, "open"),
+        (CWSecurity::WEP, WifiSecurity::Wep, "wep"),
+        (CWSecurity::DynamicWEP, WifiSecurity::Wep, "dynamic_wep"),
+        (
+            CWSecurity::WPAPersonal,
+            WifiSecurity::WpaPersonalPsk,
+            "wpa_personal",
+        ),
+        (
+            CWSecurity::WPA2Personal,
+            WifiSecurity::Wpa2PersonalPsk,
+            "wpa2_personal",
+        ),
+        (
+            CWSecurity::WPA3Personal,
+            WifiSecurity::Wpa3PersonalSae,
+            "wpa3_personal",
+        ),
+        (
+            CWSecurity::WPAEnterprise,
+            WifiSecurity::WpaEnterpriseEap,
+            "wpa_enterprise",
+        ),
+        (
+            CWSecurity::WPA2Enterprise,
+            WifiSecurity::Wpa2EnterpriseEap,
+            "wpa2_enterprise",
+        ),
+        (
+            CWSecurity::WPA3Enterprise,
+            WifiSecurity::Wpa3EnterpriseEap,
+            "wpa3_enterprise",
+        ),
+    ] {
+        if supported(mode) {
+            if !security.contains(&legacy) {
+                security.push(legacy);
+            }
+            names.push(name);
+        }
+    }
+    // Mixed-mode queries may be true independently of the individual queries.
+    for (mode, name, modes) in [
+        (
+            CWSecurity::WPAPersonalMixed,
+            "wpa_wpa2_personal",
+            vec![WifiSecurity::WpaPersonalPsk, WifiSecurity::Wpa2PersonalPsk],
+        ),
+        (
+            CWSecurity::WPA3Transition,
+            "wpa2_wpa3_personal",
+            vec![WifiSecurity::Wpa2PersonalPsk, WifiSecurity::Wpa3PersonalSae],
+        ),
+        (
+            CWSecurity::WPAEnterpriseMixed,
+            "wpa_wpa2_enterprise",
+            vec![
+                WifiSecurity::WpaEnterpriseEap,
+                WifiSecurity::Wpa2EnterpriseEap,
+            ],
+        ),
+    ] {
+        if supported(mode) {
+            names.push(name);
+            for legacy in modes {
+                if !security.contains(&legacy) {
+                    security.push(legacy);
+                }
+            }
+        }
+    }
+    // These public CWSecurity cases are present in the locked objc2 binding.
+    // Apple headers do not declare a separate WPA3 Enterprise 192-bit case.
+    for (mode, name, legacy) in [
+        (CWSecurity::OWE, "owe", Some("OWE")),
+        (
+            CWSecurity::OWETransition,
+            "owe_transition",
+            Some("OWE-TRANSITION"),
+        ),
+        (CWSecurity::Personal, "personal_unspecified", None),
+        (CWSecurity::Enterprise, "enterprise_unspecified", None),
+        (CWSecurity::Unknown, "unknown", None),
+    ] {
+        if supported(mode) {
+            names.push(name);
+            if let Some(tag) = legacy {
+                security.push(WifiSecurity::Other(tag.into()));
+            }
+        }
+    }
+    (security, names)
+}
 
 /// Polling interval between WiFi scans.
 /// CoreWLAN controls scan duration and may return cached snapshots.
@@ -21,7 +254,7 @@ pub async fn scan_loop(
     tx: mpsc::Sender<ScanEvent>,
     control: crate::control::ScanControl,
 ) -> Result<(), ScanError> {
-    scan_loop_with(tx, control, || blocking_scan(wifi_scan::scan)).await
+    scan_loop_with(tx, control, || blocking_scan(native_scan)).await
 }
 
 async fn blocking_scan<T: Send + 'static>(
@@ -48,9 +281,7 @@ async fn scan_loop_with<F, Fut>(
 ) -> Result<(), ScanError>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<
-        Output = Result<Result<Vec<wifi_scan::Wifi>, wifi_scan::Error>, ScanError>,
-    >,
+    Fut: std::future::Future<Output = Result<Result<Vec<Network>, wifi_scan::Error>, ScanError>>,
 {
     let mut warned = false;
     let mut state = control.subscribe();
@@ -125,7 +356,14 @@ where
                     }
                     if let Some(event) = convert_network(wifi) {
                         count += 1;
-                        if tx.send(ScanEvent::WiFi(event)).await.is_err() {
+                        if tx
+                            .send(ScanEvent::WiFiDetailed {
+                                event,
+                                metadata: Box::new(wifi.metadata.clone()),
+                            })
+                            .await
+                            .is_err()
+                        {
                             log::debug!("WiFi scan channel closed, stopping");
                             return Ok(());
                         }
@@ -147,8 +385,8 @@ where
     }
 }
 
-/// Convert a `wifi_scan::Wifi` into an AirHound `WiFiEvent`.
-fn convert_network(network: &wifi_scan::Wifi) -> Option<WiFiEvent> {
+/// Normalize a cached/aggregate CoreWLAN network; this is not a captured frame.
+fn convert_network(network: &Network) -> Option<WiFiEvent> {
     // Skip networks with empty/unparseable BSSID (Location Services not granted)
     let mac = comm::parse_mac_string(&network.mac)?;
 
@@ -165,8 +403,7 @@ fn convert_network(network: &wifi_scan::Wifi) -> Option<WiFiEvent> {
 
     let rssi = network.signal_level.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
 
-    // wifi_scan exposes no band/frequency. Its get_frequency() guesses from
-    // channel number, which is ambiguous for 6 GHz; preserve unknown instead.
+    // Band is supplied by CoreWLAN, never inferred from a bare channel.
     let channel = u8::try_from(network.channel).unwrap_or(0);
 
     let security = format_security(&network.security);
@@ -176,9 +413,9 @@ fn convert_network(network: &wifi_scan::Wifi) -> Option<WiFiEvent> {
         ssid,
         rssi,
         channel,
-        frequency_mhz: None,
-        frame_type: FrameType::Beacon, // CoreWLAN only returns beacon-equivalent data
-        raw_ies: heapless::Vec::new(),
+        frequency_mhz: network.frequency_mhz,
+        frame_type: FrameType::Beacon, // Legacy classification; metadata identifies snapshot evidence.
+        raw_ies: network.legacy_ies.clone(),
         security,
     })
 }
@@ -208,6 +445,8 @@ fn format_security(secs: &[WifiSecurity]) -> heapless::String<64> {
             WifiSecurity::Wpa3PersonalSaeFt => "[WPA3-SAE-FT]",
             WifiSecurity::WpaEnterpriseEap => "[WPA-EAP]",
             WifiSecurity::TunneledDirectLinkSetup => "[TDLS]",
+            WifiSecurity::Other(value) if value == "OWE" => "[OWE]",
+            WifiSecurity::Other(value) if value == "OWE-TRANSITION" => "[OWE-TRANSITION]",
             WifiSecurity::Unknown => continue,
             _ => continue,
         };
@@ -250,13 +489,20 @@ mod tests {
             .await
         );
     }
-    fn network() -> wifi_scan::Wifi {
-        wifi_scan::Wifi {
+    fn network() -> Network {
+        Network {
             mac: "12:34:56:78:9A:BC".into(),
             ssid: "Flock-test".into(),
             channel: 6,
             signal_level: -55,
             security: vec![WifiSecurity::Wpa2PersonalPsk],
+            metadata: Metadata {
+                source: "corewlan_scan_snapshot",
+                ssid_bytes: Some(BoundedBytes::new(b"Flock-test", MAX_SSID_BYTES)),
+                advertised_phy_modes: vec!["802.11ax"],
+                ..Metadata::default()
+            },
+            ..Network::default()
         }
     }
     #[test]
@@ -267,7 +513,7 @@ mod tests {
         assert_eq!(event.security.as_str(), "[WPA2-PSK]");
         assert_eq!((event.channel, event.rssi), (6, -55));
         assert_eq!(event.frequency_mhz, None);
-        assert!(convert_network(&wifi_scan::Wifi::default()).is_none());
+        assert!(convert_network(&Network::default()).is_none());
         let mut n = network();
         n.ssid = "é".repeat(20);
         n.signal_level = -300;
@@ -315,13 +561,91 @@ mod tests {
         );
         assert!(format_security(&vec![Wpa3EnterpriseSuiteBEap256; 100]).len() <= 64);
     }
+    #[test]
+    fn public_security_query_retains_owe_and_mixed_modes_without_guessing_ciphers() {
+        let mut queried = Vec::new();
+        let (legacy, names) = security_modes(|mode| {
+            queried.push(mode);
+            matches!(
+                mode,
+                CWSecurity::OWE
+                    | CWSecurity::OWETransition
+                    | CWSecurity::WPAEnterpriseMixed
+                    | CWSecurity::Enterprise
+            )
+        });
+        assert_eq!(queried.len(), 17);
+        assert!(names.contains(&"owe"));
+        assert!(names.contains(&"owe_transition"));
+        assert!(names.contains(&"enterprise_unspecified"));
+        assert_eq!(
+            format_security(&legacy).as_str(),
+            "[WPA-EAP][WPA2-EAP][OWE][OWE-TRANSITION]"
+        );
+        let (legacy, names) = security_modes(|_| false);
+        assert_eq!(format_security(&legacy).as_str(), "[?]");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn frequency_requires_reported_band_and_handles_overlapping_channels() {
+        for (band, channel, expected) in [
+            (CWChannelBand::Band2GHz, 1, Some(2412)),
+            (CWChannelBand::Band2GHz, 14, Some(2484)),
+            (CWChannelBand::Band5GHz, 36, Some(5180)),
+            (CWChannelBand::Band5GHz, 182, Some(4910)),
+            (CWChannelBand::Band6GHz, 1, Some(5955)),
+            (CWChannelBand::Band6GHz, 2, Some(5935)),
+            (CWChannelBand::Band6GHz, 233, Some(7115)),
+            (CWChannelBand::BandUnknown, 1, None),
+            (CWChannelBand(100), 1, None),
+            (CWChannelBand::Band2GHz, 36, None),
+            (CWChannelBand::Band5GHz, 180, None),
+            (CWChannelBand::Band6GHz, 234, None),
+            (CWChannelBand::Band6GHz, u32::MAX, None),
+        ] {
+            assert_eq!(frequency(band, channel), expected);
+            assert_eq!(frequency(band, 0), None);
+        }
+    }
+
+    #[test]
+    fn ie_and_binary_ssid_evidence_survive_legacy_capacity_and_text_limits() {
+        // An IE spanning the small firmware buffer must not become a fake partial
+        // element. The host copy independently retains it and explicit truncation.
+        let mut ies = vec![0, 3, b'a', b'b', b'c', 221, 80];
+        ies.extend([0xAA; 80]);
+        assert_eq!(legacy_ies(&ies).as_slice(), &[0, 3, b'a', b'b', b'c']);
+        let full = BoundedBytes::new(&ies, 4096);
+        assert_eq!(full.bytes, ies);
+        assert!(!full.truncated);
+        let excess = BoundedBytes::new(&vec![0xAB; 5000], 4096);
+        assert_eq!(
+            (excess.original_length, excess.bytes.len(), excess.truncated),
+            (5000, 4096, true)
+        );
+        let mut n = network();
+        n.ssid.clear();
+        n.metadata.ssid_bytes = Some(BoundedBytes::new(&[0xff, 0, 0x80], 32));
+        n.metadata.information_elements = Some(full);
+        n.legacy_ies = legacy_ies(&ies);
+        n.frequency_mhz = frequency(CWChannelBand::Band6GHz, 1);
+        let e = convert_network(&n).unwrap();
+        assert!(e.ssid.is_empty());
+        assert_eq!(n.metadata.ssid_bytes.unwrap().bytes, [0xff, 0, 0x80]);
+        assert_eq!(e.raw_ies.as_slice(), &[0, 3, b'a', b'b', b'c']);
+        assert_eq!(e.frequency_mhz, Some(5955));
+        assert!(legacy_ies(&[221, 7, 1]).is_empty());
+        assert!(legacy_ies(&[221]).is_empty());
+    }
+
     #[tokio::test]
     async fn scan_recovers_from_failure_skips_redacted_results_and_stops_on_close() {
         crate::test_support::manual_time(async {
             let (tx, mut rx) = mpsc::channel(1);
             let mut scans = std::collections::VecDeque::from([
                 Err(wifi_scan::Error::ScanFailed("temporary".into())),
-                Ok(vec![wifi_scan::Wifi::default()]),
+                Ok(vec![Network::default()]),
                 Ok(vec![network(), network()]),
             ]);
             let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -346,10 +670,14 @@ mod tests {
                 pending_once(task.as_mut()).await;
                 assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), expected);
             }
-            let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
+            let ScanEvent::WiFiDetailed { event, metadata } = rx.recv().await.unwrap() else {
                 panic!("expected WiFi");
             };
             assert_eq!(event.ssid.as_str(), "Flock-test");
+            assert_eq!(metadata.source, "corewlan_scan_snapshot");
+            assert_eq!(metadata.ssid_bytes.as_ref().unwrap().bytes, b"Flock-test");
+            assert_eq!(metadata.advertised_phy_modes, ["802.11ax"]);
+            assert!(metadata.projection()["receive_phy"].is_null());
             drop(rx);
             task.await.unwrap();
         })
@@ -479,7 +807,10 @@ mod tests {
             assert_eq!(calls.load(Ordering::Relaxed), 2);
             second_result.send(Ok(Ok(vec![network()]))).unwrap();
             pending_once(task.as_mut()).await;
-            assert!(matches!(rx.recv().await, Some(ScanEvent::WiFi(_))));
+            assert!(matches!(
+                rx.recv().await,
+                Some(ScanEvent::WiFiDetailed { .. })
+            ));
             control.shutdown();
             task.await.unwrap();
         })
