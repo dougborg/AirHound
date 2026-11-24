@@ -43,9 +43,12 @@ validated earlier. A separate 5.99-second private AirHound source lifecycle now
 passed Start/Pause/Resume/Finish with two raw frames, six partial LTE observations,
 an explicit pause gap and 19 durable/shared-client records. No complete identity
 was observed, GNSS was not configured, and capture clocks remain unvalidated.
-This does not establish installed-GUI or endurance acceptance. No contemporaneous
-GPS/validated UTC/upload eligibility follows
-from the retained cellular sample. Experimental work in
+A later 98.72-second managed-GNSS source check retained 423 LTE observations with
+fresh host-ingress receiver locations and 328 raw frames; all 948 records matched
+saved history. Its 216 complete-identity observations across 39 radio pairs are not
+tower counts. Pause/Resume/Finish and cleanup passed. This does not establish
+RF-time synchronization, transmitter location, upload eligibility, installed-GUI
+or endurance acceptance. The earlier offline sample remains separately unlocated. Experimental work in
 [#293](https://github.com/dougborg/AirHound/issues/293) is not a prerequisite for
 the supported rig. The historical ALFA failure below is not its latest overall status.
 
