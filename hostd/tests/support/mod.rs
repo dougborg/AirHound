@@ -420,6 +420,9 @@ impl ServiceChild {
                             "service fixture diagnostic bound exceeded",
                         ));
                     }
+                    if !line.ends_with(b"\n") {
+                        return Err(io::Error::other("unterminated service diagnostic line"));
+                    }
                     if !announced
                         && String::from_utf8_lossy(&line)
                             .trim_end()
