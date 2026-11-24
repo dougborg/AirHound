@@ -1,7 +1,7 @@
 //! Bounded child protocol. USB stays on the main thread; blocked pipe readers
 //! cannot prevent that thread from shutting down the receive gates.
 use anyhow::{ensure, Result};
-use mt7610u_lab::firmware::Firmware;
+use mt7610u_lab::{firmware::Firmware, timing::Clock};
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 mod hardware;
@@ -25,6 +25,9 @@ const RECOVERY_BUDGET: Duration = Duration::from_secs(60);
 const MAX_RECOVERY_ATTEMPTS: u32 = 8;
 
 trait ReceiverHardware {
+    fn clock(&self) -> Clock {
+        Clock::default()
+    }
     fn start(&mut self) -> Result<()>;
     fn shutdown(&mut self) -> Result<()>;
     fn poll(&mut self) -> Result<Vec<Value>>;
@@ -39,6 +42,7 @@ enum State {
     Recovering,
 }
 struct Runtime<H> {
+    clock: Clock,
     hardware: H,
     state: State,
     session: String,
@@ -48,16 +52,18 @@ struct Runtime<H> {
     reconnect_attempts: u64,
     mcu_timeouts: u64,
     recovery_attempts: u32,
-    recovery_started: Instant,
-    retry_at: Instant,
-    session_started: Instant,
+    recovery_started: Duration,
+    retry_at: Duration,
+    session_started: Duration,
     cleanup_verified: bool,
     pending_resume: Option<Value>,
 }
 impl<H: ReceiverHardware> Runtime<H> {
     fn new(hardware: H) -> Self {
-        let now = Instant::now();
+        let clock = hardware.clock();
+        let now = clock.now();
         Self {
+            clock,
             hardware,
             state: State::Recovering,
             session: String::new(),
@@ -102,11 +108,11 @@ impl<H: ReceiverHardware> Runtime<H> {
             }
             Action::Resume if self.state != State::Running => {
                 if self.state == State::Paused {
-                    self.recovery_started = Instant::now();
+                    self.recovery_started = self.clock.now();
                     self.recovery_attempts = 0;
                 }
                 self.state = State::Recovering;
-                self.retry_at = Instant::now();
+                self.retry_at = self.clock.now();
                 // Resume acknowledgement is emitted only after initialization succeeds.
                 self.pending_resume = command.request_id;
                 if let Err(error) = self.start(out) {
@@ -126,11 +132,11 @@ impl<H: ReceiverHardware> Runtime<H> {
         self.session = format!(
             "{}-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+            self.clock.unix_time()?.as_nanos(),
             self.generation
         );
         self.sequence = 0;
-        self.session_started = Instant::now();
+        self.session_started = self.clock.now();
         self.state = State::Running;
         self.recovery_attempts = 0;
         let request_id = self.pending_resume.take();
@@ -161,7 +167,7 @@ impl<H: ReceiverHardware> Runtime<H> {
         }
         self.dropped += out.discard_observations();
         if self.state != State::Recovering {
-            self.recovery_started = Instant::now();
+            self.recovery_started = self.clock.now();
             self.recovery_attempts = 0;
         }
         self.state = State::Recovering;
@@ -169,17 +175,17 @@ impl<H: ReceiverHardware> Runtime<H> {
         self.reconnect_attempts += 1;
         ensure!(
             self.recovery_attempts < MAX_RECOVERY_ATTEMPTS
-                && self.recovery_started.elapsed() < RECOVERY_BUDGET,
+                && self.clock.elapsed(self.recovery_started) < RECOVERY_BUDGET,
             "receiver reconnect budget exhausted"
         );
-        self.retry_at = Instant::now()
+        self.retry_at = self.clock.now()
             + Duration::from_millis((250u64 << (self.recovery_attempts - 1)).min(5000));
         out.send(&self.status(None), false)?;
         Ok(())
     }
     fn tick(&mut self, out: &Output) -> Result<()> {
         if self.state == State::Recovering {
-            if Instant::now() >= self.retry_at {
+            if self.clock.now() >= self.retry_at {
                 if let Err(error) = self.start(out) {
                     self.recover(error, out)?;
                 }
@@ -190,7 +196,8 @@ impl<H: ReceiverHardware> Runtime<H> {
                     for mut value in records {
                         value["session_id"] = json!(self.session);
                         value["sequence"] = json!(self.sequence);
-                        value["elapsed_ms"] = json!(self.session_started.elapsed().as_millis());
+                        value["elapsed_ms"] =
+                            json!(self.clock.elapsed(self.session_started).as_millis());
                         if out.send(&value, true)? {
                             self.sequence += 1;
                         } else {
@@ -242,6 +249,7 @@ pub(super) fn run(
         channels,
         Duration::from_millis(u64::from(dwell_ms)),
         stop.clone(),
+        Clock::default(),
         move || selection.open(),
     );
     drive(
@@ -271,10 +279,11 @@ fn drive<H: ReceiverHardware>(
     limits: LoopLimits,
 ) -> Result<()> {
     let mut runtime = Runtime::new(hardware);
-    let started = Instant::now();
-    let mut last_status = Instant::now();
+    let clock = runtime.clock.clone();
+    let started = clock.now();
+    let mut last_status = clock.now();
     let operation = (|| -> Result<()> {
-        while !stop.load(Ordering::Relaxed) && started.elapsed() < limits.duration {
+        while !stop.load(Ordering::Relaxed) && clock.elapsed(started) < limits.duration {
             ensure!(out.healthy(), "stream consumer disconnected");
             // Bound command work per tick; stop/EOF uses an independent atomic flag.
             for _ in 0..16 {
@@ -291,12 +300,12 @@ fn drive<H: ReceiverHardware>(
                 break;
             }
             runtime.tick(&out)?;
-            if last_status.elapsed() >= limits.status_interval {
+            if clock.elapsed(last_status) >= limits.status_interval {
                 out.send(&runtime.status(None), false)?;
-                last_status = Instant::now();
+                last_status = clock.now();
             }
             if runtime.state != State::Running {
-                thread::sleep(Duration::from_millis(20));
+                clock.sleep(Duration::from_millis(20));
             }
         }
         Ok(())
@@ -323,14 +332,19 @@ mod tests {
     use std::{io::Write, sync::Condvar};
     #[derive(Default)]
     struct FakeHardware {
+        time: crate::test_support::ManualTime,
         events: Vec<&'static str>,
         records: usize,
         fail_start: bool,
         fail_shutdown: bool,
         fail_poll: bool,
         stop_after_poll: Option<Arc<AtomicBool>>,
+        poll_advance: Duration,
     }
     impl ReceiverHardware for FakeHardware {
+        fn clock(&self) -> Clock {
+            self.time.clock()
+        }
         fn start(&mut self) -> Result<()> {
             self.events.push("start");
             if self.fail_start {
@@ -344,6 +358,7 @@ mod tests {
             Ok(())
         }
         fn poll(&mut self) -> Result<Vec<Value>> {
+            self.time.advance(self.poll_advance);
             if let Some(stop) = &self.stop_after_poll {
                 stop.store(true, Ordering::Relaxed);
             }
@@ -357,6 +372,7 @@ mod tests {
     }
     fn queued_output() -> Output {
         Output {
+            finish_wait: output::completed_wait,
             queue: Arc::new((Mutex::new(Queue::default()), Condvar::new())),
         }
     }
@@ -540,7 +556,9 @@ mod tests {
         r.tick(&out).unwrap();
         assert_eq!(r.state, State::Recovering);
         r.hardware.fail_poll = false;
-        r.retry_at = Instant::now();
+        r.hardware
+            .time
+            .advance(r.retry_at.saturating_sub(r.clock.now()));
         r.tick(&out).unwrap();
         assert_eq!(r.state, State::Running);
         assert_ne!(r.session, first);
@@ -548,16 +566,71 @@ mod tests {
         r.tick(&out).unwrap();
         r.hardware.fail_start = true;
         for _ in 1..MAX_RECOVERY_ATTEMPTS - 1 {
-            r.retry_at = Instant::now();
+            r.hardware
+                .time
+                .advance(r.retry_at.saturating_sub(r.clock.now()));
             r.tick(&out).unwrap();
         }
-        r.retry_at = Instant::now();
+        r.hardware
+            .time
+            .advance(r.retry_at.saturating_sub(r.clock.now()));
         assert!(r
             .tick(&out)
             .unwrap_err()
             .to_string()
             .contains("budget exhausted"));
     }
+    #[test]
+    fn recovery_backoff_and_total_budget_follow_only_injected_ticks() {
+        let out = queued_output();
+        let mut runtime = Runtime::new(FakeHardware::default());
+        runtime.tick(&out).unwrap();
+        runtime.hardware.fail_poll = true;
+        runtime.tick(&out).unwrap();
+        assert_eq!(runtime.retry_at, Duration::from_millis(250));
+        runtime.hardware.fail_poll = false;
+        runtime.hardware.time.advance(Duration::from_millis(249));
+        runtime.tick(&out).unwrap();
+        assert_eq!(runtime.state, State::Recovering);
+        runtime.hardware.time.advance(Duration::from_millis(1));
+        runtime.tick(&out).unwrap();
+        assert_eq!(runtime.state, State::Running);
+        runtime.hardware.fail_poll = true;
+        runtime.tick(&out).unwrap();
+        runtime.hardware.fail_start = true;
+        runtime.hardware.time.advance(RECOVERY_BUDGET);
+        assert!(runtime
+            .tick(&out)
+            .unwrap_err()
+            .to_string()
+            .contains("budget exhausted"));
+    }
+
+    #[test]
+    fn event_loop_duration_expires_on_fake_poll_ticks() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (_tx, rx) = mpsc::sync_channel(1);
+        let hardware = FakeHardware {
+            poll_advance: Duration::from_millis(250),
+            ..Default::default()
+        };
+        let clock = hardware.clock();
+        drive(
+            hardware,
+            rx,
+            stop.clone(),
+            Arc::new(Mutex::new(InputOutcome::default())),
+            Output::new(std::io::sink()),
+            LoopLimits {
+                duration: Duration::from_secs(1),
+                status_interval: Duration::from_secs(5),
+            },
+        )
+        .unwrap();
+        assert_eq!(clock.now(), Duration::from_secs(1));
+        assert!(!stop.load(Ordering::Relaxed));
+    }
+
     #[test]
     fn commands_are_bounded_and_eof_stop_cannot_be_blocked_by_a_full_queue() {
         for input in [
@@ -638,10 +711,14 @@ mod tests {
         assert_eq!(records(&out).last().unwrap()["cleanup_verified"], true);
     }
     struct BlockedWriter {
+        entered: Option<mpsc::SyncSender<()>>,
         gate: Arc<(Mutex<bool>, Condvar)>,
     }
     impl Write for BlockedWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if let Some(entered) = self.entered.take() {
+                entered.send(()).unwrap();
+            }
             let (lock, wake) = &*self.gate;
             let mut open = lock.lock().unwrap();
             while !*open {
@@ -656,12 +733,22 @@ mod tests {
     #[test]
     fn blocked_stdout_cannot_block_cleanup_and_shutdown_flush_is_bounded() {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
-        let out = Output::new(BlockedWriter { gate: gate.clone() });
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let out = Output::new(BlockedWriter {
+            gate: gate.clone(),
+            entered: Some(entered_tx),
+        });
         let mut r = Runtime::new(FakeHardware::default());
         r.tick(&out).unwrap();
         r.stop(&out, None).unwrap();
         assert_eq!(r.hardware.events, ["start", "shutdown"]);
-        assert!(out.finish(Duration::from_millis(10)).is_err());
+        entered_rx.recv().unwrap(); // Worker has entered the blocked write.
+        assert!(out
+            .finish_with_wait(Duration::from_millis(10), |_, q, budget| {
+                assert_eq!(budget, Duration::from_millis(10));
+                q // Deterministically expire while the worker remains blocked.
+            })
+            .is_err());
         *gate.0.lock().unwrap() = true;
         gate.1.notify_one();
         out.finish(Duration::from_secs(1)).unwrap();

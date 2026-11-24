@@ -4,12 +4,13 @@ use anyhow::{ensure, Context, Result};
 use mt7610u_lab::{
     firmware::Firmware,
     radio, rx,
+    timing::Clock,
     transport::{UsbDevice, UsbIo},
 };
 use serde_json::{json, Value};
 use std::{
     sync::{atomic::AtomicBool, Arc},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
     open: F,
@@ -19,7 +20,8 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
     channels: Vec<u8>,
     dwell: Duration,
     channel_index: usize,
-    tuned: Instant,
+    tuned: Duration,
+    clock: Clock,
     epoch: u64,
     buffer: Vec<u8>,
     stop: Arc<AtomicBool>,
@@ -32,6 +34,9 @@ pub(super) struct Hardware<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> {
     malformed: u64,
 }
 impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware<'_, T, F> {
+    fn clock(&self) -> Clock {
+        self.clock.clone()
+    }
     fn metrics(&self) -> Value {
         json!({"usb_device":self.identity,"transfers":self.transfers,"frames":self.frames,"beacons":self.beacons,"malformed_transfers":self.malformed,
             "firmware": {"supplied_image":self.firmware.image_metadata(),
@@ -41,7 +46,7 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
     }
     fn start(&mut self) -> Result<()> {
         self.firmware_uploaded = None;
-        self.device = Some((self.open)()?);
+        self.device = Some((self.open)()?.with_clock(self.clock.clone()));
         self.identity = self.device.as_ref().and_then(|d| d.identity.clone());
         self.cleanup_unverified = true;
         let device = self.device.as_mut().unwrap();
@@ -51,7 +56,7 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
         self.calibration = Some(setup.calibration);
         self.channel_index = 0;
         self.epoch = 0;
-        self.tuned = Instant::now();
+        self.tuned = self.clock.now();
         Ok(())
     }
     fn shutdown(&mut self) -> Result<()> {
@@ -74,7 +79,7 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
             .as_mut()
             .context("receiver is not initialized")?;
         let calibration = self.calibration.as_ref().context("missing calibration")?;
-        if self.channels.len() > 1 && self.tuned.elapsed() >= self.dwell {
+        if self.channels.len() > 1 && self.clock.elapsed(self.tuned) >= self.dwell {
             self.channel_index = (self.channel_index + 1) % self.channels.len();
             radio::retune_with_drain(
                 device,
@@ -82,12 +87,12 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
                 self.channels[self.channel_index],
                 crate::drain_packets,
             )?;
-            self.tuned = Instant::now();
+            self.tuned = self.clock.now();
             self.epoch += 1;
         }
         let timeout = if self.channels.len() > 1 {
             self.dwell
-                .saturating_sub(self.tuned.elapsed())
+                .saturating_sub(self.clock.elapsed(self.tuned))
                 .min(Duration::from_millis(100))
         } else {
             Duration::from_millis(100)
@@ -118,7 +123,7 @@ impl<T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> ReceiverHardware for Hardware
                     .map(|b| format!("{b:02X}"))
                     .collect::<Vec<_>>()
                     .join(":");
-                records.push(json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","observed_at_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":self.channels[self.channel_index],"channel_epoch":self.epoch,"dwell_elapsed_ms":self.tuned.elapsed().as_millis(),"rssi_dbm":frame.rssi_dbm,"estimated_rssi_dbm":mt7610u_lab::signal::estimate_rssi_for_channel(frame.raw_rssi,frame.rx_info,calibration,self.channels[self.channel_index]),"rssi_estimate_basis":"mt76_eeprom_formula","rssi_validated":false,"raw_rssi":frame.raw_rssi,"full_calibration":false}));
+                records.push(json!({"schema_version":1,"type":"beacon","source":"mt7610u-lab","observed_at_unix_ms":self.clock.unix_time()?.as_millis(),"bssid":bssid,"ssid_bytes":beacon.ssid,"advertised_channel":beacon.channel,"receive_channel":self.channels[self.channel_index],"channel_epoch":self.epoch,"dwell_elapsed_ms":self.clock.elapsed(self.tuned).as_millis(),"rssi_dbm":frame.rssi_dbm,"estimated_rssi_dbm":mt7610u_lab::signal::estimate_rssi_for_channel(frame.raw_rssi,frame.rx_info,calibration,self.channels[self.channel_index]),"rssi_estimate_basis":"mt76_eeprom_formula","rssi_validated":false,"raw_rssi":frame.raw_rssi,"full_calibration":false}));
             }
         }
         Ok(records)
@@ -131,6 +136,7 @@ impl<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> Hardware<'a, T, F> {
         channels: Vec<u8>,
         dwell: Duration,
         stop: Arc<AtomicBool>,
+        clock: Clock,
         open: F,
     ) -> Self {
         Self {
@@ -141,7 +147,8 @@ impl<'a, T: UsbIo, F: FnMut() -> Result<UsbDevice<T>>> Hardware<'a, T, F> {
             channels,
             dwell,
             channel_index: 0,
-            tuned: Instant::now(),
+            tuned: Duration::ZERO,
+            clock,
             epoch: 0,
             buffer: vec![0; 65536],
             stop,
@@ -163,6 +170,59 @@ mod tests {
     use crate::test_support::{beacon_transfer, image, Endpoint};
     use std::sync::atomic::Ordering;
     #[test]
+    fn stream_loop_keeps_transport_clock_through_initialization_and_reopen() {
+        let endpoint = Endpoint::default();
+        let clock = endpoint.clock();
+        let bytes = image();
+        let mut fw = Firmware::parse(&bytes).unwrap();
+        fw.sha256 = mt7610u_lab::firmware::REFERENCE_SHA256.into();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut hardware = Hardware::new(
+            fw,
+            vec![6],
+            Duration::from_millis(500),
+            stop.clone(),
+            clock.clone(),
+            || Ok(endpoint.device()),
+        );
+        hardware.start().unwrap();
+        let first = clock.now();
+        hardware.shutdown().unwrap();
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .time
+            .advance(Duration::from_secs(2));
+        hardware.start().unwrap();
+        assert!(clock.now() > first + Duration::from_secs(2));
+        assert_eq!(hardware.clock.now(), clock.now());
+        hardware.shutdown().unwrap();
+        let started = clock.now();
+        let (_tx, rx) = std::sync::mpsc::sync_channel(1);
+        super::super::drive(
+            hardware,
+            rx,
+            stop.clone(),
+            Arc::new(std::sync::Mutex::new(super::super::InputOutcome::default())),
+            super::super::Output::new(std::io::sink()),
+            super::super::LoopLimits {
+                duration: Duration::from_secs(1),
+                status_interval: Duration::from_secs(5),
+            },
+        )
+        .unwrap();
+        assert!(
+            (Duration::from_secs(1)..Duration::from_millis(1100)).contains(&clock.elapsed(started))
+        );
+        let model = endpoint.0.lock().unwrap();
+        assert_eq!(model.released, 3);
+        assert_eq!(model.registers[&0x1004] & 0xc, 0);
+        assert_eq!(model.registers[&0x1404] & 1, 0);
+        assert!(!stop.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn hardware_lifecycle_decodes_packets_retunes_and_verifies_cleanup() {
         let endpoint = Endpoint::default();
         let image = image();
@@ -172,8 +232,9 @@ mod tests {
         let mut h = Hardware::new(
             fw,
             vec![6, 153],
-            Duration::from_millis(100),
+            Duration::from_millis(500),
             stop.clone(),
+            endpoint.clock(),
             || {
                 let mut device = endpoint.device();
                 device.identity = Some(mt7610u_lab::selection::Identity {
@@ -219,7 +280,12 @@ mod tests {
         assert_eq!(records[0]["rssi_validated"], false);
         assert_eq!(h.metrics()["malformed_transfers"], 1);
         assert_eq!(h.metrics()["beacons"], 1);
-        h.tuned = Instant::now() - Duration::from_secs(1);
+        endpoint
+            .0
+            .lock()
+            .unwrap()
+            .time
+            .advance(Duration::from_secs(1));
         h.poll().unwrap();
         assert_eq!(h.epoch, 1);
         assert_eq!(h.channel_index, 1);
@@ -250,6 +316,7 @@ mod tests {
             vec![1],
             Duration::from_millis(500),
             Arc::new(AtomicBool::new(false)),
+            endpoint.clock(),
             || Ok(endpoint.device()),
         );
         h.start().unwrap();

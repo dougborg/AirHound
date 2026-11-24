@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub fn prepare<T: UsbIo>(
@@ -50,11 +50,12 @@ pub fn shutdown(device: &mut impl RegisterIo) -> Result<()> {
 // Drop queued old-channel frames only while the radio has disabled RX. Refuse
 // to continue if the endpoint cannot become quiet within a bounded drain.
 pub fn drain_packets<T: UsbIo>(device: &mut UsbDevice<T>) -> Result<()> {
-    let started = Instant::now();
+    let clock = device.clock();
+    let started = clock.now();
     let mut buffer = [0u8; 65536];
     for _ in 0..128 {
         ensure!(
-            started.elapsed() < Duration::from_millis(500),
+            clock.elapsed(started) < Duration::from_millis(500),
             "RX endpoint did not become quiet before retune"
         );
         if device.read_packets(&mut buffer, Duration::from_millis(20))? == 0 {

@@ -1,13 +1,36 @@
 //! Scripted endpoint model: no USB hardware, firmware file, or network required.
 #![allow(dead_code)]
-use crate::transport::{UsbDevice, UsbIo};
+use crate::transport::{Clock, TimeSource, UsbDevice, UsbIo};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
+#[derive(Clone, Default)]
+pub struct ManualTime(Arc<Mutex<Duration>>);
+impl ManualTime {
+    pub fn clock(&self) -> Clock {
+        Clock::new(self.clone())
+    }
+    pub fn advance(&self, duration: Duration) {
+        *self.0.lock().unwrap() += duration;
+    }
+}
+impl TimeSource for ManualTime {
+    fn now(&self) -> Duration {
+        *self.0.lock().unwrap()
+    }
+    fn sleep(&self, duration: Duration) {
+        self.advance(duration);
+    }
+    fn unix_time(&self) -> anyhow::Result<Duration> {
+        Ok(Duration::from_secs(1_700_000_000) + self.now())
+    }
+}
+
 pub struct Model {
+    pub time: ManualTime,
     pub registers: BTreeMap<u32, u32>,
     pub rf: BTreeMap<u32, u32>,
     pub eeprom: [u8; 512],
@@ -29,6 +52,7 @@ impl Default for Model {
         eeprom[0x34..0x36].copy_from_slice(&0x0111u16.to_le_bytes());
         eeprom[0x44] = 12;
         Self {
+            time: ManualTime::default(),
             registers: BTreeMap::from([
                 (0, 0x76100002),
                 (0x1000, 0x76502000),
@@ -62,6 +86,9 @@ fn word(b: &[u8]) -> u32 {
     u32::from_le_bytes(b[..4].try_into().unwrap())
 }
 impl UsbIo for Endpoint {
+    fn clock(&self) -> Clock {
+        self.0.lock().unwrap().time.clock()
+    }
     fn write_control(
         &mut self,
         t: u8,
@@ -171,9 +198,12 @@ impl UsbIo for Endpoint {
         }
         Ok(d.len())
     }
-    fn read_bulk(&mut self, e: u8, d: &mut [u8], _: Duration) -> rusb::Result<usize> {
+    fn read_bulk(&mut self, e: u8, d: &mut [u8], timeout: Duration) -> rusb::Result<usize> {
         let mut m = self.0.lock().unwrap();
         if let Some(e) = m.error {
+            if e == rusb::Error::Timeout {
+                m.time.advance(timeout);
+            }
             return Err(e);
         }
         let result = if e == 0x82 {
@@ -187,7 +217,12 @@ impl UsbIo for Endpoint {
                 d[..bytes.len()].copy_from_slice(&bytes);
                 Ok(bytes.len())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                if e == rusb::Error::Timeout {
+                    m.time.advance(timeout);
+                }
+                Err(e)
+            }
         }
     }
     fn release(&mut self) {
