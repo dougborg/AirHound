@@ -27,11 +27,16 @@ public struct RecordWindow: Sendable {
     var newSizes: [Int] = []
     for record in page.records {
       let data = try record.payload.data()
-      newSizes.append(data.count + 1)
+      newSizes.append(data.count + 1 + (try record.observationMetadata?.data().count ?? 0))
       stream.append(data)
       stream.append(10)
     }
-    let decoded = try Recording.decode(stream)
+    let decoded = try Recording.decode(
+      stream,
+      metadata: Dictionary(
+        uniqueKeysWithValues: page.records.enumerated().compactMap { index, record in
+          record.observationMetadata.map { (index, $0) }
+        }))
     let newRows = decoded.observations.map { observation in
       var row = observation
       row.id = Int(page.records[observation.id].cursor)

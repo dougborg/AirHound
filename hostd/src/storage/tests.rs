@@ -669,3 +669,75 @@ fn targeted_failure_recovery_does_not_reconcile_a_different_run() {
         "interrupted"
     );
 }
+
+#[test]
+fn metadata_projection_preserves_original_rows_and_live_saved_cursors() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    let mut input = record("receiver-a");
+    input.payload = json!({"type":"external_wifi_observation","source":"mt7610u-lab","schema_version":1,"receive_channel":36,"raw_rssi":[1,2,3,4],"estimated_rssi_dbm":-50,"rssi_validated":false});
+    store.append(&run, std::slice::from_ref(&input)).unwrap();
+    let stored: String = store
+        .connection
+        .query_row(
+            "SELECT payload_json FROM records WHERE run_id=?1",
+            [&run],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let live = reader.records(&run, 0, 10).unwrap();
+    assert_eq!(live.records[0].payload, input.payload);
+    assert_eq!(
+        live.records[0].observation_metadata.as_ref().unwrap()["frequency_mhz"],
+        5180
+    );
+    store.transition(&run, "finished", "test").unwrap();
+    let saved = reader.records(&run, 0, 10).unwrap();
+    assert_eq!(
+        serde_json::to_value(&live).unwrap(),
+        serde_json::to_value(&saved).unwrap()
+    );
+    let after: String = store
+        .connection
+        .query_row(
+            "SELECT payload_json FROM records WHERE run_id=?1",
+            [&run],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, after);
+}
+
+#[test]
+fn projected_pages_include_serialized_wrapper_and_metadata_in_byte_budget() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    let mut input = record("receiver-a");
+    input.payload = json!({"type":"wifi_observation","wifi_metadata":{"schema_version":1,"source":"corewlan_scan_snapshot","evidence":"x".repeat(60*1024)}});
+    for _ in 0..12 {
+        store.append(&run, std::slice::from_ref(&input)).unwrap();
+    }
+    let reader = Reader::open(&f.database()).unwrap();
+    let mut cursor = 0;
+    let mut count = 0;
+    let mut pages = 0;
+    loop {
+        let page = reader.records(&run, cursor, 100).unwrap();
+        pages += 1;
+        assert!(serde_json::to_vec(&page).unwrap().len() <= MAX_PAGE_BYTES);
+        assert!(!page.records.is_empty());
+        for row in &page.records {
+            assert!(row.cursor > cursor);
+            assert_eq!(row.payload, input.payload);
+            count += 1;
+        }
+        assert!(page.next_after > cursor);
+        cursor = page.next_after;
+        if !page.has_more {
+            break;
+        }
+    }
+    assert_eq!(count, 12);
+    assert!(pages >= 3, "projection bytes must reduce page capacity");
+}

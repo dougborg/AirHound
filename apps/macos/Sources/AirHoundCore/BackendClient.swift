@@ -228,6 +228,7 @@ public struct StoredRecord: Decodable, Identifiable, Sendable {
     case cursor, kind, payload
     case sourceID = "source_id"
     case receivedAtUs = "received_at_us"
+    case observationMetadata = "observation_metadata"
   }
 
   public let cursor: Int64
@@ -235,6 +236,7 @@ public struct StoredRecord: Decodable, Identifiable, Sendable {
   public let kind: String
   public let receivedAtUs: Int64
   public let payload: JSONValue
+  public let observationMetadata: JSONValue?
   public var id: Int64 { cursor }
 }
 public struct RecordPage: Decodable, Sendable {
@@ -254,6 +256,11 @@ public struct RecordPage: Decodable, Sendable {
       stream.append(try record.payload.data())
       stream.append(10)
     }
-    return try Recording.decode(stream)
+    return try Recording.decode(
+      stream,
+      metadata: Dictionary(
+        uniqueKeysWithValues: records.enumerated().compactMap { index, record in
+          record.observationMetadata.map { (index, $0) }
+        }))
   }
 }

@@ -19,6 +19,9 @@ public struct Observation: Identifiable, Sendable {
   public let alert: String
   public let evidence: [String]
   public let raw: String
+  public var metadata: String? = nil
+  public var security: String = "Not reported"
+  public var advertisedPHY: String = "Not reported"
 }
 
 public struct Recording: Sendable {
@@ -30,7 +33,7 @@ public struct Recording: Sendable {
 
   /// Reads an exported hostd stream, preserving unknown/evolving payload fields in raw JSON.
   /// Runtime events are not mistaken for observations or applied as current live state.
-  public static func decode(_ data: Data) throws -> Self {
+  public static func decode(_ data: Data, metadata: [Int: JSONValue] = [:]) throws -> Self {
     guard data.count <= byteLimit else { throw ModelError.invalid("Recording exceeds 8 MiB") }
     guard let string = String(data: data, encoding: .utf8) else {
       throw ModelError.invalid("Recording is not UTF-8")
@@ -76,6 +79,21 @@ public struct Recording: Sendable {
             alert: "Not evaluated", evidence: [], raw: String(decoding: pretty, as: UTF8.self)))
         continue
       }
+      let projected: [String: Any]
+      if let value = metadata[lineNumber] {
+        projected = try JSONSerialization.jsonObject(with: value.data()) as? [String: Any] ?? [:]
+      } else {
+        projected = [:]
+      }
+      let projectionText =
+        projected.isEmpty
+        ? nil
+        : String(
+          decoding: try JSONSerialization.data(
+            withJSONObject: projected, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
+      let wifi = projected["wifi"] as? [String: Any] ?? [:]
+      let reportedSecurity = object["security"] as? String
+      let advertisedModes = wifi["advertised_phy_modes"] as? [String] ?? []
       let detection = object["detection"] as? [String: Any] ?? [:]
       let source = object["session_source"] as? [String: Any] ?? [:]
       // Real hostd detection uses sig/rules, while the illustrative fixture uses evidence.
@@ -119,9 +137,13 @@ public struct Recording: Sendable {
             ?? "Not reported",
           address: address ?? "Not reported", rssi: signal,
           channel: channelNumber.map(String.init) ?? "Not reported",
-          frequency: (object["frequency_mhz"] as? Int).map { "\($0) MHz" } ?? "Not reported",
-          band: object["band"] as? String ?? "Not reported",
-          phy: object["phy"] as? String ?? "Not reported",
+          frequency: (object["frequency_mhz"] as? Int ?? projected["frequency_mhz"] as? Int).map {
+            "\($0) MHz"
+              + ((projected["frequency_basis"] as? String)?.hasPrefix("derived_") == true
+                ? " (derived)" : "")
+          } ?? "Not reported",
+          band: object["band"] as? String ?? projected["band"] as? String ?? "Not reported",
+          phy: object["phy"] as? String ?? projected["phy"] as? String ?? "Not reported",
           match: matched ? "Match" : (detection.isEmpty ? "Not evaluated" : "—"),
           alert: detection["alert"] as? String ?? "Not reported",
           evidence: try evidence.map { item in
@@ -129,7 +151,10 @@ public struct Recording: Sendable {
               decoding: try JSONSerialization.data(
                 withJSONObject: item, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
               as: UTF8.self)
-          }, raw: String(decoding: pretty, as: UTF8.self)))
+          }, raw: String(decoding: pretty, as: UTF8.self), metadata: projectionText,
+          security: reportedSecurity ?? "Not reported",
+          advertisedPHY: advertisedModes.isEmpty
+            ? "Not reported" : advertisedModes.joined(separator: ", ")))
     }
     return Recording(observations: rows, ignoredRecords: ignored)
   }

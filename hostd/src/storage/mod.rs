@@ -93,6 +93,9 @@ pub struct RecordInput {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StoredRecord {
+    /// Derived presentation only; the persisted payload remains exact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_metadata: Option<Value>,
     pub cursor: i64,
     pub source_id: String,
     pub kind: String,
@@ -465,25 +468,33 @@ impl Reader {
             next_after: after,
             has_more: false,
         };
-        let mut bytes = 0;
+        // Maximum page envelope (i64 cursor, boolean, keys) plus array commas.
+        let mut bytes = 64;
         while let Some(row) = rows.next().map_err(sql)? {
             let payload: String = row.get(4).map_err(sql)?;
             if payload.len() > MAX_RECORD_BYTES {
                 return Err(invalid("stored record exceeds size limit"));
             }
-            if page.records.len() == limit || bytes + payload.len() > MAX_PAGE_BYTES {
-                page.has_more = true;
-                break;
-            }
-            bytes += payload.len();
+            let payload: Value = serde_json::from_str(&payload).map_err(io::Error::other)?;
             let cursor = row.get(0).map_err(sql)?;
-            page.records.push(StoredRecord {
+            let record = StoredRecord {
+                observation_metadata: crate::receiver_metadata::project(&payload),
                 cursor,
                 source_id: row.get(1).map_err(sql)?,
                 kind: row.get(2).map_err(sql)?,
                 received_at_us: row.get(3).map_err(sql)?,
-                payload: serde_json::from_str(&payload).map_err(io::Error::other)?,
-            });
+                payload,
+            };
+            let record_bytes = serde_json::to_vec(&record).map_err(io::Error::other)?.len() + 1;
+            if record_bytes + 64 > MAX_PAGE_BYTES {
+                return Err(invalid("projected record exceeds page limit"));
+            }
+            if page.records.len() == limit || bytes + record_bytes > MAX_PAGE_BYTES {
+                page.has_more = true;
+                break;
+            }
+            bytes += record_bytes;
+            page.records.push(record);
             page.next_after = cursor;
         }
         Ok(page)
