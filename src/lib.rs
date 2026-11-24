@@ -20,6 +20,8 @@
 pub mod ble_data;
 #[cfg(any(feature = "firmware", test))]
 pub mod ble_scan_control;
+#[cfg(any(feature = "m5stickc", test))]
+pub mod ble_transport;
 pub mod board;
 pub mod buttons;
 pub mod comm;

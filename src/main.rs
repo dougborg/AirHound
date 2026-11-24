@@ -452,6 +452,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     // Keep capture disabled through BLE host/GATT initialization. The scanner
     // future enables WiFi only after the BLE host accepts its scan request.
 
+    // An always-ready HCI backlog must not monopolize the executor and fill
+    // SCAN_CHANNEL before filter_task gets a turn. No scan policy change.
+    #[cfg(feature = "m5stickc")]
+    let connector = airhound::ble_transport::CooperativeTransport::new(connector);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
 
     static HOST_RESOURCES: StaticCell<HostResources<DefaultPacketPool, 1, 2>> = StaticCell::new();
