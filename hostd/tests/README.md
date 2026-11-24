@@ -20,6 +20,17 @@ inotify writes/creation/moves, excluding reads. Every wake refreshes inode
 identity and registrations before rereading the predicate, including parent
 notification before removal of an old inode. It does not wait for actor-active
 state using storage events: that state can change after the final durable write.
+Linux stat/add-watch replacement races may temporarily associate old inode
+metadata with a watch on the new file. The next refresh corrects that association
+before rereading the durable predicate; parent events cover renames. A delayed
+`IN_IGNORED`, including a reused numeric descriptor, invalidates metadata only and
+never removes a possibly newer kernel watch. Refresh then re-adds the exact path.
+A Linux-only regression forces the stat/add replacement and models stale ignored
+descriptor reuse, then verifies the predicate after an in-place write. That last
+check can consume already-queued events; it does not alone prove which event woke
+the waiter. The separate replacement-event fixture covers notification waiting.
+Local macOS tests
+do not establish Linux execution; the Linux CI job must run these branches.
 Marauder's in-process shared-client calls reuse the reviewed paused-clock guard;
 actual CLI binaries retain their production request deadlines and response
 semantics. Deterministic deadline boundaries are tested separately in the shared
