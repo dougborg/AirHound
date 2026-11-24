@@ -1,4 +1,5 @@
 import AirHoundCore
+import AirHoundTestSupport
 import AppKit
 import SwiftUI
 import XCTest
@@ -309,7 +310,8 @@ final class SetupPresentationTests: XCTestCase {
     replay.standardOutput = FileHandle.nullDevice
     replay.standardError = FileHandle.nullDevice
     try replay.run()
-    replay.waitUntilExit()
+    defer { XCTAssertTrue(stopOwnedProcess(replay)) }
+    XCTAssertTrue(waitForOwnedProcess(replay))
     XCTAssertEqual(replay.terminationStatus, 0)
     let socket = root.appendingPathComponent("control.sock")
     let server = Process()
@@ -318,12 +320,7 @@ final class SetupPresentationTests: XCTestCase {
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
     try server.run()
-    defer {
-      if server.isRunning {
-        server.terminate()
-        server.waitUntilExit()
-      }
-    }
+    defer { XCTAssertTrue(stopOwnedProcess(server)) }
     try await awaitFixtureFile(socket)
     let wrapper = root.appendingPathComponent("selected-backend.sh")
     let log = root.appendingPathComponent("client-arguments")
@@ -433,7 +430,7 @@ final class SetupPresentationTests: XCTestCase {
   }
 
   /// Optional bounded screenshot fixture. Never connects to a service or opens radios.
-  func testNativeSetupPresentationSnapshot() throws {
+  func testNativeSetupPresentationSnapshot() async throws {
     guard let destination = ProcessInfo.processInfo.environment["AIRHOUND_UI_SNAPSHOT_DIR"] else {
       throw XCTSkip("Set AIRHOUND_UI_SNAPSHOT_DIR for the synthetic native presentation check.")
     }
@@ -492,24 +489,29 @@ final class SetupPresentationTests: XCTestCase {
       let window = NSWindow(
         contentRect: NSRect(x: -3000, y: -3000, width: 1020, height: 600), styleMask: [.titled],
         backing: .buffered, defer: false)
+      defer { window.close() }
       window.isReleasedWhenClosed = false
       window.appearance = NSAppearance(named: appearance)
+      let appeared = XCTestExpectation(description: "Synthetic setup content appeared")
       let view = NSHostingView(
         rootView: SessionView(session: session, app: app).environment(\.colorScheme, scheme)
-          .background(Color(nsColor: .windowBackgroundColor)))
+          .background(Color(nsColor: .windowBackgroundColor))
+          .onAppear { appeared.fulfill() })
       window.contentView = view
       window.orderBack(nil)
-      for _ in 0..<10 {
-        view.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+      guard await XCTWaiter.fulfillment(of: [appeared], timeout: 30) == .completed else {
+        throw ModelError.invalid("Synthetic SwiftUI content did not appear")
       }
+      // The SwiftUI lifecycle event establishes content installation. Flush the
+      // actual layout/display pass; no number of run-loop turns guesses readiness.
+      view.layoutSubtreeIfNeeded()
+      view.displayIfNeeded()
       let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
       view.cacheDisplay(in: view.bounds, to: bitmap)
       let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
       try png.write(
         to: URL(fileURLWithPath: destination).appendingPathComponent("setup-\(name).png"))
       XCTAssertGreaterThan(view.bounds.width, 1000)
-      window.close()
     }
   }
 }

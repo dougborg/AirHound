@@ -1,4 +1,5 @@
 import AirHoundCore
+import AirHoundTestSupport
 import Combine
 import Darwin
 import XCTest
@@ -69,7 +70,7 @@ final class RepeatRecordingTests: XCTestCase {
     server.standardOutput = output
     server.standardError = output
     try server.run()
-    defer { XCTAssertTrue(stopOwned(server), "Private backend did not terminate/reap") }
+    defer { XCTAssertTrue(stopOwnedProcess(server), "Private backend did not terminate/reap") }
     try await awaitFixtureFile(socket)
     let suite = "AirHound-repeat-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -192,19 +193,5 @@ final class RepeatRecordingTests: XCTestCase {
       XCTFail("\(label) did not complete: \(output.suffix(4000))")
       throw error
     }
-  }
-  private func stopOwned(_ process: Process) -> Bool {
-    guard process.isRunning else { return true }
-    process.terminate()
-    func wait(_ seconds: TimeInterval) -> Bool {
-      let deadline = ProcessInfo.processInfo.systemUptime + seconds
-      while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
-        Thread.sleep(forTimeInterval: 0.01)
-      }
-      return !process.isRunning
-    }
-    if wait(3) { return true }
-    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
-    return wait(2)
   }
 }

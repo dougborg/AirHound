@@ -1,3 +1,4 @@
+import AirHoundTestSupport
 import Foundation
 import XCTest
 
@@ -23,16 +24,8 @@ final class BackendIntegrationTests: XCTestCase {
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     try process.run()
-    defer {
-      if process.isRunning {
-        process.terminate()
-        process.waitUntilExit()
-      }
-    }
-    for _ in 0..<100 {
-      if FileManager.default.fileExists(atPath: socket.path) { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    defer { XCTAssertTrue(stopOwnedProcess(process), "Private replay service was not reaped") }
+    try await waitForFixtureFile(socket)
     let pcap = directory.appendingPathComponent("empty.pcap")
     // Little-endian PCAP v2.4, linktype radiotap (127), no packets.
     try Data([
@@ -55,10 +48,13 @@ final class BackendIntegrationTests: XCTestCase {
     let reconnected = BackendClient(executable: executable, socket: socket)
     let retried = try await reconnected.start(config: config, requestID: "swift-reconnect-test")
     XCTAssertEqual(retried["run_id"]?.string, runID)
-    var status = try await reconnected.status()
-    for _ in 0..<100 where status["active"] == .bool(true) {
-      try await Task.sleep(for: .milliseconds(50))
-      status = try await reconnected.status()
+    // The assertion concerns durable history. Observe DB/WAL writes rather than
+    // poll actor status (whose completion can lag the last durable write).
+    try await waitForFixtureStorage([
+      directory.appendingPathComponent("history.sqlite"),
+      directory.appendingPathComponent("history.sqlite-wal"),
+    ]) {
+      try await reconnected.recordings().runs.first { $0.id == runID }?.state == "finished"
     }
     let runs = try await reconnected.recordings()
     XCTAssertEqual(runs.runs.count, 1)
