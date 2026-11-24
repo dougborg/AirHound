@@ -32,9 +32,11 @@ the support matrix. Earlier successful lifecycle evidence belongs to firmware `0
 
 Backend-controlled CatSniffer/ALFA/Flipper reception with managed GPS and an earlier
 assembled M5 session retain their exact source/firmware scope. They do not establish
-current full-rig GUI acceptance. Official Rayhunter `0.13.0` and the separate bounded
-raw-feed prototype are likewise distinct: transport and offline LTE decoding were
-validated, but the experimental AirHound cellular source has only private synthetic
+current full-rig GUI acceptance. Earlier official Rayhunter `0.13.0` operation and bounded raw-feed experiments
+remain distinct. The `7de225d` prototype is now installed and seen running after
+one reboot, but its deployment readiness parser failed and separate postboot
+verification remains pending. Raw transport and offline LTE decoding were
+validated earlier; the AirHound cellular source has only private synthetic
 acceptance so far. No contemporaneous GPS/validated UTC/upload eligibility follows
 from the retained cellular sample. Experimental work in
 [#293](https://github.com/dougborg/AirHound/issues/293) is not a prerequisite for
