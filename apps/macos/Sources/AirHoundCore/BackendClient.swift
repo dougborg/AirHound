@@ -18,6 +18,22 @@ public struct BackendClient {
       timeout: 25, outputLimit: 2 * 1024 * 1024)
   }
 
+  /// Read-only, authenticated service startup handshake. Rust owns transport
+  /// retry classification; Swift never interprets stderr as a retry signal.
+  public func waitUntilReady(deadline: TimeInterval) async throws -> JSONValue {
+    let remaining = deadline - ProcessInfo.processInfo.systemUptime
+    guard remaining.isFinite, remaining >= 0.001, remaining <= 60 else {
+      throw DiscoveryError.timedOut
+    }
+    let milliseconds = UInt64((remaining * 1000).rounded(.down))
+    let response = try await DiscoveryProcess().runUntil(
+      executable: executable,
+      arguments: [
+        "client", "--socket", socket.path, "wait-ready", "--timeout-ms", String(milliseconds),
+      ], deadline: deadline, outputLimit: 2 * 1024 * 1024)
+    return try JSONDecoder().decode(JSONValue.self, from: response)
+  }
+
   public func status() async throws -> JSONValue {
     try JSONDecoder().decode(JSONValue.self, from: await request(["capture-status"]))
   }

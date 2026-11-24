@@ -28,6 +28,15 @@ and nonzero CLI exit; connection/framing errors also exit nonzero. The status
 result advertises `mode: passive_control` and `capture_control: false`; it does
 not claim any separate running scanner is stopped or managed by this service.
 
+For startup synchronization, `client --socket PATH wait-ready --timeout-ms 5000`
+returns the existing Status JSON only after peer authentication, Hello and Status
+succeed. The accepted budget is 1–60,000 ms and covers connection, handshake,
+response and retry delays together. Only transport-level NotFound and
+ConnectionRefused before connection are retried; permission, protocol and
+post-connection errors remain terminal. This read-only probe never starts
+capture, removes a socket or stops a service. It proves control-plane readiness,
+not receiver permission or RF readiness.
+
 The client sends config JSON, not a server pathname. Paths inside that config
 resolve relative to the **backend's working directory**, just like existing
 hostd session configuration. Prefer absolute source/helper paths. Syntax/size
