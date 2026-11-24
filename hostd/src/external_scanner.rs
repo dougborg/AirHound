@@ -6,7 +6,12 @@ use crate::{
     external_wifi::{SessionValidator, MAX_LINE_BYTES},
     observation::ScanEvent,
 };
-use std::{io, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    fmt, io,
+    path::PathBuf,
+    process::{ExitStatus, Stdio},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
@@ -440,7 +445,7 @@ async fn scan_loop_with_timeouts(
             }
         }
     }.await;
-    let cleanup = shutdown_child(
+    let mut cleanup = shutdown_child(
         &mut child,
         &mut input,
         &mut lines,
@@ -450,11 +455,36 @@ async fn scan_loop_with_timeouts(
         #[cfg(test)]
         hooks.stop.clone(),
     )
-    .await
-    .and_then(|message| {
-        selected_identity(&message, options.usb_selector.as_deref(), &mut selected_usb)?;
-        read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts)
-    });
+    .await;
+    match &mut cleanup {
+        Ok(message) => {
+            if let Err(e) = qualify_cleanup(
+                message,
+                options.usb_selector.as_deref(),
+                &mut selected_usb,
+                &mut producer_dropped,
+                &mut reconnect_attempts,
+            ) {
+                cleanup = Err(e);
+            }
+        }
+        Err(error) => {
+            // A failed process can still have reported a valid radio cleanup.
+            // Qualify that acknowledgement against the selected device even when
+            // the nonzero exit keeps the overall receiver result failed.
+            if let Some(failure) = error
+                .get_mut()
+                .and_then(|e| e.downcast_mut::<ShutdownFailure>())
+            {
+                failure.qualify(
+                    options.usb_selector.as_deref(),
+                    &mut selected_usb,
+                    &mut producer_dropped,
+                    &mut reconnect_attempts,
+                );
+            }
+        }
+    }
     // An inherited pipe in a broken companion descendant must not hang teardown.
     let mut stderr = stderr;
     let stderr_result = timeout(Duration::from_secs(1), &mut stderr).await;
@@ -500,24 +530,111 @@ async fn scan_loop_with_timeouts(
     }
 }
 
+#[derive(Debug, Default)]
+struct ShutdownOutcome {
+    stopped: Option<serde_json::Value>,
+    exit_status: Option<ExitStatus>,
+    termination_requested: bool,
+    reaped: bool,
+}
+
+#[derive(Debug)]
+struct ShutdownFailure {
+    reason: String,
+    outcome: ShutdownOutcome,
+    cleanup_acknowledgement_qualified: bool,
+    cleanup_qualification_error: Option<String>,
+}
+
+fn qualify_cleanup(
+    message: &serde_json::Value,
+    requested: Option<&str>,
+    selected: &mut Option<String>,
+    dropped: &mut u64,
+    reconnects: &mut u64,
+) -> io::Result<()> {
+    if message["cleanup_verified"] != true {
+        return Err(error("companion did not acknowledge radio cleanup"));
+    }
+    selected_identity(message, requested, selected)?;
+    read_metrics(message, dropped, reconnects)
+}
+
+impl ShutdownFailure {
+    fn qualify(
+        &mut self,
+        requested: Option<&str>,
+        selected: &mut Option<String>,
+        dropped: &mut u64,
+        reconnects: &mut u64,
+    ) {
+        if let Some(message) = &self.outcome.stopped {
+            match qualify_cleanup(message, requested, selected, dropped, reconnects) {
+                Ok(()) => self.cleanup_acknowledgement_qualified = true,
+                Err(error) => self.cleanup_qualification_error = Some(error.to_string()),
+            }
+        }
+    }
+}
+
+impl fmt::Display for ShutdownFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.reason)?;
+        if let Some(status) = self.outcome.exit_status {
+            write!(f, "; observed {status}")?;
+        }
+        if self.outcome.termination_requested {
+            write!(f, "; forced termination requested")?;
+        } else {
+            write!(f, "; termination_requested=false")?;
+        }
+        let reported = self
+            .outcome
+            .stopped
+            .as_ref()
+            .and_then(|m| m["cleanup_verified"].as_bool());
+        write!(
+            f,
+            "; reaped={}; reported_cleanup={reported:?}; cleanup_acknowledgement_qualified={}",
+            self.outcome.reaped, self.cleanup_acknowledgement_qualified
+        )?;
+        if let Some(reason) = &self.cleanup_qualification_error {
+            write!(f, "; cleanup qualification failed: {reason}")?;
+        }
+        // This existing bounded numeric field helps distinguish MCU recovery
+        // from other failures without retaining potentially sensitive stderr.
+        if let Some(timeouts) = self
+            .outcome
+            .stopped
+            .as_ref()
+            .and_then(|m| m["mcu_timeouts"].as_u64())
+        {
+            write!(f, "; producer_mcu_timeouts={timeouts}")?;
+        }
+        Ok(())
+    }
+}
+impl std::error::Error for ShutdownFailure {}
+
 async fn shutdown_child<R: AsyncRead + Unpin>(
     child: &mut Child,
     input: &mut ChildStdin,
     lines: &mut Lines<R>,
-    mut stopped: Option<serde_json::Value>,
+    stopped: Option<serde_json::Value>,
     stop_timeout: Duration,
     request_id: u64,
     #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
 ) -> io::Result<serde_json::Value> {
+    let mut outcome = ShutdownOutcome {
+        stopped,
+        ..Default::default()
+    };
     let graceful = lifecycle_timeout(
         stop_timeout,
         async {
-            if stopped.is_none() {
+            if outcome.stopped.is_none() {
                 command(input, "stop", request_id).await?;
                 loop {
-                    // A malformed observation is fatal to the scan but must not
-                    // prevent a later verified shutdown acknowledgement. Resync
-                    // only at bounded line boundaries; the overall grace applies.
                     let line = match lines.next().await {
                         Ok(Some(line)) => line,
                         Ok(None) => break,
@@ -527,47 +644,79 @@ async fn shutdown_child<R: AsyncRead + Unpin>(
                         }
                         Err(e) => return Err(e),
                     };
-                    let Ok(message) = json(&line) else {
-                        continue;
-                    };
+                    let Ok(message) = json(&line) else { continue };
                     if message["type"] == "stopped"
                         && message["request_id"].as_u64() == Some(request_id)
                     {
-                        stopped = Some(message);
+                        outcome.stopped = Some(message);
                         break;
                     }
                 }
             }
-            let stopped = stopped
-                .take()
-                .filter(|message| message["cleanup_verified"] == true)
-                .ok_or_else(|| error("companion did not verify radio cleanup"))?;
+            if outcome
+                .stopped
+                .as_ref()
+                .is_none_or(|m| m["cleanup_verified"] != true)
+            {
+                return Err(error("companion did not verify radio cleanup"));
+            }
             let status = child.wait().await?;
+            outcome.exit_status = Some(status);
+            outcome.reaped = true;
             if !status.success() {
                 return Err(error("companion exited unsuccessfully"));
             }
-            Ok(stopped)
+            Ok(())
         },
         #[cfg(test)]
         witness,
     )
     .await;
-    match graceful {
-        Ok(Ok(stopped)) => Ok(stopped),
-        failed => {
-            let reason = match failed {
-                Ok(Err(e)) => e.to_string(),
-                _ => "companion graceful shutdown timed out".into(),
-            };
-            // kill() requests termination AND reaps the child; bounded even for a
-            // companion that ignores its command pipe. Never claim verified cleanup.
-            timeout(Duration::from_secs(2), child.kill())
-                .await
-                .map_err(|_| error("companion kill/reap timed out; radio state unverified"))??;
-            Err(error(&format!(
-                "{reason}; forced termination, radio cleanup unverified"
-            )))
+    let mut reason = match graceful {
+        Ok(Ok(())) => return Ok(outcome.stopped.expect("verified stopped message")),
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => "companion graceful shutdown timed out".into(),
+    };
+    if outcome.exit_status.is_none() {
+        let state = child.try_wait();
+        settle_unresolved_child(child, &mut outcome, &mut reason, state).await;
+    }
+    Err(io::Error::other(ShutdownFailure {
+        reason,
+        outcome,
+        cleanup_acknowledgement_qualified: false,
+        cleanup_qualification_error: None,
+    }))
+}
+
+async fn settle_unresolved_child(
+    child: &mut Child,
+    outcome: &mut ShutdownOutcome,
+    reason: &mut String,
+    state: io::Result<Option<ExitStatus>>,
+) {
+    match state {
+        Ok(Some(status)) => {
+            outcome.exit_status = Some(status);
+            outcome.reaped = true;
+            return;
         }
+        Ok(None) => {}
+        Err(error) => reason.push_str(&format!("; child state unavailable: {error}")),
+    }
+    // Neither a live child nor an unavailable state proves exit. Preserve the
+    // owned termination/reap attempt, including when either operation fails.
+    match child.start_kill() {
+        Ok(()) => outcome.termination_requested = true,
+        Err(error) => reason.push_str(&format!("; termination request failed: {error}")),
+    }
+    match timeout(Duration::from_secs(2), child.wait()).await {
+        Ok(Ok(status)) => {
+            outcome.exit_status = Some(status);
+            outcome.reaped = true;
+        }
+        Ok(Err(error)) => reason.push_str(&format!("; child reap failed: {error}")),
+        Err(_) => reason.push_str("; companion reap timed out"),
     }
 }
 
@@ -966,6 +1115,132 @@ exit 3
         })
         .await;
     }
+    #[tokio::test]
+    async fn nonzero_exit_retains_and_qualifies_cleanup_without_claiming_kill() {
+        crate::test_support::manual_time(async {
+            for (change, qualified) in [
+                (serde_json::json!({}), true),
+                (serde_json::json!({"cleanup_verified":false}), false),
+                (
+                    serde_json::json!({"usb_device":{"selector":"usb:1:2"}}),
+                    false,
+                ),
+                (serde_json::json!({"dropped_observations":"invalid"}), false),
+                (serde_json::json!({"reconnect_attempts":null}), false),
+            ] {
+                let mut child = Command::new("/bin/sh")
+                    .args(["-c", "exit 7"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap();
+                let mut input = child.stdin.take().unwrap();
+                // Actual completion precedes shutdown: no scheduling assumption
+                // decides whether the failed child has already exited/reaped.
+                assert_eq!(child.wait().await.unwrap().code(), Some(7));
+                let mut stopped = serde_json::json!({
+                    "type":"stopped", "cleanup_verified":true,
+                    "usb_device":{"selector":"usb:1:1.1"}, "mcu_timeouts":3
+                });
+                stopped
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(change.as_object().unwrap().clone());
+                let mut lines = Lines::new(tokio::io::empty());
+                let mut error = shutdown_child(
+                    &mut child,
+                    &mut input,
+                    &mut lines,
+                    Some(stopped),
+                    Duration::from_secs(15),
+                    1,
+                    None,
+                )
+                .await
+                .unwrap_err();
+                let failure = error
+                    .get_mut()
+                    .unwrap()
+                    .downcast_mut::<ShutdownFailure>()
+                    .unwrap();
+                let mut selected = Some("usb:1:1.1".to_owned());
+                let (mut drops, mut reconnects) = (17, 2);
+                failure.qualify(
+                    Some("usb:1:1.1"),
+                    &mut selected,
+                    &mut drops,
+                    &mut reconnects,
+                );
+                assert_eq!(failure.outcome.exit_status.unwrap().code(), Some(7));
+                assert!(failure.outcome.reaped);
+                assert!(!failure.outcome.termination_requested);
+                assert_eq!(failure.cleanup_acknowledgement_qualified, qualified);
+                // Missing optional metrics preserve the previously observed values.
+                assert_eq!((drops, reconnects), (17, 2));
+                assert!(!error.to_string().contains("forced termination"));
+                assert!(error.to_string().contains("producer_mcu_timeouts=3"));
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn unexpected_stop_and_nonzero_exit_keep_receiver_failed_with_qualified_cleanup() {
+        crate::test_support::manual_time(async {
+            let fake = Fake::new(r#"
+printf '%s\n' '{"type":"hello","protocol_version":1}' '{"type":"status","state":"running","usb_device":{"selector":"usb:1:1.1"}}' '{"type":"stopped","cleanup_verified":true,"usb_device":{"selector":"usb:1:1.1"},"dropped_observations":0,"reconnect_attempts":2}'
+exit 7
+"#);
+            let mut options = fake.options();
+            options.usb_selector = Some("usb:1:1.1".to_owned());
+            let (tx, mut rx) = mpsc::channel(16);
+            let error = scan_loop(options, tx, ScanControl::new(true)).await.unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("companion stopped unexpectedly"));
+            assert!(message.contains("companion exited unsuccessfully"));
+            assert!(message.contains("cleanup_acknowledgement_qualified=true"));
+            assert!(message.contains("reaped=true"));
+            assert!(!message.contains("forced termination"));
+            let mut final_status = None;
+            while let Some(event) = rx.recv().await {
+                if let ScanEvent::ExternalStatus { state, reconnect_attempts, .. } = event {
+                    final_status = Some((state, reconnect_attempts));
+                }
+            }
+            assert_eq!(final_status, Some(("failed".to_owned(), 2)));
+            fake.assert_exited();
+        }).await;
+    }
+
+    #[tokio::test]
+    async fn unavailable_child_state_still_requests_termination_and_reaps() {
+        crate::test_support::manual_time(async {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", "read -r command"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut outcome = ShutdownOutcome::default();
+            let mut reason = "original shutdown failure".to_owned();
+            settle_unresolved_child(
+                &mut child,
+                &mut outcome,
+                &mut reason,
+                Err(io::Error::other("injected state failure")),
+            )
+            .await;
+            assert!(outcome.termination_requested);
+            assert!(outcome.reaped);
+            assert!(outcome.exit_status.is_some());
+            assert!(reason.contains("original shutdown failure"));
+            assert!(reason.contains("injected state failure"));
+        })
+        .await;
+    }
+
     #[tokio::test]
     async fn hello_timeout_and_uncooperative_stop_force_reap_and_report_failure() {
         crate::test_support::manual_time(async {
