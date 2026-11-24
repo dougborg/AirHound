@@ -194,7 +194,9 @@ struct InspectorView: View {
             field("Channel", row.channel)
             field("Frequency", row.frequency)
             field("Band", row.band)
-            field("PHY", row.phy)
+            field("Receive PHY", row.phy)
+            field("Advertised PHY", row.advertisedPHY)
+            field("Security", row.security)
             field("Match", row.match == "—" ? "No match reported" : row.match)
             field("Alert", row.alert)
           }
@@ -204,6 +206,11 @@ struct InspectorView: View {
               if row.evidence.isEmpty { Text("No signature evidence attached.") }
               ForEach(row.evidence, id: \.self) { Text($0).textSelection(.enabled) }
             }.font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+          }
+          if let metadata = row.metadata {
+            DisclosureGroup("Source metadata and derivation") {
+              Text(metadata).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            }
           }
           DisclosureGroup("Original record") {
             Text(row.raw).font(.system(.caption, design: .monospaced)).textSelection(.enabled)

@@ -33,3 +33,6 @@ mod test_directory;
 #[cfg(test)]
 #[allow(dead_code)]
 mod test_support;
+pub mod wifi_metadata;
+
+pub mod receiver_metadata;

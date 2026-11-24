@@ -95,6 +95,7 @@ pub struct Packet {
     pub captured_len: usize,
     pub original_len: u32,
     pub rf_channel: u8,
+    pub rf_channel_aliased: bool,
     pub channel: u8,
     pub phy: &'static str,
     pub rssi: Option<i8>,
@@ -146,6 +147,7 @@ impl Packet {
             captured_len: b.len(),
             original_len,
             rf_channel: b[0],
+            rf_channel_aliased: flags & 0x0040 != 0,
             channel: match b[0] {
                 0 => 37,
                 12 => 38,
@@ -367,6 +369,23 @@ pub(crate) mod tests {
     pub fn packet(ad: &[u8]) -> Packet {
         let f = frame(0, ad);
         Packet::decode(1_700_000_000_123_456, f.len() as u32, &f).unwrap()
+    }
+    #[test]
+    fn pseudoheader_alias_bit_controls_frequency_projection() {
+        let mut bytes = frame(0, &[2, 1, 6]);
+        for aliased in [false, true] {
+            bytes[8] = (bytes[8] & !0x40) | if aliased { 0x40 } else { 0 };
+            let packet = Packet::decode(1, bytes.len() as u32, &bytes).unwrap();
+            assert_eq!(packet.rf_channel_aliased, aliased);
+            let mut record = serde_json::to_value(packet).unwrap();
+            record["type"] = "ble_packet_observation".into();
+            let metadata = airhound_hostd::receiver_metadata::project(&record).unwrap();
+            if aliased {
+                assert!(metadata["frequency_mhz"].is_null());
+            } else {
+                assert_eq!(metadata["frequency_mhz"], 2402);
+            }
+        }
     }
     #[tokio::test]
     async fn replay_preserves_order_times_and_eof() {

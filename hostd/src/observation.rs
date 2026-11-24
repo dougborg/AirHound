@@ -51,6 +51,10 @@ pub enum ScanEvent {
         address: Option<[u8; 6]>,
     },
     WiFi(WiFiEvent),
+    WiFiDetailed {
+        event: WiFiEvent,
+        metadata: Box<airhound_hostd::wifi_metadata::Metadata>,
+    },
     ExternalWiFi {
         event: crate::external_wifi::Beacon,
         generation: u64,

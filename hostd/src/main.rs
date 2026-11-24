@@ -966,6 +966,10 @@ async fn filter_task<W: Write, O: Write>(
             ScanEvent::Replay { event, metadata } => (*event, Some(metadata)),
             event => (event, None),
         };
+        let (event, wifi_metadata) = match event {
+            ScanEvent::WiFiDetailed { event, metadata } => (ScanEvent::WiFi(event), Some(metadata)),
+            event => (event, None),
+        };
         let mut output = session_runtime::SourceWriter::new(&mut output, source.as_ref());
         output.replay = replay.as_ref();
         if let ScanEvent::ExternalStatus {
@@ -1392,6 +1396,7 @@ async fn filter_task<W: Write, O: Write>(
                 }
             }
             ScanEvent::ExternalStatus { .. } => unreachable!("status handled before pause gate"),
+            ScanEvent::WiFiDetailed { .. } => unreachable!("unwrapped WiFi metadata"),
             ScanEvent::WiFi(ref wifi_event) => {
                 // Write observation to WiGLE CSV (all networks, not just matches)
                 mac_buf.clear();
@@ -1409,7 +1414,14 @@ async fn filter_task<W: Write, O: Write>(
                 )?;
 
                 // Retain observations and attach evidence; legacy match records remain additive.
-                handle_wifi_event(wifi_event, &cfg, &mac_index, start_time, &mut output)?;
+                handle_wifi_event_metadata(
+                    wifi_event,
+                    wifi_metadata.as_deref(),
+                    &cfg,
+                    &mac_index,
+                    start_time,
+                    &mut output,
+                )?;
             }
             ScanEvent::Odid(ref event) => {
                 if cfg.wifi_enabled && event.rssi >= cfg.min_rssi {
@@ -1498,8 +1510,20 @@ fn emit_ble_match(
 }
 
 /// Filter and emit a WiFi scan event (NDJSON on stdout if matched).
+#[cfg(test)]
 fn handle_wifi_event(
     event: &airhound::scanner::WiFiEvent,
+    cfg: &FilterConfig,
+    mac_index: &MacIndex,
+    start_time: Instant,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    handle_wifi_event_metadata(event, None, cfg, mac_index, start_time, output)
+}
+
+fn handle_wifi_event_metadata(
+    event: &airhound::scanner::WiFiEvent,
+    metadata: Option<&airhound_hostd::wifi_metadata::Metadata>,
     cfg: &FilterConfig,
     mac_index: &MacIndex,
     start_time: Instant,
@@ -1525,6 +1549,7 @@ fn handle_wifi_event(
             "rssi":event.rssi, "ch":event.channel, "frame":event.frame_type.as_str(),
             "security":event.security.as_str(), "ts":ts,
             "frequency_mhz":event.frequency_mhz,
+            "wifi_metadata":metadata.map(|value|value.projection()),
             "band":event.frequency_mhz.and_then(airhound::wifi_frequency::channel).map(|(band, _)| band.as_str()),
             "detection":result.detection(cfg.alert_policy)
         }),
@@ -2345,6 +2370,73 @@ mod tests {
                     baseline = Some(evidence);
                 }
             }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn detailed_wifi_metadata_survives_the_actual_event_pipeline() {
+        crate::test_support::manual_time(async {
+            use airhound_hostd::wifi_metadata::{BoundedBytes, Metadata, MAX_IE_BYTES};
+            let ScanEvent::WiFi(mut event) = wifi_match() else {
+                unreachable!()
+            };
+            event.frequency_mhz = Some(5955);
+            let raw = vec![0, 2, 255, 128, 222, 2, 1, 2];
+            let metadata = Metadata {
+                source: "corewlan_scan_snapshot",
+                ssid_bytes: Some(BoundedBytes::new(&[255, 128], 32)),
+                information_elements: Some(BoundedBytes::new(&raw, MAX_IE_BYTES)),
+                frequency_provenance: Some("derived_from_corewlan_band_channel"),
+                ..Metadata::default()
+            };
+            let (tx, rx) = mpsc::channel(2);
+            tx.send(ScanEvent::WiFiDetailed {
+                event,
+                metadata: Box::new(metadata),
+            })
+            .await
+            .unwrap();
+            drop(tx);
+            let output = RecordingWriter::default();
+            filter_task(
+                rx,
+                Arc::new(Mutex::new(FilterConfig::new())),
+                Arc::new(MacIndex::from_defaults()),
+                Instant::now(),
+                WigleWriter::new(RecordingWriter::default()).unwrap(),
+                output.clone(),
+                ScanControl::new(true),
+            )
+            .await
+            .unwrap();
+            let rows: Vec<serde_json::Value> = recorded(&output)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let row = rows
+                .iter()
+                .find(|row| row["type"] == "wifi_observation")
+                .unwrap();
+            assert_eq!(
+                row["wifi_metadata"]["information_elements"]["bytes"],
+                serde_json::json!(raw)
+            );
+            assert_eq!(
+                row["wifi_metadata"]["ssid"]["bytes"],
+                serde_json::json!([255, 128])
+            );
+            let projected = airhound_hostd::receiver_metadata::project(row).unwrap();
+            assert_eq!(projected["frequency_mhz"], 5955);
+            assert_eq!(
+                projected["frequency_basis"],
+                "derived_from_corewlan_band_channel"
+            );
+            assert_eq!(
+                projected["wifi"]["frame_basis"],
+                "os_scan_snapshot_subtype_unknown"
+            );
+            assert!(projected["phy"].is_null());
         })
         .await;
     }
@@ -3248,6 +3340,11 @@ mod tests {
             let m = &messages[0];
             assert_eq!(m["type"], "ble_packet_observation");
             assert_eq!(m["source_id"], "fixture");
+            assert_eq!(m["rf_channel_aliased"], false);
+            assert_eq!(
+                airhound_hostd::receiver_metadata::project(m).unwrap()["frequency_mhz"],
+                2402
+            );
             assert_eq!(m["captured_at_us"], 1_700_000_000_123_456u64);
             assert_eq!(m["generation"], 2);
             assert_eq!(m["sequence"], 7);
