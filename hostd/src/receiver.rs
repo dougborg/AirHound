@@ -309,25 +309,42 @@ fn phy_response(packet: &[u8], index: u16) -> Result<Option<ControllerPhy>, &'st
 
 // Exercise the actual bounded socket receive path with local datagrams in tests;
 // this does not require a Bluetooth controller or privileged MGMT socket.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(target_os = "linux")]
 fn receive_phy(
     fd: std::os::fd::RawFd,
     index: u16,
     timeout: std::time::Duration,
 ) -> Result<ControllerPhy, &'static str> {
-    use std::time::Instant;
-    let deadline = Instant::now() + timeout;
+    let start = std::time::Instant::now();
+    receive_phy_with(
+        fd,
+        index,
+        timeout,
+        || start.elapsed(),
+        |fd, remaining| {
+            let mut pollfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            unsafe { libc::poll(&mut pollfd, 1, remaining.as_millis().max(1) as i32) > 0 }
+        },
+    )
+}
+
+// The elapsed and readability seams preserve real recv/parser/error behavior;
+// fixtures drive deadline passage explicitly, without sleeping or radio access.
+#[cfg(any(target_os = "linux", test))]
+fn receive_phy_with(
+    fd: std::os::fd::RawFd,
+    index: u16,
+    timeout: std::time::Duration,
+    mut elapsed: impl FnMut() -> std::time::Duration,
+    mut readable: impl FnMut(std::os::fd::RawFd, std::time::Duration) -> bool,
+) -> Result<ControllerPhy, &'static str> {
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("mgmt_query_timeout");
-        }
-        let mut pollfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        if unsafe { libc::poll(&mut pollfd, 1, remaining.as_millis().max(1) as i32) } <= 0 {
+        let remaining = timeout.saturating_sub(elapsed());
+        if remaining.is_zero() || !readable(fd, remaining) {
             return Err("mgmt_query_timeout");
         }
         let mut packet = [0u8; 1024];
@@ -470,6 +487,22 @@ mod tests {
         use std::os::fd::AsRawFd;
         use std::os::unix::net::UnixDatagram;
         use std::time::Duration;
+        let receive = |fd, index, timeout| {
+            receive_phy_with(
+                fd,
+                index,
+                timeout,
+                || Duration::ZERO,
+                |fd, _| {
+                    let mut pollfd = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    unsafe { libc::poll(&mut pollfd, 1, 0) > 0 }
+                },
+            )
+        };
         let (reader, writer) = UnixDatagram::pair().unwrap();
         reader.set_nonblocking(true).unwrap();
         let mut response = vec![1, 0, 2, 0, 15, 0, 0x44, 0, 0];
@@ -480,27 +513,70 @@ mod tests {
         unrelated[2] = 3;
         writer.send(&unrelated).unwrap();
         writer.send(&response).unwrap();
-        let phy = receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)).unwrap();
+        let phy = receive(reader.as_raw_fd(), 2, Duration::from_millis(50)).unwrap();
         assert_eq!(phy.supported_mask, 1 << 14);
         assert_eq!(phy.system_selected_mask, 1 << 10);
         assert_eq!(
-            receive_phy(reader.as_raw_fd(), 2, Duration::ZERO),
+            receive(reader.as_raw_fd(), 2, Duration::ZERO),
             Err("mgmt_query_timeout")
         );
         assert_eq!(
-            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(5)),
+            receive(reader.as_raw_fd(), 2, Duration::from_millis(5)),
             Err("mgmt_query_timeout")
         );
         writer.send(&[1, 0]).unwrap();
         assert_eq!(
-            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)),
+            receive(reader.as_raw_fd(), 2, Duration::from_millis(50)),
             Err("malformed_mgmt_response")
         );
         response[8] = 0x14;
         writer.send(&response).unwrap();
         assert_eq!(
-            receive_phy(reader.as_raw_fd(), 2, Duration::from_millis(50)),
+            receive(reader.as_raw_fd(), 2, Duration::from_millis(50)),
             Err("mgmt_permission_denied")
+        );
+    }
+
+    #[test]
+    fn management_deadline_does_not_restart_after_unrelated_packet() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixDatagram;
+        use std::time::Duration;
+        let (reader, writer) = UnixDatagram::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        // A complete command response for another controller is ignored.
+        writer.send(&[1, 0, 3, 0, 0, 0]).unwrap();
+        writer.send(&[1, 0, 3, 0, 0, 0]).unwrap();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut waits = Vec::new();
+        assert_eq!(
+            receive_phy_with(
+                reader.as_raw_fd(),
+                2,
+                Duration::from_millis(50),
+                || elapsed.get(),
+                |_, remaining| {
+                    waits.push(remaining);
+                    elapsed.set(elapsed.get() + Duration::from_millis(25));
+                    true
+                }
+            ),
+            Err("mgmt_query_timeout")
+        );
+        assert_eq!(
+            waits,
+            [Duration::from_millis(50), Duration::from_millis(25)]
+        );
+        // A readiness race still reports recv failure instead of fabricated data.
+        assert_eq!(
+            receive_phy_with(
+                reader.as_raw_fd(),
+                2,
+                Duration::from_millis(50),
+                || Duration::ZERO,
+                |_, _| true
+            ),
+            Err("mgmt_receive_failed")
         );
     }
 

@@ -87,14 +87,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn physical_radio_identity_rejects_multiple_interfaces_on_one_phy() {
-        let root = std::env::temp_dir().join(format!(
-            "airhound-session-phy-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_directory::create("airhound-session-phy").unwrap();
         std::fs::create_dir_all(root.join("phy0")).unwrap();
         std::fs::create_dir_all(root.join("phy1")).unwrap();
         for (interface, phy) in [("mon0", "phy0"), ("mon1", "phy0"), ("mon2", "phy1")] {

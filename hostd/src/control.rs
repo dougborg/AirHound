@@ -334,12 +334,16 @@ mod tests {
         let control = ScanControl::new(false);
         let (tx, rx) = mpsc::channel::<()>(1);
         let mut state = control.subscribe();
-        assert!(tokio::time::timeout(
-            std::time::Duration::from_millis(10),
-            wait_running(&mut state, &tx)
-        )
-        .await
-        .is_err());
+        {
+            let waiting = wait_running(&mut state, &tx);
+            tokio::pin!(waiting);
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(
+                    std::future::Future::poll(waiting.as_mut(), cx).is_pending()
+                ))
+                .await
+            );
+        }
         control.store(true, Ordering::Relaxed);
         assert!(wait_running(&mut state, &tx).await);
         let generation = state.borrow().generation;

@@ -63,21 +63,60 @@ fn explicit_ingress_location_cannot_be_replaced_by_filter_time_evidence() {
         assert_eq!(written["receiver_location"], snapshot);
     }
 }
-async fn execute(receivers: Vec<ReceiverTask>, output: RecordingWriter) -> io::Result<()> {
+// Outer wall-time safeguard only: policy expiry is separately injected below,
+// including on the multi-thread runtime where Tokio cannot pause its clock.
+async fn run<W, O, C, CF, S>(
+    receivers: Vec<ReceiverTask>,
+    config: FilterConfig,
+    writer: WigleWriter<W>,
+    output: O,
+    gps: Option<gpsd::Options>,
+    commands: C,
+    shutdown: S,
+) -> io::Result<()>
+where
+    W: Write + Send + 'static,
+    O: Write + Send + 'static,
+    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant, ScanControl) -> CF,
+    CF: Future<Output = ()> + Send + 'static,
+    S: Future<Output = io::Result<()>>,
+{
     tokio::time::timeout(
-        Duration::from_secs(3),
-        run(
+        Duration::from_secs(120),
+        run_controlled_with_shutdown_timer(
             receivers,
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
+            (config, ScanControl::new(true)),
+            writer,
             output,
-            None,
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
+            gps,
+            commands,
+            (shutdown, |_| std::future::pending()),
         ),
     )
     .await
-    .expect("session hung")
+    .expect("session fixture outer hang guard expired")
+}
+
+struct SignalOnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+impl Drop for SignalOnDrop {
+    fn drop(&mut self) {
+        if let Some(signal) = self.0.take() {
+            let _ = signal.send(());
+        }
+    }
+}
+
+async fn execute(receivers: Vec<ReceiverTask>, output: RecordingWriter) -> io::Result<()> {
+    run(
+        receivers,
+        FilterConfig::new(),
+        WigleWriter::new(Vec::new()).unwrap(),
+        output,
+        None,
+        |_, _, _| std::future::pending(),
+        std::future::pending(),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -128,15 +167,17 @@ async fn concurrent_bursts_preserve_each_source_order_and_identity() {
 async fn error_and_panic_do_not_stop_the_other_receiver() {
     for panic in [false, true] {
         let output = RecordingWriter::default();
+        let (failed, failure_complete) = tokio::sync::oneshot::channel();
         let error = execute(
             vec![
                 task("failed", move |_, control| async move {
+                    let _signal = SignalOnDrop(Some(failed));
                     control.set_health(Scanner::Ble, Phase::Running, "test_running");
                     assert!(!panic, "injected receiver panic");
                     Err(io::Error::other("injected receiver failure"))
                 }),
-                task("survivor", |tx, _| async move {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                task("survivor", move |tx, _| async move {
+                    failure_complete.await.unwrap();
                     tx.send(marker(7)).await.map_err(io::Error::other)?;
                     Ok(())
                 }),
@@ -222,26 +263,67 @@ async fn shutdown_deadline_aborts_unresponsive_receiver_and_reports_uncertainty(
         let _ = ready.send(());
         std::future::pending().await
     });
-    let error = tokio::time::timeout(
-        Duration::from_secs(2),
-        run(
+    let (registered, registration) = tokio::sync::oneshot::channel();
+    let (expire, expiry) = tokio::sync::oneshot::channel();
+    let scenario = async {
+        let session = run_controlled_with_shutdown_timer(
             vec![receiver],
-            FilterConfig::new(),
+            (FilterConfig::new(), ScanControl::new(true)),
             WigleWriter::new(Vec::new()).unwrap(),
             RecordingWriter::default(),
             None,
             |_, _, _| std::future::pending(),
-            async move {
-                started.await.unwrap();
-                Ok(())
-            },
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap_err();
+            (
+                async move {
+                    started.await.unwrap();
+                    Ok(())
+                },
+                move |budget| async move {
+                    assert_eq!(budget, Duration::from_millis(50));
+                    registered.send(()).unwrap();
+                    expiry.await.unwrap();
+                },
+            ),
+        );
+        let observed_drop = dropped.clone();
+        let driver = async move {
+            registration.await.unwrap();
+            assert!(!observed_drop.load(Ordering::SeqCst));
+            expire.send(()).unwrap();
+        };
+        let (result, ()) = tokio::join!(session, driver);
+        result.unwrap_err()
+    };
+    let error = tokio::time::timeout(Duration::from_secs(120), scenario)
+        .await
+        .expect("shutdown fixture outer hang guard expired");
     assert!(error.to_string().contains("cleanup unverified"), "{error}");
     assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn cleanup_completion_wins_simultaneous_expiry() {
+    // No receivers leaves the actual JoinSet drain immediately ready. The
+    // injected expiry is also ready on its first poll, with no clock passage.
+    let invoked = AtomicBool::new(false);
+    let result = run_controlled_with_shutdown_timer(
+        Vec::new(),
+        (FilterConfig::new(), ScanControl::new(true)),
+        WigleWriter::new(Vec::new()).unwrap(),
+        RecordingWriter::default(),
+        None,
+        |_, _, _| std::future::pending(),
+        (async { Ok(()) }, |budget| {
+            assert_eq!(budget, Duration::from_secs(5));
+            invoked.store(true, Ordering::SeqCst);
+            std::future::ready(())
+        }),
+    );
+    tokio::time::timeout(Duration::from_secs(120), result)
+        .await
+        .expect("completion-precedence fixture outer hang guard expired")
+        .unwrap();
+    assert!(invoked.load(Ordering::SeqCst));
 }
 
 struct FailRecords;
@@ -273,20 +355,16 @@ async fn failed_output_shuts_down_remaining_receiver() {
         flag.store(true, Ordering::SeqCst);
         Ok(())
     });
-    let error = tokio::time::timeout(
-        Duration::from_secs(2),
-        run(
-            vec![receiver],
-            FilterConfig::new(),
-            WigleWriter::new(Vec::new()).unwrap(),
-            FailRecords,
-            None,
-            |_, _, _| std::future::pending(),
-            std::future::pending(),
-        ),
+    let error = run(
+        vec![receiver],
+        FilterConfig::new(),
+        WigleWriter::new(Vec::new()).unwrap(),
+        FailRecords,
+        None,
+        |_, _, _| std::future::pending(),
+        std::future::pending(),
     )
     .await
-    .unwrap()
     .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     assert!(stopped.load(Ordering::SeqCst));

@@ -533,19 +533,8 @@ mod tests {
 
     #[tokio::test]
     async fn profile_load_returns_editable_configuration_after_serial_alias_collision() {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        let root = std::env::temp_dir().join(format!(
-            "ah-profile-load-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&root)
-            .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::test_directory::create("ah-profile-load").unwrap();
         struct Cleanup(PathBuf);
         impl Drop for Cleanup {
             fn drop(&mut self) {
