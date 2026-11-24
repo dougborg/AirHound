@@ -97,9 +97,34 @@ fn private_metadata(metadata: &fs::Metadata, directory: bool) -> io::Result<()> 
     Ok(())
 }
 
+// The store owns the lock, not every OS descriptor referring to its file.
+// A concurrent subprocess fork can temporarily inherit a descriptor before exec.
+// Explicit unlock prevents that incidental duplicate extending the Store lifetime.
+// Keep this guard private and non-Clone: it has exactly one logical owner.
+struct StoreLock(File);
+impl StoreLock {
+    fn acquire(file: File) -> io::Result<Self> {
+        // SAFETY: this owned descriptor remains open throughout the call.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "profile store is busy; retry the operation",
+            ));
+        }
+        Ok(Self(file))
+    }
+}
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        // SAFETY: the guard owns a live descriptor and a successfully acquired lock.
+        // File closes afterward; failed Store construction also runs this guard.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 pub struct Store {
     directory: PathBuf,
-    _lock: File,
+    _lock: StoreLock,
     origin: Origin,
 }
 impl Store {
@@ -131,13 +156,7 @@ impl Store {
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(directory.join(".lock"))?;
         private_metadata(&lock.metadata()?, false)?;
-        // SAFETY: the owned descriptor stays open for the lifetime of this store.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "profile store is busy; retry the operation",
-            ));
-        }
+        let lock = StoreLock::acquire(lock)?;
         // A killed writer can leave its private staging file. No live writer can
         // hold this lock now; remove only our bounded, validated staging names.
         for (index, entry) in fs::read_dir(directory)?.enumerate() {

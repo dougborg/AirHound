@@ -514,3 +514,45 @@ fn flipper_profile_retains_explicit_port_and_requires_current_binding_review() {
     );
     assert_eq!(loaded.validation_scope, "configuration_only");
 }
+
+#[test]
+fn store_drop_releases_lock_even_while_duplicate_descriptor_survives() {
+    let temp = Temp::new();
+    let store = temp.store();
+    save(&store);
+    let duplicate = store._lock.0.try_clone().unwrap();
+    assert!(
+        matches!(Store::open(&temp.0.join("profiles")), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+    );
+    drop(store);
+    let reopened = temp.store();
+    assert_eq!(reopened.load("test").unwrap().config, config());
+    drop(duplicate);
+    // The old duplicate's close must not release a different Store owner's lock.
+    assert!(
+        matches!(Store::open(&temp.0.join("profiles")), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+    );
+    drop(reopened);
+    let _last = temp.store();
+}
+
+#[test]
+fn acquired_lock_guard_releases_on_constructor_error_with_duplicate_alive() {
+    let temp = Temp::new();
+    drop(temp.store());
+    let path = temp.0.join("profiles/.lock");
+    let mut duplicate = None;
+    let construct = |duplicate: &mut Option<File>| -> io::Result<()> {
+        let file = OpenOptions::new().read(true).write(true).open(&path)?;
+        let lock = StoreLock::acquire(file)?;
+        *duplicate = Some(lock.0.try_clone()?);
+        // Same error-propagation path as origin/staging validation after acquire.
+        Err(invalid("synthetic construction failure"))
+    };
+    assert_eq!(
+        construct(&mut duplicate).unwrap_err().kind(),
+        io::ErrorKind::InvalidInput
+    );
+    let _reopened = temp.store();
+    drop(duplicate);
+}
