@@ -2,7 +2,14 @@
 //! a requested fragment delay advances virtual time. The wall-clock receive
 //! guard diagnoses a broken fixture; it never determines a successful result.
 use super::*;
-use std::{cell::Cell, rc::Rc, sync::mpsc};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+};
 
 const GUARD: Duration = Duration::from_secs(30);
 const STEP: Duration = Duration::from_millis(25);
@@ -105,6 +112,51 @@ impl Host {
             Peer { actions: tx },
         )
     }
+    /// Only after the protocol run has returned, complete already queued fixture
+    /// actions so a peer between its finished check and write can exit and join.
+    /// These bytes are discarded, never delivered to the protocol or its clock.
+    fn finish_peer(&mut self, finished: &AtomicBool) -> io::Result<()> {
+        if !finished.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "protocol still owns transport",
+            ));
+        }
+        if let Some((_, reply)) = self.pending_read.take() {
+            let _ = reply.send(Ok(Vec::new()));
+        }
+        if let Some((_, reply)) = self.pending_delay.take() {
+            let _ = reply.send(Ok(()));
+        }
+        // Fixture scripts are finite. This independent action cap also catches
+        // a peer that ignores cancellation without an unbounded drain loop.
+        for _ in 0..64 {
+            match self.actions.recv_timeout(GUARD) {
+                Ok(Action::Read(_, reply)) => {
+                    let _ = reply.send(Ok(Vec::new()));
+                }
+                Ok(Action::Write(_, reply) | Action::Delay(_, reply) | Action::Probe(reply)) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "fixture peer did not finish owned teardown",
+                    ))
+                }
+            }
+        }
+        Err(io::Error::other(
+            "fixture peer exceeded teardown action bound",
+        ))
+    }
+    fn disconnect_peer(&mut self) {
+        let (_, disconnected) = mpsc::channel();
+        self.actions = disconnected;
+        self.pending_read = None;
+        self.pending_delay = None;
+    }
     fn service_read(&mut self) {
         if !self.outgoing.is_empty() {
             if let Some((limit, reply)) = self.pending_read.take() {
@@ -188,6 +240,107 @@ impl Drop for Host {
             let _ = reply.send(Err(io::ErrorKind::BrokenPipe.into()));
         }
     }
+}
+
+/// Own the scripted peer and its transport together. Completion and assertion
+/// unwinding both cancel, hand off pending actions, and join the actual thread.
+pub(super) struct ScriptedPeer<T> {
+    pub(super) io: Host,
+    pub(super) thread: Option<std::thread::JoinHandle<T>>,
+    pub(super) finished: Arc<AtomicBool>,
+}
+impl<T> ScriptedPeer<T> {
+    pub(super) fn finish(&mut self) -> io::Result<T> {
+        self.finished.store(true, Ordering::Release);
+        let handoff = self.io.finish_peer(&self.finished);
+        if handoff.is_err() {
+            self.io.disconnect_peer();
+        }
+        // Always join even when the handoff reports a fixture failure.
+        let result = self.thread.take().expect("peer joined once").join();
+        handoff?;
+        result.map_err(|_| io::Error::other("fixture peer panicked during owned teardown"))
+    }
+}
+impl<T> Drop for ScriptedPeer<T> {
+    fn drop(&mut self) {
+        if self.thread.is_some() {
+            let _ = self.finish();
+        }
+    }
+}
+
+#[test]
+fn completed_run_hands_off_a_write_that_passed_the_finished_check() {
+    let (io, mut other) = Host::pair();
+    let finished = Arc::new(AtomicBool::new(false));
+    let peer_finished = finished.clone();
+    let (checked, check) = mpsc::sync_channel(1);
+    let (release, released) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        assert!(!peer_finished.load(Ordering::Acquire));
+        checked.send(()).unwrap();
+        released.recv_timeout(GUARD).unwrap();
+        // The write deliberately occurs after the owner finishes, despite the
+        // earlier flag check. This was the failing full-suite interleaving.
+        other.write_all(b"late fixture status").unwrap();
+        assert!(peer_finished.load(Ordering::Acquire));
+        other.delay(Duration::from_secs(1)).unwrap();
+    });
+    let mut peer = ScriptedPeer {
+        io,
+        thread: Some(thread),
+        finished,
+    };
+    check.recv_timeout(GUARD).unwrap();
+    let now = peer.io.clock.now();
+    peer.finished.store(true, Ordering::Release);
+    release.send(()).unwrap();
+    peer.finish().unwrap();
+    assert_eq!(peer.io.clock.now(), now);
+    assert!(peer.io.incoming.is_empty());
+    assert!(peer.io.outgoing.is_empty());
+    assert!(peer.thread.is_none());
+}
+
+#[test]
+fn premature_transport_close_remains_an_error() {
+    let (mut io, mut other) = Host::pair();
+    assert_eq!(
+        io.finish_peer(&AtomicBool::new(false)).unwrap_err().kind(),
+        io::ErrorKind::InvalidInput
+    );
+    drop(io);
+    assert_eq!(
+        other
+            .write_all(b"required protocol frame")
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::BrokenPipe
+    );
+}
+
+#[test]
+fn assertion_unwind_still_finishes_and_joins_the_scripted_peer() {
+    let (io, mut other) = Host::pair();
+    let finished = Arc::new(AtomicBool::new(false));
+    let (done, completed) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        let mut byte = [0];
+        assert_eq!(other.read(&mut byte).unwrap(), 0);
+        done.send(()).unwrap();
+    });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _peer = ScriptedPeer {
+            io,
+            thread: Some(thread),
+            finished,
+        };
+        panic!("injected fixture assertion");
+    }));
+    assert!(result.is_err());
+    // No wait: successful Drop already joined the thread that sent this event.
+    assert_eq!(completed.try_recv(), Ok(()));
 }
 
 /// Socket timeouts are hang guards only. Translate expiry into a terminal

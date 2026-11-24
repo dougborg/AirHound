@@ -614,7 +614,7 @@ mod tests {
 
     #[derive(Default)]
     struct PeerControl {
-        finished: AtomicBool,
+        finished: Arc<AtomicBool>,
         repeated_pairs: AtomicUsize,
     }
 
@@ -1172,17 +1172,22 @@ mod tests {
             Fault::WatchdogBadTail,
             Fault::WatchdogRawTail,
         ] {
-            let (mut io, other) = transport();
+            let (io, other) = transport();
             let clock = io.clock.clone();
             let control = Arc::new(PeerControl::default());
-            let peer = peer_with_control(other, fault, control.clone());
+            let thread = peer_with_control(other, fault, control.clone());
+            let mut peer = test_transport::ScriptedPeer {
+                io,
+                thread: Some(thread),
+                finished: control.finished.clone(),
+            };
             let started = clock.now();
             let mut diagnostic = vec![];
             let mut completion = vec![];
             let mut accepted_terminal = false;
             let mut packet_count = 0;
             let error = run_with_clock(
-                &mut io,
+                &mut peer.io,
                 &clock,
                 [7; 16],
                 || Desired {
@@ -1210,12 +1215,9 @@ mod tests {
                 },
             )
             .unwrap_err();
-            // A bounded host drain may finish while a deliberately noisy peer
-            // is still sending. Cancel and join that test-owned sender before
-            // closing its transport; do not turn expected teardown into EPIPE.
-            control.finished.store(true, Ordering::Release);
-            drop(io);
-            let commands = peer.join().unwrap();
+            // Protocol completion precedes the fixture-only handoff. No further
+            // bytes enter run_with_clock and the clock is never advanced here.
+            let commands = peer.finish().unwrap();
             assert_eq!(commands, [Command::Hello, Command::StartBeacon]);
             assert_eq!(
                 error.to_string(),
