@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import select
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -21,6 +22,28 @@ support_spec.loader.exec_module(support)
 
 
 class TestRunnerTests(unittest.TestCase):
+    def require_inventory(self):
+        # An unavailable OS ownership API is a missing integration prerequisite,
+        # not permission to spawn children that the runner cannot enumerate.
+        try:
+            rows=runner.snapshot(os.getpid())
+        except (OSError, subprocess.SubprocessError) as error:
+            raise unittest.SkipTest("Process inventory unavailable: " + str(error))
+        if not any(row['pid']==os.getpid() for row in rows):
+            raise unittest.SkipTest("Process inventory unavailable in this sandbox")
+
+    def own_fixture(self, process):
+        def cleanup():
+            if process.poll() is None: process.kill()
+            process.wait(timeout=30)  # Outer cleanup guard, not a pass threshold.
+        self.addCleanup(cleanup)
+
+    def test_missing_inventory_refuses_before_spawning_any_fixture(self):
+        with patch.object(runner, 'snapshot', return_value=[]), patch.object(runner.subprocess, 'Popen') as spawn:
+            with self.assertRaises(unittest.SkipTest):
+                self.check_cross_group_cleanup()
+            spawn.assert_not_called()
+
     def test_owned_snapshot_excludes_unrelated_processes(self):
         rows = runner.owned_rows("10 1 10 /bin/swift\n11 10 11 /usr/bin/xctest\n12 1 12 /usr/bin/xctest\n", 10)
         self.assertEqual([row["pid"] for row in rows], [10, 11])
@@ -38,6 +61,7 @@ class TestRunnerTests(unittest.TestCase):
                     2, Path(directory)), status)
 
     def test_timeout_kills_and_reaps_owned_uncooperative_child(self):
+        self.require_inventory()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             ready = support.ReadyPipe(root)
@@ -50,6 +74,7 @@ class TestRunnerTests(unittest.TestCase):
             ])
             observed = []
             def deadline(process, timeout):
+                self.own_fixture(process)
                 self.assertEqual(timeout, 15)
                 message = ready.receive()
                 self.assertEqual(message, {'pid':process.pid,'state':'ready'})
@@ -64,6 +89,7 @@ class TestRunnerTests(unittest.TestCase):
             self.assertTrue((root / "owned-processes.json").exists())
 
     def test_readiness_hook_failure_still_kills_and_reaps_child(self):
+        self.require_inventory()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             ready=support.ReadyPipe(root)
@@ -72,12 +98,43 @@ class TestRunnerTests(unittest.TestCase):
             code="\n".join(["import os,signal,json", "signal.signal(signal.SIGTERM,signal.SIG_IGN)",
                 ready.write_code("{'pid':os.getpid()}"), "signal.pause()"])
             def failed_wait(process, timeout):
+                self.own_fixture(process)
                 pids.append(ready.receive()['pid'])
                 raise AssertionError('injected readiness failure')
             with self.assertRaisesRegex(AssertionError, 'injected readiness failure'):
                 runner.run([sys.executable,'-c',code],15,root,
                     wait_for_exit=failed_wait,cleanup_grace=lambda:None)
             with self.assertRaises(ProcessLookupError): os.kill(pids[0],0)
+
+    def test_descendant_exits_on_parent_pipe_close_even_if_inventory_is_lost(self):
+        self.require_inventory()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            ready=support.ReadyPipe(root)
+            self.addCleanup(ready.close)
+            events=select.kqueue()
+            self.addCleanup(events.close)
+            child=[]
+            code="\n".join([
+                "import os,signal,json,subprocess,sys",
+                "child=subprocess.Popen([sys.executable,'-c','import sys; sys.stdin.buffer.read()'],stdin=subprocess.PIPE,start_new_session=True)",
+                ready.write_code("{'parent':os.getpid(),'child':child.pid}"),
+                "signal.pause()",
+            ])
+            def deadline(process, timeout):
+                self.own_fixture(process)
+                message=ready.receive()
+                self.assertEqual(message['parent'],process.pid)
+                child.append(message['child'])
+                events.control([select.kevent(child[0],filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD|select.KQ_EV_ONESHOT,fflags=select.KQ_NOTE_EXIT)],0,0)
+                raise subprocess.TimeoutExpired(process.args,timeout)
+            with patch.object(runner,'snapshot',return_value=[]):
+                self.assertEqual(runner.run([sys.executable,'-c',code],15,root,
+                    wait_for_exit=deadline,cleanup_grace=lambda:None),124)
+            exited=events.control(None,1,30)  # Outer hang guard on the real exit event.
+            self.assertEqual([event.ident for event in exited],child)
+            self.assertTrue(exited[0].fflags & select.KQ_NOTE_EXIT)
 
     def test_grace_hook_failure_still_attempts_descendant_kill(self):
         self.check_cross_group_cleanup(grace_failure=True)
@@ -89,6 +146,7 @@ class TestRunnerTests(unittest.TestCase):
         self.check_cross_group_cleanup(diagnostics_failure=True)
 
     def check_cross_group_cleanup(self, diagnostics_failure=False, grace_failure=False):
+        self.require_inventory()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             ready = support.ReadyPipe(root)
@@ -96,7 +154,9 @@ class TestRunnerTests(unittest.TestCase):
             pids = []
             code = "\n".join([
                 "import os,signal,subprocess,sys,time,json,pathlib",
-                "child=subprocess.Popen([sys.executable,'-c','import signal; signal.pause()'],start_new_session=True)",
+                # If ownership enumeration unexpectedly fails and the parent
+                # is killed, EOF still terminates this exact descendant.
+                "child=subprocess.Popen([sys.executable,'-c','import sys; sys.stdin.buffer.read()'],stdin=subprocess.PIPE,start_new_session=True)",
                 "def stop(*_):",
                 " child.wait()",
                 " " + ready.write_code("{'state':'reaped'}"),
@@ -119,6 +179,7 @@ class TestRunnerTests(unittest.TestCase):
             context = (patch.object(runner, "snapshot", side_effect=fail_second_snapshot)
                        if diagnostics_failure else nullcontext())
             def deadline(process, timeout):
+                self.own_fixture(process)
                 self.assertEqual(timeout, 15)
                 message = ready.receive()
                 self.assertEqual(message['state'], 'ready')
