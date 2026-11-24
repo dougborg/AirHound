@@ -21,7 +21,7 @@ CATEGORIES = {'virtual-time', 'causal-event', 'outer-hang-guard', 'fixed-input',
 RULES = {
     'delay-or-deadline': re.compile(r'\b(?:sleep|sleep_until|sleep_for|timeout|timeout_at|recv_timeout|wait_timeout|wait_for|wait_until|nanosleep|usleep|yield_now)\s*(?=\(|[\d.]|as\b)'),
     'clock-reference': re.compile(r'\b(?:Instant|SystemTime|ContinuousClock|SuspendingClock|DispatchTime|monotonic|perf_counter|setTimeout|setInterval|waitForTimeout|advanceTimersByTime|useFakeTimers|requestAnimationFrame)\b'),
-    'clock-read': re.compile(r'(?:\.|::)\s*(?:now|elapsed|utcnow|hrtime|time|today|systemUptime|timeOrigin)\b|\b(?:new\s+)?Date\s*\('),
+    'clock-read': re.compile(r'(?:\.|::)\s*(?:now|elapsed|utcnow|hrtime|today|systemUptime|timeOrigin)\b|(?:\.|::)\s*time\b(?=\s*\()|\b(?:new\s+)?Date\s*\('),
     'clock-function': re.compile(r'\b(?:time_ns|monotonic_ns|perf_counter_ns|process_time(?:_ns)?|thread_time(?:_ns)?|clock_gettime(?:_ns)?|gettimeofday|CFAbsoluteTimeGetCurrent|CACurrentMediaTime|mach_absolute_time)\b|\btime\s*\('),
     'delay-import': re.compile(r'\b(?:sleep|timeout|time|time_ns|monotonic|monotonic_ns|perf_counter|perf_counter_ns)\s*(?:as\s+\w+|[,}])'),
     'indirect-delay': re.compile(r'\bgetattr\s*\([^,\n]+,\s*[\'\"](?:sleep|timeout|time|time_ns|monotonic|monotonic_ns|perf_counter|perf_counter_ns)[\'\"]'),
