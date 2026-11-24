@@ -126,6 +126,13 @@ impl Child {
         child.ready().await?;
         Ok(child)
     }
+    /// Observe the production supervisor's reap-and-release barrier even when
+    /// the caller is dropped. The replacement receiver is never awaited.
+    #[cfg(test)]
+    fn take_completion(&mut self) -> oneshot::Receiver<io::Result<()>> {
+        let (_, replacement) = oneshot::channel();
+        std::mem::replace(&mut self.done, replacement)
+    }
     pub async fn finish(&mut self) -> io::Result<()> {
         self.stop.take();
         tokio::time::timeout(Duration::from_secs(5), &mut self.done)
@@ -189,139 +196,130 @@ mod tests {
     }
     #[tokio::test]
     async fn cancelled_caller_keeps_ownership_until_child_exit_and_reap() {
-        // This fake device is private to this test, including parallel GPS tests.
-        // Helpers inherit only its lease; no physical serial device is opened.
-        let endpoint = Endpoint::new();
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
-        let mut command = Command::new("python3");
-        command.args([
-            "-c",
-            "import os,time;print(os.getpid(),flush=True);time.sleep(30)",
-        ]);
-        let mut child = Child::spawn(command, lease.clone(), true).await.unwrap();
-        let mut line = String::new();
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            BufReader::new(child.stdout.take().unwrap()).read_line(&mut line),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        let pid: i32 = line.trim().parse().unwrap();
-        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
-        drop(lease);
-        drop(child); // Simulates a caller future being cancelled without Finish.
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if let Ok(guard) = airhound_hostd::serial_lease::acquire(endpoint.path()) {
-                    assert_eq!(
-                        unsafe { libc::kill(pid, 0) },
-                        -1,
-                        "ownership released before child exited"
-                    );
-                    drop(guard);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        crate::test_support::manual_time(async {
+            // This fake device is private to this test, including parallel GPS tests.
+            // Helpers inherit only its lease; no physical serial device is opened.
+            let endpoint = Endpoint::new();
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
+            let mut command = Command::new("python3");
+            command.args([
+                "-c",
+                "import os,signal;print(os.getpid(),flush=True);signal.pause()",
+            ]);
+            let mut child = Child::spawn(command, lease.clone(), true).await.unwrap();
+            let mut line = String::new();
+            BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut line)
+                .await
+                .unwrap();
+            let pid: i32 = line.trim().parse().unwrap();
+            assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
+            drop(lease);
+            let completion = child.take_completion();
+            drop(child); // Simulates a caller future being cancelled without Finish.
+            completion.await.unwrap().unwrap();
+            let guard = airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap();
+            assert_eq!(
+                unsafe { libc::kill(pid, 0) },
+                -1,
+                "ownership released before child exited"
+            );
+            drop(guard);
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
+            let command = Command::new("/nonexistent/airhound-helper");
+            assert!(Child::spawn(command, lease.clone(), true).await.is_err());
+            drop(lease);
+            assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_ok());
         })
-        .await
-        .unwrap();
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
-        let command = Command::new("/nonexistent/airhound-helper");
-        assert!(Child::spawn(command, lease.clone(), true).await.is_err());
-        drop(lease);
-        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_ok());
+        .await;
     }
     #[tokio::test]
     async fn startup_failure_and_finish_release_supervisor_ownership_before_notification() {
-        // This fake device is private to this test, including parallel GPS tests.
-        // Helpers inherit only its lease; no physical serial device is opened.
-        let endpoint = Endpoint::new();
-        // Neither completion path may require polling for a later thread-scope
-        // destructor. Repeat to exercise notification scheduling on CI workers.
-        for _ in 0..32 {
-            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
-            let mut child =
-                Child::start(Command::new("/nonexistent/airhound-helper"), lease, true).unwrap();
-            assert!(child.ready().await.is_err());
-            let guard = airhound_hostd::serial_lease::acquire(endpoint.path())
-                .expect("failed startup must release ownership before ready returns");
-            child.finish().await.unwrap();
-            drop(guard);
+        crate::test_support::manual_time(async {
+            // This fake device is private to this test, including parallel GPS tests.
+            // Helpers inherit only its lease; no physical serial device is opened.
+            let endpoint = Endpoint::new();
+            // Neither completion path may require polling for a later thread-scope
+            // destructor. Repeat to exercise notification scheduling on CI workers.
+            for _ in 0..32 {
+                let lease =
+                    Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
+                let mut child =
+                    Child::start(Command::new("/nonexistent/airhound-helper"), lease, true)
+                        .unwrap();
+                assert!(child.ready().await.is_err());
+                let guard = airhound_hostd::serial_lease::acquire(endpoint.path())
+                    .expect("failed startup must release ownership before ready returns");
+                child.finish().await.unwrap();
+                drop(guard);
 
-            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
-            let mut command = Command::new("/bin/sh");
-            command.args(["-c", "echo $$; exec sleep 30"]);
-            let mut child = Child::spawn(command, lease, true).await.unwrap();
-            let mut line = String::new();
-            tokio::time::timeout(
-                Duration::from_secs(2),
-                BufReader::new(child.stdout.take().unwrap()).read_line(&mut line),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            let pid: i32 = line.trim().parse().unwrap();
-            child.finish().await.unwrap();
-            let _guard = airhound_hostd::serial_lease::acquire(endpoint.path())
-                .expect("Finish must release ownership before returning");
-            assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
-        }
+                let lease =
+                    Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
+                let mut command = Command::new("python3");
+                command.args([
+                    "-c",
+                    "import os,signal;print(os.getpid(),flush=True);signal.pause()",
+                ]);
+                let mut child = Child::spawn(command, lease, true).await.unwrap();
+                let mut line = String::new();
+                BufReader::new(child.stdout.take().unwrap())
+                    .read_line(&mut line)
+                    .await
+                    .unwrap();
+                let pid: i32 = line.trim().parse().unwrap();
+                child.finish().await.unwrap();
+                let _guard = airhound_hostd::serial_lease::acquire(endpoint.path())
+                    .expect("Finish must release ownership before returning");
+                assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "child must be reaped");
+            }
+        })
+        .await;
     }
     #[tokio::test]
     async fn cancellation_during_pending_exec_reaps_before_releasing_lease() {
-        use std::os::{
-            fd::AsRawFd,
-            unix::{net::UnixStream, process::CommandExt},
-        };
-        // This fake device is private to this test, including parallel GPS tests.
-        // Helpers inherit only its lease; no physical serial device is opened.
-        let endpoint = Endpoint::new();
-        let (parent, gate) = UnixStream::pair().unwrap();
-        parent.set_nonblocking(true).unwrap();
-        let mut parent = tokio::net::UnixStream::from_std(parent).unwrap();
-        let gate_fd = gate.as_raw_fd();
-        let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
-        let mut command = Command::new("python3");
-        command.args(["-c", "import time;time.sleep(30)"]);
-        // The startup handshake cannot complete until this controlled pre-exec
-        // gate opens. Only async-signal-safe libc calls run in the forked child.
-        unsafe {
-            command.pre_exec(move || {
-                let pid = libc::getpid().to_ne_bytes();
-                if libc::write(gate_fd, pid.as_ptr().cast(), pid.len()) != pid.len() as isize {
-                    return Err(io::Error::from_raw_os_error(libc::EIO));
-                }
-                let mut release = [0u8];
-                if libc::read(gate_fd, release.as_mut_ptr().cast(), 1) != 1 {
-                    return Err(io::Error::from_raw_os_error(libc::ECANCELED));
-                }
-                Ok(())
-            });
-        }
-        let child = Child::start(command, lease.clone(), true).unwrap();
-        let mut bytes = [0u8; 4];
-        tokio::time::timeout(Duration::from_secs(2), parent.read_exact(&mut bytes))
-            .await
-            .unwrap()
-            .unwrap();
-        let pid = i32::from_ne_bytes(bytes);
-        drop(child); // Cancel while Command::spawn is still waiting for exec.
-        drop(lease);
-        assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
-        parent.write_all(b"x").await.unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if let Ok(guard) = airhound_hostd::serial_lease::acquire(endpoint.path()) {
-                    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
-                    drop(guard);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+        crate::test_support::manual_time(async {
+            use std::os::{
+                fd::AsRawFd,
+                unix::{net::UnixStream, process::CommandExt},
+            };
+            // This fake device is private to this test, including parallel GPS tests.
+            // Helpers inherit only its lease; no physical serial device is opened.
+            let endpoint = Endpoint::new();
+            let (parent, gate) = UnixStream::pair().unwrap();
+            parent.set_nonblocking(true).unwrap();
+            let mut parent = tokio::net::UnixStream::from_std(parent).unwrap();
+            let gate_fd = gate.as_raw_fd();
+            let lease = Arc::new(airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap());
+            let mut command = Command::new("python3");
+            command.args(["-c", "import signal;signal.pause()"]);
+            // The startup handshake cannot complete until this controlled pre-exec
+            // gate opens. Only async-signal-safe libc calls run in the forked child.
+            unsafe {
+                command.pre_exec(move || {
+                    let pid = libc::getpid().to_ne_bytes();
+                    if libc::write(gate_fd, pid.as_ptr().cast(), pid.len()) != pid.len() as isize {
+                        return Err(io::Error::from_raw_os_error(libc::EIO));
+                    }
+                    let mut release = [0u8];
+                    if libc::read(gate_fd, release.as_mut_ptr().cast(), 1) != 1 {
+                        return Err(io::Error::from_raw_os_error(libc::ECANCELED));
+                    }
+                    Ok(())
+                });
             }
+            let mut child = Child::start(command, lease.clone(), true).unwrap();
+            let mut bytes = [0u8; 4];
+            parent.read_exact(&mut bytes).await.unwrap();
+            let pid = i32::from_ne_bytes(bytes);
+            let completion = child.take_completion();
+            drop(child); // Cancel while Command::spawn is still waiting for exec.
+            drop(lease);
+            assert!(airhound_hostd::serial_lease::acquire(endpoint.path()).is_err());
+            parent.write_all(b"x").await.unwrap();
+            completion.await.unwrap().unwrap();
+            let _guard = airhound_hostd::serial_lease::acquire(endpoint.path()).unwrap();
+            assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         })
-        .await
-        .unwrap();
+        .await;
     }
 }
