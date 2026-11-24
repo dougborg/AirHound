@@ -748,16 +748,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
     },
-    "2c7cbb57fa930902c7894d5944c356e5ea821ab82c67ee400f7142caa4db5439": {
-      "path": "hostd/src/gpsd/managed.rs",
-      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
-      "rule": "clock-read",
-      "context_sha256": "3e01da3aa4fd34409e83b653e772386e62a48d0ef4f7e524a542528b07a6d9cf",
-      "category": "virtual-time",
-      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact-context review approved proposal SHA256 b95cc40a4cf46c51415bc32eb1fec9d2440f567a31b818d1b67229cd086aee4a after verifying the merged source, controlled_source caller and explicit clock advancement."
-    },
     "2d9047ecbb905c1ee0878b12ae18cb53253b50441cd2776542b0d109454528f7": {
       "path": "hostd/tests/support/mod.rs",
       "scope": "until",
@@ -1754,16 +1744,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
     },
-    "6a0bf0b8360844d4994a2ea9b99978fc6029d230b12e97f70b55bd2f13beb68c": {
-      "path": "hostd/src/gpsd/managed.rs",
-      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
-      "rule": "clock-reference",
-      "context_sha256": "3e01da3aa4fd34409e83b653e772386e62a48d0ef4f7e524a542528b07a6d9cf",
-      "category": "virtual-time",
-      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact-context review approved proposal SHA256 b95cc40a4cf46c51415bc32eb1fec9d2440f567a31b818d1b67229cd086aee4a after verifying the merged source, controlled_source caller and explicit clock advancement."
-    },
     "6a13ffc778ce033ae287ed609c893334bec22a1895b8f5358800d052e36f4721": {
       "path": "hostd/src/adb_forward.rs",
       "scope": "decoder_event",
@@ -1967,6 +1947,16 @@
       "reason": "Protocol command state stores a deadline from explicit now+timeout parameters. Unit command/loss assertions provide those values; this line reads no clock and does not wait.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-operational32.json SHA256 2543f4d3bf6e837a69df697bda75b7ac2398e4522f5b14725a44055861e3bcb6."
+    },
+    "730e611e24cc326d056ff9efa6eea16cc622cd0f24e9740109b8f0aa488227d6": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-read",
+      "context_sha256": "4ab689dc8dc6219f05761cafaf6ad4b9d483c80e689a1982fe23110206448156",
+      "category": "virtual-time",
+      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact-context review approved proposal SHA256 baecd9b1a385350ea6d522b19ec9eb26d84188c705f187e62850ddeeac38fc10 and source 8efed042; injected source clock/caller statements and production prefix unchanged."
     },
     "732ff1ee7ede6ae293478f0d5e910d8520ddb0fc720a852ccf82697e0543b5ac": {
       "path": "hostd/src/flipper_rpc_session.rs",
@@ -2547,6 +2537,16 @@
       "reason": "This controlled GPS fixture pairs fixed2026 UTC with one opaque stdInstant origin stored in Source before start. Notify confirms actual accepted fix; record-writer admission plus Pause/Finish ACK establish durability. Execution speed cannot age the injected clock pair.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-support-capture-service-final340.json SHA256 d25e36acb9c6cdf77cd49b94c77476e570ae06c65cbece78ca40d5617264e7fd."
+    },
+    "972e99904203fe39172ed8ca0e8d397bde68a6e08c9421a14f9d349802ca79f4": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-reference",
+      "context_sha256": "4ab689dc8dc6219f05761cafaf6ad4b9d483c80e689a1982fe23110206448156",
+      "category": "virtual-time",
+      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact-context review approved proposal SHA256 baecd9b1a385350ea6d522b19ec9eb26d84188c705f187e62850ddeeac38fc10 and source 8efed042; injected source clock/caller statements and production prefix unchanged."
     },
     "97b157f36e80b47de688884cd8d285b2acc9d9572d31f5c863eccd0547a57d28": {
       "path": "scripts/profile-macos.py",
@@ -3426,6 +3426,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
     },
+    "c5dc4c43813c53e29c7b7a962918a513e24506bc46ac489c28ef4c33a487c690": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-reference",
+      "context_sha256": "4ab689dc8dc6219f05761cafaf6ad4b9d483c80e689a1982fe23110206448156",
+      "category": "virtual-time",
+      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact-context review approved proposal SHA256 baecd9b1a385350ea6d522b19ec9eb26d84188c705f187e62850ddeeac38fc10 and source 8efed042; injected source clock/caller statements and production prefix unchanged."
+    },
     "c6bc30a4016633a7a24c01567c5598e13d5fbdb1c78a72646af806c89e87ac52": {
       "path": "hostd/src/discovery/identify/ublox.rs",
       "scope": "new",
@@ -4283,16 +4293,6 @@
       "reason": "TimerWitness observe/observe_persistent and advance_registered_timer_after are used by manual_time callers. Registered/Pending/Fired events come from actual future polls; explicit paused-clock advance observes before-deadline Pending before crossing the timer tick. New registered bool survives cancellation/recreation of the maintenance tick future. These Instant fields are virtual; separate unchanged manual_time30s wall watchdog is already classified.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-support-capture-service-final340.json SHA256 d25e36acb9c6cdf77cd49b94c77476e570ae06c65cbece78ca40d5617264e7fd."
-    },
-    "f3671ee96cdb364c692669014eaaf17234bdd8485b5d239e7841351020a389d4": {
-      "path": "hostd/src/gpsd/managed.rs",
-      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
-      "rule": "clock-reference",
-      "context_sha256": "3e01da3aa4fd34409e83b653e772386e62a48d0ef4f7e524a542528b07a6d9cf",
-      "category": "virtual-time",
-      "reason": "The lifecycle fixture obtains the fixed injected wall/monotonic pair from Fixture::source and advances that injected source clock by an explicit +1 s before the next child generation. Its owning asynchronous test runs under registered manual time; no elapsed wall-clock interval decides this assertion. New per-attempt refusal-evidence assertions change only the containing context fingerprint.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root exact-context review approved proposal SHA256 b95cc40a4cf46c51415bc32eb1fec9d2440f567a31b818d1b67229cd086aee4a after verifying the merged source, controlled_source caller and explicit clock advancement."
     },
     "f3bebc57a6280d64e6582667b9bc5c8468d08875f60aff400de79d94673da4ef": {
       "path": "scripts/tests/test_test_timing_guard.py",
