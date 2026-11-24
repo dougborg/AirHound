@@ -89,12 +89,8 @@ mod tests {
         poll_fn(|context| Poll::Ready(future.as_mut().poll(context))).await
     }
 
-    // A blocking event waiter inhibits Tokio's automatic clock advancement while
-    // real socket IO is pending. Only explicit advance() can move test time.
     struct SocketFixture {
         root: std::path::PathBuf,
-        keep_clock: Option<std::sync::mpsc::Sender<()>>,
-        waiter: Option<tokio::task::JoinHandle<()>>,
     }
     impl SocketFixture {
         fn new() -> Self {
@@ -110,32 +106,11 @@ mod tests {
                     Err(e) => panic!("private socket fixture: {e}"),
                 }
             };
-            let (send, receive) = std::sync::mpsc::channel();
-            let waiter = tokio::task::spawn_blocking(move || {
-                if matches!(
-                    receive.recv_timeout(Duration::from_secs(120)),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    // Infrastructure hang guard only. Never resume automatic
-                    // virtual time and turn a stuck IO fixture into a pass.
-                    eprintln!("readiness socket fixture exceeded its 120s outer hang guard");
-                    std::process::abort();
-                }
-            });
-            Self {
-                root,
-                keep_clock: Some(send),
-                waiter: Some(waiter),
-            }
-        }
-        async fn finish(mut self) {
-            self.keep_clock.take();
-            self.waiter.take().unwrap().await.unwrap();
+            Self { root }
         }
     }
     impl Drop for SocketFixture {
         fn drop(&mut self) {
-            self.keep_clock.take();
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
@@ -168,6 +143,7 @@ mod tests {
         use crate::{read_frame, write_frame};
         use airhound_api::{Command, Request, Response};
         use tokio::io::AsyncReadExt;
+        let clock = crate::test_clock::ManualTime::hold().await;
         let fixture = SocketFixture::new();
         let path = fixture.root.join("control.sock");
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
@@ -211,7 +187,8 @@ mod tests {
         tokio::join!(server, client);
         assert!(path.exists());
         drop(listener);
-        fixture.finish().await;
+        drop(fixture);
+        clock.finish().await;
     }
 
     #[tokio::test(start_paused = true)]
