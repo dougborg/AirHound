@@ -29,7 +29,7 @@ impl OwnedChild {
         let worker = runtime.spawn(async move {
             let (result, _reap_confirmed) = tokio::select! {
                 status = child.wait() => { let confirmed = status.is_ok(); (status, confirmed) },
-                _ = cancelled => reap_after_kill(child.start_kill(), child.wait()).await,
+                _ = cancelled => reap_after_kill(child.start_kill(), child.wait(), #[cfg(test)] None).await,
             };
             #[cfg(test)]
             if let Some(witness) = reaped {
@@ -59,8 +59,19 @@ impl OwnedChild {
 async fn reap_after_kill(
     killed: io::Result<()>,
     wait: impl std::future::Future<Output = io::Result<ExitStatus>>,
+    #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
 ) -> (io::Result<ExitStatus>, bool) {
-    let waited = tokio::time::timeout(Duration::from_secs(3), wait)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let waiting = tokio::time::timeout_at(deadline, wait);
+    #[cfg(test)]
+    let waiting = async {
+        if let Some(witness) = witness {
+            witness.observe(deadline, waiting, Result::is_err).await
+        } else {
+            waiting.await
+        }
+    };
+    let waited = waiting
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "child reap deadline"))
         .and_then(|result| result);
@@ -160,6 +171,7 @@ mod tests {
                     "injected kill rejection",
                 )),
                 process.wait(),
+                None,
             )
             .await;
             assert!(reaped);
@@ -180,11 +192,41 @@ mod tests {
                     "kill rejected",
                 )),
                 async { Err(io::Error::other("wait rejected")) },
+                None,
             )
             .await;
             assert!(!reaped);
             let message = result.unwrap_err().to_string();
             assert!(message.contains("kill rejected") && message.contains("wait rejected"));
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn pending_reap_reports_virtual_timeout_and_retains_kill_error() {
+        crate::test_support::manual_time(async {
+            for kill_fails in [false, true] {
+                let killed = if kill_fails {
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "kill rejected",
+                    ))
+                } else {
+                    Ok(())
+                };
+                let (witness, mut events) = crate::test_support::TimerWitness::channel();
+                let task = tokio::spawn(reap_after_kill(
+                    killed,
+                    std::future::pending::<io::Result<ExitStatus>>(),
+                    Some(witness),
+                ));
+                crate::test_support::advance_registered_timer(&mut events).await;
+                let (result, reaped) = task.await.unwrap();
+                assert!(!reaped);
+                let error = result.unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+                assert!(error.to_string().contains("child reap deadline"));
+                assert_eq!(error.to_string().contains("kill rejected"), kill_fails);
+            }
         })
         .await;
     }
