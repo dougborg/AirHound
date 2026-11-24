@@ -87,7 +87,7 @@ jobs:
       - name: Check desktop utility syntax
         run: python3 -m py_compile scripts/*.py
       - name: Check test timing regressions
-        run: python3 scripts/check-test-timing.py --report test-timing-report.json
+        run: python3 scripts/check-test-timing.py --report test-timing-report.json --require-resolved
       - name: Preserve timing inventory, including unresolved migration findings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

@@ -1,9 +1,9 @@
 # Test timing regression policy
 
-The guard prevents new, unreviewed correctness dependencies on wall time while
-[#329](https://github.com/dougborg/AirHound/issues/329) tracks the unfinished
-repository migration. It is a lexical review aid, not a call-graph proof or a ban
-on production timers.
+The guard rejects unreviewed correctness dependencies on wall time.
+[#329](https://github.com/dougborg/AirHound/issues/329) tracks the audit and its
+remaining production followups. This is a lexical review aid, not a call-graph
+proof or a ban on production timers.
 
 ## What is scanned
 
@@ -58,10 +58,26 @@ keys are reported as stale, never silently relabeled as fixed or accepted.
 This inventory includes legitimate virtual clocks, physical measurements and
 production helper timing alongside remaining defects. Every baseline entry is
 **unresolved** until its exact context is independently classified or corrected.
-CI's normal mode warns and reports that debt while rejecting new/changed sites.
-The completion audit must use `--require-resolved` and review the scanner's
+The optional non-strict mode reports that debt while rejecting new/changed sites.
+CI now uses `--require-resolved`; an audit must also review the scanner's
 limitations and helper coverage. Do not regenerate the baseline to accept a
 failure or describe its entries as reviewed exceptions.
+
+## Reviewed composition checkpoint
+
+The reviewed source composition classifies all 441 detected sites with exact
+context identities: controlled clocks, causal events, fixed inputs, fixture hang
+guards, measurements, and identified production scopes. Superseded dispositions
+were removed; the original 766-entry migration inventory remains unchanged.
+Disappearing fingerprints do not establish correctness by themselves.
+
+This policy depends on the source migrations in #332, #338 and #340, the firmware
+idle-wait change in #341, and the guard in #339. It must travel with those source
+changes, not be applied as exceptions to their older implementations. Real-service
+integration tests retain qualified startup/protocol budgets. Operational polling,
+the receiver-helper late-EOF deadline boundary, and the Sniffle startup settle
+remain production followups; their classification does not establish that these
+delays are optimal or required.
 
 The adversarial suite exercises aliases, external modules and both path-attribute
 orders, embedded scripts, clock variants, context changes, malformed policy,
