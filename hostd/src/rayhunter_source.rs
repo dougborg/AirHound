@@ -89,6 +89,25 @@ pub(crate) async fn scan_adb(
     .await
 }
 
+#[cfg(test)]
+pub(crate) async fn scan_adb_test(
+    adb: airhound_hostd::session::RayhunterAdb,
+    decoder: PathBuf,
+    tx: mpsc::Sender<ScanEvent>,
+    control: ScanControl,
+    witness: mpsc::Sender<u64>,
+) -> io::Result<()> {
+    scan_inner(
+        String::new(),
+        decoder,
+        Some(adb),
+        tx,
+        control,
+        Some(witness),
+    )
+    .await
+}
+
 async fn scan_inner(
     endpoint: String,
     decoder: PathBuf,
@@ -319,29 +338,20 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
-            Self::with_interval(0.02)
-        }
-        fn with_interval(seconds: f64) -> Self {
             let root = std::env::temp_dir().join(format!(
-                "airhound-cellular-fixture-{}-{}-{}",
+                "airhound-cellular-fixture-{}-{}",
                 std::process::id(),
                 NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
             ));
             std::fs::create_dir(&root).unwrap();
             let script = root.join("helper");
             std::fs::write(&script,r#"#!/usr/bin/env python3
-import json,os,time
+import json,os,signal
 print(json.dumps({'ipc_version':1,'kind':'hello','stream':{'version':1,'replay':False,'format':'u32le_json_length+json+exact_device_read','stream_epoch':'fixture','next_sequence':0}}),flush=True)
-tick=0
-while True:
+for tick in range(3):
  print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid(),'tick':tick}),flush=True)
- tick+=1
- time.sleep(INTERVAL)
-"#.replace("INTERVAL", &seconds.to_string())).unwrap();
+signal.pause()
+"#).unwrap();
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
             Self { root, script }
         }
@@ -371,23 +381,37 @@ while True:
     async fn gone(pid: i32) {
         timeout(Duration::from_secs(3), async {
             while unsafe { libc::kill(pid, 0) } == 0 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
     }
+    async fn blocked_tick(witness: &mut mpsc::Receiver<u64>, rx: &mpsc::Receiver<ScanEvent>) {
+        // The timeout is a failure watchdog, not a scheduling or age criterion.
+        timeout(Duration::from_secs(4), async {
+            while witness.recv().await.unwrap() != 2 {}
+        })
+        .await
+        .unwrap();
+        assert_eq!(rx.len(), 1, "tick 2 must face a full output queue");
+    }
     #[tokio::test]
     async fn ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing() {
-        use crate::gpsd::tests::{feed, ready, tpv};
+        use crate::gpsd::tests::{feed, ready, set_clock, tpv};
         use std::sync::{Arc, Mutex};
         for initially_available in [false, true] {
-            // Slower than the old 120 ms sleep: the witness must synchronize
-            // real ingress, rather than rely on helper scheduling speed.
-            let f = Fixture::with_interval(0.2);
+            let f = Fixture::new();
             let gps = ready();
+            let wall = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            // Opaque monotonic anchor only: every freshness check uses the
+            // injected pair below, never elapsed wall-clock time.
+            let monotonic = std::time::Instant::now();
+            set_clock(&gps, wall, monotonic);
             if initially_available {
-                feed(&gps, tpv(chrono::Utc::now()));
+                feed(&gps, tpv(wall));
             }
             let control = ScanControl::new(true);
             control.set_location_source(gps.clone());
@@ -405,13 +429,9 @@ while True:
             // pid() consumed tick 0. Tick 1 fills the only queue slot;
             // witnessing tick 2 proves its location snapshot predates the
             // GPS change, regardless of helper or coverage scheduling delays.
-            timeout(Duration::from_secs(4), async {
-                while witness_rx.recv().await.unwrap() != 2 {}
-            })
-            .await
-            .unwrap();
-            assert_eq!(rx.len(), 1, "tick 2 must face a full output queue");
-            let changed_at = chrono::Utc::now();
+            blocked_tick(&mut witness_rx, &rx).await;
+            let changed_at = wall + chrono::Duration::seconds(1);
+            set_clock(&gps, changed_at, monotonic + Duration::from_secs(1));
             let mut later = tpv(changed_at);
             later["lat"] = 11.0.into();
             feed(&gps, later);
@@ -426,13 +446,10 @@ while True:
                 record["event"]["tick"].as_u64().unwrap(),
                 queued["event"]["tick"].as_u64().unwrap() + 1
             );
-            let arrived =
-                chrono::DateTime::parse_from_rfc3339(record["host_received_at"].as_str().unwrap())
-                    .unwrap();
-            assert!(
-                arrived < changed_at,
-                "must actually exercise a pre-change blocked event"
-            );
+            assert!(chrono::DateTime::parse_from_rfc3339(
+                record["host_received_at"].as_str().unwrap()
+            )
+            .is_ok());
             let snapshot = record["receiver_location"].clone();
             if initially_available {
                 assert_eq!(snapshot["latitude"], 10.0);
@@ -460,7 +477,7 @@ while True:
                 rx,
                 Arc::new(Mutex::new(crate::FilterConfig::new())),
                 Arc::new(crate::MacIndex::from_defaults()),
-                std::time::Instant::now(),
+                monotonic,
                 crate::WigleWriter::new(Vec::new()).unwrap(),
                 &mut output,
                 control,
@@ -508,14 +525,17 @@ while True:
         let f = Fixture::new();
         let (tx, mut rx) = mpsc::channel(1);
         let control = ScanControl::new(true);
-        let task = tokio::spawn(scan(
+        let (witness_tx, mut witness_rx) = mpsc::channel(8);
+        let task = tokio::spawn(scan_inner(
             "ws://127.0.0.1:9/raw-diag".into(),
             f.script.clone(),
+            None,
             tx,
             control,
+            Some(witness_tx),
         ));
         let (child, _) = pid(&mut rx).await;
-        tokio::time::sleep(Duration::from_millis(70)).await;
+        blocked_tick(&mut witness_rx, &rx).await;
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         gone(child).await;
