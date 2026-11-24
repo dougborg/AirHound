@@ -5,40 +5,40 @@ The preview is under acceptance, not a signed-off production release.
 
 ## Current scope
 
-The runnable counter preview has GUI source `946d3c0` and the unchanged signed
-`07c7142` backend. The current backend passed native Wi-Fi/BLE reception after
-renewed permission approval. The reconnected M5's bounded identity, Wi-Fi/BLE and
-host lifecycle success belongs to firmware `0.1.1`. Its first `07c7142` / `0.2.0`
-application passed boot checks but later failed BLE readiness. The reviewed
-[#318](https://github.com/dougborg/AirHound/pull/318) correction, source `3baaacc`,
-is now installed and passed a 240-second both-media continuity observation.
-After the observer closed, the production-reader lifecycle attempt received no
-device input and failed before Pause/Resume. An explicit line-state diagnostic
-produced a new boot and both media but did not establish physical button recovery;
-the user's unresponsive-button report remains unresolved. The reviewed `14d6085`
-host transport policy passed focused tests, but its first hardware opening test
-also failed with zero device input and no Pause/Resume. Clean Finish and data
-preservation do not turn that failure into reception or button acceptance;
-[#175](https://github.com/dougborg/AirHound/issues/175) remains unresolved. The earlier BLE-only failure
-in [#317](https://github.com/dougborg/AirHound/issues/317) remains distinct.
-None of these results proves that the current GUI's Start, repeat recording,
-live/history presentation or all-receiver controls work. Those actual-window checks remain open for the
-everyday-recording goal.
+The installed backend is `d8ad552` with the reviewed storage-full recovery
+correction; the running Counter Preview GUI remains `946d3c0`. Existing recordings
+and setups were preserved during the authorized recovery rollout. Two subsequent
+native Wi-Fi/BLE recordings used the same unchanged plan through actual GUI
+controls: user validation/first Start, accessibility-driven Pause/Resume and second
+Start, and user-confirmed Finish actions. Both recordings finished; live second-run
+rows were inspected and the user confirmed the saved second-run rows were visible
+and responsive. Independent audit verified prior data and setups remained intact.
 
-Later backend-controlled sessions accepted concurrent CatSniffer, ALFA and
-Flipper reception with managed GPS; an earlier assembled session also included
-M5. Preserve their exact source/firmware and failure scopes in the
-[attached-hardware ledger](../../docs/attached-hardware-validation.md), which
-owns the current support matrix. Physical disconnect recovery and endurance
-remain separate acceptance work. Official Rayhunter `0.13.0` on the Orbic and its
-separate raw-feed fork prototype do not constitute an AirHound live cellular
-source. The fork's helper preflight passed, but neither unsuccessful staged
-attempt launched the prototype. The official daemon remained running throughout
-both; recording state was preserved or resumed, with recording resumed after the
-second attempt. Full raw-feed runtime acceptance remains pending; experimental
-work in [#293](https://github.com/dougborg/AirHound/issues/293)
-is not a prerequisite for the currently supported rig. The historical ALFA
-failure below is retained, not the latest overall ALFA status.
+This is functional native-only evidence. Both runs exceeded prepared duration
+targets; an automated Finish-confirmation attempt failed before the user completed
+it. First saved-view visual proof and full-rig controls remain separate gaps.
+The staged `8ba1e90` live-selection improvement is not installed or accepted in the
+actual window; unsuccessful window-acquisition preparation did not alter the app.
+
+The M5 now runs `5c3d9eb` / `0.2.0`. Its first ten-minute observer had both media,
+complete periodic health and zero sampled loss/timeouts, but failed the sampled
+memory-recovery criterion. A separate no-reset continuation recovered repeatedly
+to the later memory plateau, yet retained 16 scan drops and a 23,006µs writer poll gap;
+it also remains failed. Same-boot host lifecycle, complete-rig reception and
+physical recovery remain pending. Earlier BLE, zero-input, controller-panic and
+output-loss failures are retained in the
+[attached-hardware ledger](../../docs/attached-hardware-validation.md), which owns
+the support matrix. Earlier successful lifecycle evidence belongs to firmware `0.1.1`.
+
+Backend-controlled CatSniffer/ALFA/Flipper reception with managed GPS and an earlier
+assembled M5 session retain their exact source/firmware scope. They do not establish
+current full-rig GUI acceptance. Official Rayhunter `0.13.0` and the separate bounded
+raw-feed prototype are likewise distinct: transport and offline LTE decoding were
+validated, but the experimental AirHound cellular source has only private synthetic
+acceptance so far. No contemporaneous GPS/validated UTC/upload eligibility follows
+from the retained cellular sample. Experimental work in
+[#293](https://github.com/dougborg/AirHound/issues/293) is not a prerequisite for
+the supported rig. The historical ALFA failure below is not its latest overall status.
 
 ## Earlier native interaction evidence
 
@@ -58,7 +58,7 @@ later GUI/backend signing identity.
 | Bounded browsing/live polling | Record window eviction and cursor tests; paged/follow controls | Passed rendered table/inspector and next-page check (500 to 1,000 retained records); live following advanced after reconnect |
 | Readiness/recovery/drop distinctions | Unknown-versus-zero tests and preserved backend phases/counters | Automated checks pass |
 | Window close leaves capture running | Service lifetime is independent in code/model tests | Passed on 2026-11-22: Cmd-W terminated GUI; service PID and active run survived, retained records grew, reopened GUI reconnected to that run |
-| Packaged backend startup/signing | Local optimized bundles, plist/codesign/embedded-help checks | Earlier bundle/archive checks passed; the current GUI-only delivery also verified its outer signature and preserved the nested signed backend byte-for-byte. Actual current GUI controls remain a separate gate |
+| Packaged backend startup/signing | Local optimized bundles, plist/codesign/embedded-help checks | Earlier bundle/archive checks passed; the current GUI-only delivery also verified its outer signature and preserved the nested signed backend byte-for-byte. Current native-only control evidence is scoped above; external-rig controls remain separate |
 | ALFA + CatSniffer capture together | Initial packaged-backend attempt on 2026-11-22 | Historically failed with ALFA MCU timeout; subsequent individual and combined success is recorded in the current hardware ledger, without an endurance claim |
 | Service connection status/popover | User confirmed clicking the bottom status opens the popover on 2026-11-22 | Passed manual interaction check |
 | Native rendered UI/accessibility | Compact predecessor row rendered; current bottom status is available across both tabs | Capture/observations interactions verified with native accessibility and dark-mode screenshots; light appearance and full VoiceOver review not claimed |
@@ -96,7 +96,8 @@ successfully Start/Finish twice, including a second Start queued during polling,
 distinct request/run IDs, first-run Pause/Resume, nonempty live observations and
 reopening both saved histories without cross-run rows. The local check passed
 against the preserved signed `07c7142` backend. This verifies the model/service
-path; it does not close the actual-window second-recording acceptance item.
+path; the subsequent actual-window native-only two-recording evidence is scoped
+separately above and does not inherit an automated procedural pass.
 
 The observation-selection regression now covers automatic selection of both live
 and completed runs, plus preservation of a manually stopped Follow Live state.

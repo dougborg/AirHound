@@ -1,4 +1,4 @@
-# Attached hardware validation — 2026-11-23
+# Attached hardware validation — 2026-11-24
 
 This is bounded acceptance evidence for the local macOS setup, not a release-wide
 hardware certification. Supported sources still need permissions and correct
@@ -6,6 +6,14 @@ firmware. USB product names alone establish neither firmware nor working recepti
 The remaining integration work is tracked in [#269](https://github.com/dougborg/AirHound/issues/269).
 
 ## Current acceptance status
+
+The installed backend is `d8ad552`; the Counter Preview GUI is `946d3c0`.
+Two consecutive native WiFi/BLE recordings now have actual GUI-control evidence:
+user validation/first Start, accessibility-driven Pause/Resume and second Start,
+and user-confirmed Finish actions. Both runs finished and the second saved view
+was manually confirmed visible and responsive. The original duration targets
+were exceeded and an automated Finish-confirmation attempt failed; those limits
+remain explicit below. This is native-only acceptance, not full-rig acceptance.
 
 After renewed user permission approval, the then-installed `07c7142` backend received
 321 WiFi and 1,273 BLE observations in a finished 20.135618-second native check.
@@ -26,33 +34,32 @@ acceptance failed because the host reported eight output drops. Physical USB
 loss/reconnect remains untested, and producer completion does not prove physical
 RF silence. Earlier acquisition, drain and watchdog failures remain below.
 The Flipper live-source support remains included in the newer `d8ad552` backend
-described below. The existing GUI artifacts remain unchanged; earlier native
-reception and GUI delivery do not establish capture-control acceptance with this
-new backend.
+described below. The native-only GUI evidence above does not establish Flipper
+or full-rig GUI acceptance.
 
-The M5 now runs verified `3fbc1a0` / `0.2.0`, application `bc468e56`, from
-[#321](https://github.com/dougborg/AirHound/pull/321). Its ten-minute observation
-received 107,168 BLE and 2,613 WiFi reports with one boot and no reported panic
-or assertion. Both final windows contained both media and repeated advertisers.
-Strict acceptance still failed: only 17 of the required 19 Status reports arrived,
-with seven output drops including two log drops. The full sampled-memory series
-also requires review; it does not establish a leak or safe headroom. The earlier
-`96b19ae` failure and its user-confirmed buttons/quiet buzzer during capture and
-buttons after close remain separate evidence, not current-image acceptance.
+The M5 now runs verified `5c3d9eb` / `0.2.0`, application `eaf5f925`,
+from the reviewed output-recovery work in
+[#321](https://github.com/dougborg/AirHound/pull/321). Its fresh ten-minute observer
+received 93,127 BLE and 2,585 WiFi reports, with 19 complete periodic-health
+samples, no printed fault and zero sampled scan/output/timeout/overrun counters.
+Strict acceptance nevertheless remained **review required**: internal free-memory
+samples moved from 3,640 to a recurring 3,576-byte plateau without recovering the
+initial baseline. That observation is neither leak proof nor safe-headroom proof.
 
-The reviewed `34678ec` candidate replaces the four-slot output bottleneck with a
-fixed PSRAM pool and cooperative UART writer, preserving ordered BLE fallback
-after UART failure. Portable tests, M5/XIAO target builds and image audit passed;
-linked M5 stack reservation is 8,012 bytes against the unchanged 7,168-byte gate.
-It is **not installed or hardware-accepted**. The unchanged 20ms UART deadline,
-ordinary display-redraw overlap, zero-output-loss checks, current host lifecycle
-and complete-rig acceptance remain physical-test gates.
+A separate ten-minute continuation without a reset received 129,829 BLE and
+2,934 WiFi reports, 20 periodic-health samples and repeated recovery to 3,576
+bytes. External free memory stayed constant. Output/timeout/overrun counters
+remained zero, but 16 scan drops and a maximum writer poll gap of 23,006µs failed
+its runtime checks. Both receipts remain failed/nonaccepted; cleanup and default
+data preservation passed. The current same-boot production lifecycle and complete
+rig remain disabled pending acceptance. Earlier `96b19ae`, `3fbc1a0`, `34678ec`
+and `e3de1ad` failures remain historical evidence, not overwritten successes.
 Earlier BLE-only and zero-input failures remain below,
 tracked with the current runtime work in
 [#317](https://github.com/dougborg/AirHound/issues/317),
 [#320](https://github.com/dougborg/AirHound/issues/320) and
 [#175](https://github.com/dougborg/AirHound/issues/175).
-Physical CatSniffer unplug/replug, physical USB transport loss, actual GUI capture
+Physical CatSniffer unplug/replug, physical USB transport loss, full-rig GUI
 controls and longer-duration recovery checks remain open. Bounded host burst handling after
 the eight output drops is tracked in
 [#312](https://github.com/dougborg/AirHound/issues/312), separately from the
@@ -61,7 +68,7 @@ The complete current rig, including native radios, the updated M5 and Flipper,
 has not passed concurrent acceptance. The merged
 [#316](https://github.com/dougborg/AirHound/pull/316) regression verifies consecutive
 recordings and live/saved history through the model and a private real backend;
-it does not establish actual GUI button acceptance.
+it is separate from the native-only actual GUI evidence above.
 
 The Orbic currently runs official Rayhunter `0.13.0`. The separate
 [raw-feed fork](https://github.com/dougborg/rayhunter/pull/1) now has a bounded
@@ -122,8 +129,20 @@ application and backups, preserved all existing observation rows, sources, saved
 requests and setups, and repaired the affected run's terminal state and transition.
 Independent audit verified the signed installed artifact, database integrity,
 preserved profiles/preferences/helper bundle, and an idle new service with no
-pending storage recovery. This establishes recovery and delivery, not new native
-reception or actual GUI capture-control acceptance; those checks remain separate.
+pending storage recovery. Subsequent actual GUI tests used this same backend and one unchanged native plan.
+The first run exercised Start, settled Pause, Resume with both media progressing,
+and Finish; the second Start created a distinct recording and both media were
+retained again. Live second-run rows were inspected, and the user explicitly
+confirmed the saved second-run rows were visible and responsive. Independent
+read-only audit verified every prior row and saved setup remained unchanged.
+
+The first/second runs lasted 668.302444/76.407912 seconds, exceeding their prepared
+60/30-second targets. Automated Finish opened the confirmation but did not complete
+it; the user's later confirmation was independently corroborated in durable state.
+No capture-control API substituted for these GUI actions. First saved-view visual
+proof, complete accessibility coverage and full-rig GUI acceptance remain open.
+The staged live-selection update `8ba1e90` is not installed or hardware-accepted;
+failed window-acquisition preparation attempts did not change the running app.
 
 ### Earlier preview and native reception evidence
 
@@ -170,9 +189,10 @@ GUI windows were visible; an empty
 accessibility-window inventory was not proof that no window existed. Launch and
 visible-window confirmation do not establish capture-control acceptance.
 
-Actual GUI Identify/Load/Validate/Start/Pause/Resume/Finish controls and observations
-presentation remain unaccepted. Earlier `33a5e93` native reception and private
-Flipper/combined results below retain their original artifact scope.
+At that earlier delivery checkpoint, actual GUI controls remained unaccepted.
+The later native-only control and saved-view evidence is described above;
+Identify/Load and external-rig controls retain separate acceptance gaps. Earlier
+`33a5e93` reception and private Flipper/combined results retain their artifact scope.
 
 ### M5 revalidation before the firmware update
 
@@ -345,9 +365,16 @@ The final raw line was an incomplete BLE JSON record at the observation cutoff;
 it was not counted, and independent review found no malformed interior JSON.
 The original failed receipt remains unchanged. Output/log counts are overlapping
 aggregate/subset counters, not additive loss totals, and RF loss is unknown.
-The `34678ec` PSRAM candidate has passed source, portable-test, target-build and
-image review only. Its 957,424-byte application and enlarged 958,464-byte rollback
-span are prepared; no flash or runtime success is claimed here.
+At that checkpoint, `34678ec` had passed source, portable tests, target builds
+and image review only, including an 8,012-byte linked stack reservation against
+the unchanged 7,168-byte gate and a 957,424-byte application. Its enlarged
+958,464-byte rollback span was preserved. It was subsequently installed, but its observer stalled
+after 218 BLE and one WiFi report and failed the ten-minute acceptance. Its cause
+was not proven by silence alone. The subsequent `e3de1ad` recovery/display image
+ran continuously for ten minutes with 142,470 BLE and 3,113 WiFi reports, but four
+UART timeouts (three detection records and one BLE record) failed strict loss
+acceptance. The newer installed `5c3d9eb` results are scoped above; none of these
+follow-ups rewrites the earlier failures.
 
 ## Provenance and privacy
 
@@ -392,10 +419,10 @@ configuration; rediscover the current endpoint and select it explicitly.
 
 | Device / role | Observed identity and endpoint | Recorded evidence | Limit / next check |
 | --- | --- | --- | --- |
-| Native Bluetooth | CoreBluetooth, OS-managed | Then-installed signed `07c7142` retry: 1,273 observations alongside WiFi, clean finish; earlier `33a5e93` result retained below | OS determines adapter/PHY; USB Bluetooth dongles do not become separate CoreBluetooth receivers |
-| Native WiFi | CoreWLAN, OS interface | Then-installed signed `07c7142` retry: 321 observations alongside BLE after renewed permission approval, clean finish | Earlier redacted-address attempts remain failures. Permission is specific to the running app/backend identity; reception is not proof of GUI capture-control acceptance |
+| Native Bluetooth | CoreBluetooth, OS-managed | Two finished native GUI recordings on `d8ad552` backend / `946d3c0` GUI retained BLE; first run also exercised Pause/Resume. Earlier `07c7142`/`33a5e93` evidence remains below | Mixed user/accessibility controls, duration-target overruns retained; no full-rig or RF-losslessness claim. OS determines adapter/PHY; USB dongles do not become separate CoreBluetooth receivers |
+| Native WiFi | CoreWLAN, OS interface | Both consecutive native GUI recordings on `d8ad552` / `946d3c0` retained WiFi; second saved view manually confirmed responsive | Earlier redacted-address failures retained. Permissions remain specific to running identity; actual native control evidence does not establish full-rig acceptance |
 | CatSniffer 3.2 | RP2040 `2e8a:00c0`, USB CDC; reported Sniffle 1.11.0/API 0 | 30-second run: 2,563 packet observations; clean finish, zero reported host drops/reconnects | Channel 37/1M test; no new Coded/extended acceptance claim. A later explicit identity probe and reuse of active-owner metadata also passed |
-| M5StickC Plus2 | WCH `1a86:55d4`, UART at 460800 baud; verified installed `3fbc1a0` / AirHound `0.2.0`, application `bc468e56` | Ten-minute observation: 107,168 BLE + 2,613 WiFi, one boot/no printed panic, both late windows and repeated advertisers | Strict failure: 17 Status reports, seven output drops including two log drops, six scan drops and sampled-memory review required. `34678ec` PSRAM candidate build/image checks pass but remains unflashed. Current host lifecycle/full rig/recovery pending; prior failures retained under [#320](https://github.com/dougborg/AirHound/issues/320), [#317](https://github.com/dougborg/AirHound/issues/317), [#175](https://github.com/dougborg/AirHound/issues/175). RF loss unknown |
+| M5StickC Plus2 | WCH `1a86:55d4`, UART460800; installed `5c3d9eb` / AirHound `0.2.0`, application `eaf5f925` | Fresh ten-minute observation: 93,127 BLE + 2,585 WiFi, complete periodic health, zero sampled output/scan/timeouts; separate no-reset continuation retained both media | Strict acceptance remains incomplete: first run memory review required; continuation failed with 16 scan drops and 23,006µs writer poll gap despite zero output/timeouts. Current host lifecycle/full rig/recovery pending; previous failures retained under [#320](https://github.com/dougborg/AirHound/issues/320), [#317](https://github.com/dougborg/AirHound/issues/317), [#175](https://github.com/dougborg/AirHound/issues/175). RF loss unknown |
 | ALFA AWUS036ACHM | MT7610U `0e8d:7610`; explicit USB topology selector; ASIC `0x76100002` | First capture hit MCU command 12 timeout. After physical reconnect: 10 seconds on channel 1, 740 beacons, 1,600 frames/1,607 transfers, 7 malformed, cleanup verified. Later 20-second metadata run retained 1,259 observations, all attributed to its configured source; clean finish and zero reported host/producer drops or reconnects | Actual helper build reported; supplied image retained separately. Five running statuses correctly said running image unverified because the MCU was reused; stopped status cleared firmware. Short success is not an endurance claim; signal calibration remains limited |
 | u-blox GNSS | `1546:01a8`, USB CDC; explicit MON-VER query reported firmware SPG 3.01, software ROM CORE 3.01 (107888), hardware 00080000 and protocol 18.00 | Candidate `fc3a556` passed one production Rust identification request with preservation and cleanup verified. Earlier 60-second CatSniffer/GPSD session: all 4,520 BLE packets carried durable GPS associations; fix age 16–1,020ms, host age 0–1,004ms | Module model unknown: no MOD field. Query does not establish compatibility or reception. gpsd 3.27.5/protocol 16.1 is host software, separate from receiver firmware. Identification is macOS-only and retained in the current desktop delivery; native button acceptance remains open |
 | Flipper Zero | STM32 `0483:5740`, USB CDC; Momentum `mntm-012`, commit `e1784e74`, API 87.1 | Completion-capable producer passed UART-free startup, normal Pause/Resume, one paused-host watchdog case, and concurrent Cat/ALFA/GPS reception | FAP build identity is separate from Flipper firmware and AWOK identity. Active-host suspension retained producer stop completion but failed strict acceptance with eight host output drops; physical USB loss/reconnect, endurance and actual GUI controls remain open. Earlier failures remain scoped to their artifacts |
@@ -864,11 +891,11 @@ internally unexplained; production readiness timeouts are unchanged.
 ## Remaining acceptance
 
 - Verify the complete compatible rig with current native and external receivers,
-  including the updated M5 and Flipper. Native reception passed on `07c7142`;
-  installed `d8ad552` delivery/recovery does not replace reception and GUI checks.
-  M5 lifecycle success belongs to firmware `0.1.1`; installed `3fbc1a0` still
-  fails strict output/coverage acceptance. Validate the unflashed `34678ec`
-  candidate, then host transport and close/reopen behavior before full-rig claims.
+  including the updated M5 and Flipper. Native-only reception and GUI control
+  evidence now exists on `d8ad552`/`946d3c0`. M5 lifecycle success belongs to
+  firmware `0.1.1`; installed `5c3d9eb` still lacks strict acceptance. Resolve
+  current memory/scan/scheduling findings, then validate same-boot host lifecycle
+  and close/reopen behavior before full-rig claims.
   Preserve earlier BLE, controller-assertion and host-opening failures under
   [#317](https://github.com/dougborg/AirHound/issues/317),
   [#320](https://github.com/dougborg/AirHound/issues/320) and
@@ -879,9 +906,10 @@ internally unexplained; production readiness timeouts are unchanged.
   against that GUI-launched service, and the latest Flipper combined run used a
   private service. A GUI-control observer timed out without starting a run
   when focus moved away; it is not counted as GUI capture acceptance.
-- Verify a second recording in the same actual GUI window, then reopen both
-  saved histories and inspect live/saved observations. The merged #316 automated
-  regression covers this model/service path; actual button acceptance remains open.
+- Preserve the actual native-only two-recording result and manual saved-second-view
+  confirmation. Complete first saved-view proof, bounded-duration procedural
+  checks and live-selection-update acceptance; do not infer full-rig GUI support
+  from the merged #316 model/service regression or native-only runs.
 - Extend combined acceptance to physical unplug/replug, sleep/wake and prolonged
   load, which remain untested in this assembled build. Synthetic
   malformed framing, queue overflow, EOF, boot-boundary and pause tests already
