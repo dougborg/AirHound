@@ -31,7 +31,18 @@ pub enum Output {
     },
 }
 
+trait Clock {
+    fn now(&self) -> Instant;
+}
+struct SystemClock;
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 struct Link<'a, T> {
+    clock: &'a dyn Clock,
     io: &'a mut T,
     decoder: rpc::Decoder,
     correlation: rpc::Correlation,
@@ -42,8 +53,9 @@ impl<T: Read + Write> Link<'_, T> {
         let request = self.correlation.request(content)?;
         write_bounded(
             self.io,
+            self.clock,
             &rpc::encode(&request)?,
-            Instant::now() + ACK_TIMEOUT,
+            self.clock.now() + ACK_TIMEOUT,
         )?;
         Ok(request.command_id)
     }
@@ -93,10 +105,10 @@ impl<T: Read + Write> Link<'_, T> {
         mut visit: impl FnMut(Received) -> io::Result<()>,
     ) -> io::Result<()> {
         let id = self.send(content)?;
-        let deadline = Instant::now() + ACK_TIMEOUT;
+        let deadline = self.clock.now() + ACK_TIMEOUT;
         let mut ack = false;
         while !ack {
-            if Instant::now() >= deadline {
+            if self.clock.now() >= deadline {
                 return Err(timeout("Flipper RPC acknowledgment timed out"));
             }
             self.pump(|received| match received {
@@ -145,9 +157,9 @@ fn command<T: Read + Write>(
         Content::AppDataExchangeRequest(app::DataExchangeRequest { data: bytes }),
         |event| bridge_event(event, session, output),
     )?;
-    let deadline = Instant::now() + ACK_TIMEOUT;
+    let deadline = link.clock.now() + ACK_TIMEOUT;
     while session.awaiting_ack() {
-        if Instant::now() >= deadline {
+        if link.clock.now() >= deadline {
             return Err(timeout("Flipper bridge acknowledgment timed out"));
         }
         link.pump(|event| bridge_event(event, session, output))?;
@@ -161,6 +173,16 @@ fn command<T: Read + Write>(
 pub fn run<T: Read + Write>(
     io: &mut T,
     nonce: [u8; 16],
+    desired: impl FnMut() -> Desired,
+    output: impl FnMut(Output) -> io::Result<()>,
+) -> io::Result<()> {
+    run_with_clock(io, &SystemClock, nonce, desired, output)
+}
+
+fn run_with_clock<T: Read + Write>(
+    io: &mut T,
+    clock: &dyn Clock,
+    nonce: [u8; 16],
     mut desired: impl FnMut() -> Desired,
     mut output: impl FnMut(Output) -> io::Result<()>,
 ) -> io::Result<()> {
@@ -168,19 +190,37 @@ pub fn run<T: Read + Write>(
     if initial.shutdown {
         return Ok(());
     }
-    read_until(io, b">: ", 4096, Instant::now() + Duration::from_secs(3))?;
+    read_until(
+        io,
+        clock,
+        b">: ",
+        4096,
+        clock.now() + Duration::from_secs(3),
+    )?;
     if desired().shutdown {
         return Ok(());
     }
-    write_bounded(io, b"device_info\r", Instant::now() + ACK_TIMEOUT)?;
-    let info = read_until(io, b">: ", 8192, Instant::now() + Duration::from_secs(3))?;
+    write_bounded(io, clock, b"device_info\r", clock.now() + ACK_TIMEOUT)?;
+    let info = read_until(
+        io,
+        clock,
+        b">: ",
+        8192,
+        clock.now() + Duration::from_secs(3),
+    )?;
     let metadata = parse_device_info(&info)?;
     output(Output::DeviceInfo(metadata))?;
     if desired().shutdown {
         return Ok(());
     }
-    write_bounded(io, b"loader info\r", Instant::now() + ACK_TIMEOUT)?;
-    let loader = read_until(io, b">: ", 1024, Instant::now() + Duration::from_secs(2))?;
+    write_bounded(io, clock, b"loader info\r", clock.now() + ACK_TIMEOUT)?;
+    let loader = read_until(
+        io,
+        clock,
+        b">: ",
+        1024,
+        clock.now() + Duration::from_secs(2),
+    )?;
     if !loader
         .windows(b"No application is running".len())
         .any(|w| w == b"No application is running")
@@ -193,13 +233,14 @@ pub fn run<T: Read + Write>(
     if desired().shutdown {
         return Ok(());
     }
-    write_bounded(io, b"start_rpc_session\r", Instant::now() + ACK_TIMEOUT)?;
-    let echo = read_until(io, b"\n", 128, Instant::now() + Duration::from_secs(2))?;
+    write_bounded(io, clock, b"start_rpc_session\r", clock.now() + ACK_TIMEOUT)?;
+    let echo = read_until(io, clock, b"\n", 128, clock.now() + Duration::from_secs(2))?;
     if echo.strip_suffix(b"\r").unwrap_or(&echo) != b"start_rpc_session" {
         return Err(invalid("Unexpected Flipper CLI/RPC transition"));
     }
     let mut link = Link {
         io,
+        clock,
         decoder: rpc::Decoder::default(),
         correlation: rpc::Correlation::default(),
         pending_messages: VecDeque::new(),
@@ -226,12 +267,12 @@ pub fn run<T: Read + Write>(
         )?;
         // AppStart's transport ACK only acknowledges loader acceptance. The FAP
         // installs its callback before emitting AppStarted; Hello must wait.
-        let started_deadline = Instant::now() + TRANSITION_TIMEOUT;
+        let started_deadline = clock.now() + TRANSITION_TIMEOUT;
         while !app_started {
             if desired().shutdown {
                 return Ok(());
             }
-            if Instant::now() >= started_deadline {
+            if clock.now() >= started_deadline {
                 return Err(timeout("Flipper application startup timed out"));
             }
             link.pump(|event| match event {
@@ -243,7 +284,7 @@ pub fn run<T: Read + Write>(
             })?;
         }
         command(&mut link, &mut session, Command::Hello, &mut output)?;
-        let mut heartbeat = Instant::now();
+        let mut heartbeat = clock.now();
         let mut transition: Option<(Command, Instant)> = None;
         loop {
             let want = desired();
@@ -256,7 +297,7 @@ pub fn run<T: Read + Write>(
             if state == State::Failed {
                 return Err(invalid("Flipper bridge failed"));
             }
-            if transition.is_some_and(|(_, deadline)| Instant::now() >= deadline) {
+            if transition.is_some_and(|(_, deadline)| clock.now() >= deadline) {
                 return Err(timeout("Flipper lifecycle transition timed out"));
             }
             if matches!(
@@ -288,15 +329,15 @@ pub fn run<T: Read + Write>(
             };
             if let Some(next) = next {
                 command(&mut link, &mut session, next, &mut output)?;
-                heartbeat = Instant::now();
-                transition = Some((next, Instant::now() + TRANSITION_TIMEOUT));
+                heartbeat = clock.now();
+                transition = Some((next, clock.now() + TRANSITION_TIMEOUT));
                 continue;
             }
-            if heartbeat.elapsed() >= Duration::from_secs(1)
+            if clock.now().duration_since(heartbeat) >= Duration::from_secs(1)
                 && !matches!(transition, Some((Command::Stop, _)))
             {
                 command(&mut link, &mut session, Command::Heartbeat, &mut output)?;
-                heartbeat = Instant::now();
+                heartbeat = clock.now();
             }
             link.pump(|event| bridge_event(event, &mut session, &mut output))?;
         }
@@ -310,7 +351,7 @@ pub fn run<T: Read + Write>(
             &mut link,
             &mut session,
             &mut output,
-            Instant::now() + Duration::from_millis(3250),
+            clock.now() + Duration::from_millis(3250),
         ) {
             log::warn!(
                 "Flipper failure_drain failed ({:?}): {error}; stop completion is unverified",
@@ -376,7 +417,7 @@ fn drain_failure<T: Read + Write>(
     // same original deadline; send no new bridge command or lease renewal.
     while session.diagnostic_pending() || session.awaiting_ack() || link.correlation.awaiting_ack()
     {
-        if Instant::now() >= deadline {
+        if link.clock.now() >= deadline {
             return Err(timeout("Flipper failure diagnostic drain timed out"));
         }
         link.pump(|received| match received {
@@ -432,12 +473,13 @@ fn parse_device_info(bytes: &[u8]) -> io::Result<BTreeMap<String, String>> {
 }
 fn read_until<T: Read>(
     io: &mut T,
+    clock: &dyn Clock,
     marker: &[u8],
     limit: usize,
     deadline: Instant,
 ) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    while Instant::now() < deadline {
+    while clock.now() < deadline {
         let mut byte = [0];
         match io.read(&mut byte) {
             Ok(0) => {
@@ -468,9 +510,14 @@ fn read_until<T: Read>(
     }
     Err(timeout("Flipper CLI response timed out"))
 }
-fn write_bounded<T: Write>(io: &mut T, mut bytes: &[u8], deadline: Instant) -> io::Result<()> {
+fn write_bounded<T: Write>(
+    io: &mut T,
+    clock: &dyn Clock,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> io::Result<()> {
     while !bytes.is_empty() {
-        if Instant::now() >= deadline {
+        if clock.now() >= deadline {
             return Err(timeout("Flipper serial write timed out"));
         }
         match io.write(bytes) {
@@ -501,8 +548,12 @@ fn timeout(message: &'static str) -> io::Error {
 }
 
 #[cfg(test)]
+mod test_transport;
+
+#[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use super::test_transport::{Host, PeerTransport};
     use super::*;
     use airhound_flipper::bridge::{self, Body, Header, Message, Status};
     use std::{
@@ -567,28 +618,31 @@ mod tests {
         repeated_pairs: AtomicUsize,
     }
 
-    fn peer(io: UnixStream, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
+    fn peer<T: PeerTransport>(io: T, fault: Fault) -> std::thread::JoinHandle<Vec<Command>> {
         peer_with_control(io, fault, Arc::new(PeerControl::default()))
     }
 
-    fn peer_with_control(
-        mut io: UnixStream,
+    fn peer_with_control<T: PeerTransport>(
+        mut io: T,
         fault: Fault,
         control: Arc<PeerControl>,
     ) -> std::thread::JoinHandle<Vec<Command>> {
         std::thread::spawn(move || {
-            io.set_read_timeout(Some(Duration::from_millis(50)))
-                .unwrap();
-            io.set_write_timeout(Some(Duration::from_millis(50)))
-                .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(8);
             io.write_all(b">: ").unwrap();
             for (command,response) in [
                 (b"device_info".as_slice(),b"device_info\r\nfirmware_version: fixture\r\nfirmware_api_major: 87\r\nfirmware_api_minor: 1\r\n>: ".as_slice()),
                 (b"loader info",b"loader info\r\nNo application is running\r\n>: "),
                 (b"start_rpc_session",b"start_rpc_session\r\n"),
             ] {
-                assert_eq!(read_until(&mut io,b"\r",8192,deadline).unwrap(),command);
+                let mut actual = Vec::new();
+                loop {
+                    let mut byte = [0];
+                    io.read_exact(&mut byte).unwrap();
+                    if byte[0] == b'\r' { break; }
+                    actual.push(byte[0]);
+                    assert!(actual.len() < 8192);
+                }
+                assert_eq!(actual,command);
                 io.write_all(response).unwrap();
             }
             let mut decoder = rpc::Decoder::default();
@@ -596,7 +650,7 @@ mod tests {
             let mut generation = 0u32;
             let mut commands = vec![];
             let mut ready = true;
-            while Instant::now() < deadline && !control.finished.load(Ordering::Acquire) {
+            while !control.finished.load(Ordering::Acquire) {
                 let mut bytes = [0; rpc::MAX_READ];
                 let n = match io.read(&mut bytes) {
                     Ok(0) => break,
@@ -670,10 +724,7 @@ mod tests {
                             }
                             // ACK has already been sent. Before AppStarted the
                             // host must not send Hello or any other RPC command.
-                            let mut probe = [0; 1];
-                            assert!(
-                                matches!(io.read(&mut probe),Err(e) if matches!(e.kind(),io::ErrorKind::TimedOut|io::ErrorKind::WouldBlock))
-                            );
+                            io.probe_empty().unwrap();
                             let started = proto::Main {
                                 content: Some(Content::AppStateResponse(app::AppStateResponse {
                                     state: 1,
@@ -689,7 +740,7 @@ mod tests {
                                 panic!()
                             };
                             commands.push(command);
-                            let mut send = |request_id: u32, body: Body<'_>| {
+                            let mut send = |io: &mut T, request_id: u32, body: Body<'_>| {
                                 sequence += 1;
                                 let mut frame = [0; bridge::MAX_MESSAGE];
                                 let terminal = matches!(body, Body::Status(status) if status.state == State::Failed && status.cause == 3);
@@ -743,6 +794,7 @@ mod tests {
                                     continue;
                                 }
                                 send(
+                                    &mut io,
                                     message.header.request_id,
                                     Body::Hello(bridge::Hello {
                                         capabilities: bridge::CAPABILITIES,
@@ -758,7 +810,11 @@ mod tests {
                                 continue;
                             }
                             if !delayed_heartbeat {
-                                send(message.header.request_id, Body::Ack { command, result: 0 });
+                                send(
+                                    &mut io,
+                                    message.header.request_id,
+                                    Body::Ack { command, result: 0 },
+                                );
                             }
                             let status = |state, cause, evidence, generation| Status {
                                 state,
@@ -777,10 +833,12 @@ mod tests {
                                     ready = false;
                                     generation += 1;
                                     send(
+                                        &mut io,
                                         message.header.request_id,
                                         Body::Status(status(State::Preflight, 0, 0, generation)),
                                     );
                                     send(
+                                        &mut io,
                                         message.header.request_id,
                                         Body::Status(status(State::Preflight, 0, 1, generation)),
                                     );
@@ -792,6 +850,7 @@ mod tests {
                                     capture.push(0x80);
                                     capture.extend(b"[BUF/CLOSE]");
                                     send(
+                                        &mut io,
                                         0,
                                         Body::Raw {
                                             generation,
@@ -805,7 +864,7 @@ mod tests {
                                         current.cause = 5;
                                         current.state = State::Failed;
                                     }
-                                    send(message.header.request_id, Body::Status(current));
+                                    send(&mut io, message.header.request_id, Body::Status(current));
                                     if matches!(
                                         fault,
                                         Fault::WatchdogTerminal
@@ -838,6 +897,7 @@ mod tests {
                                             failed.evidence = 15;
                                         }
                                         send(
+                                            &mut io,
                                             if matches!(fault, Fault::WatchdogInitialWrongRequest) {
                                                 99
                                             } else {
@@ -852,12 +912,15 @@ mod tests {
                                             for step in 1..=60 {
                                                 // Keep offering input beyond the host's fixed
                                                 // drain deadline, even without scheduler delay.
-                                                std::thread::sleep(Duration::from_millis(75));
+                                                if io.delay(Duration::from_millis(75)).is_err() {
+                                                    return commands;
+                                                }
                                                 if control.finished.load(Ordering::Acquire) {
                                                     return commands;
                                                 }
                                                 failed.app_uptime_ms = 3001 + step * 25;
                                                 send(
+                                                    &mut io,
                                                     0,
                                                     Body::Raw {
                                                         generation,
@@ -868,7 +931,7 @@ mod tests {
                                                 if control.finished.load(Ordering::Acquire) {
                                                     return commands;
                                                 }
-                                                send(0, Body::Status(failed));
+                                                send(&mut io, 0, Body::Status(failed));
                                                 control
                                                     .repeated_pairs
                                                     .fetch_add(1, Ordering::Release);
@@ -903,6 +966,7 @@ mod tests {
                                                 failed.evidence = 7;
                                             }
                                             send(
+                                                &mut io,
                                                 if matches!(fault, Fault::WatchdogWrongRequest) {
                                                     99
                                                 } else {
@@ -917,10 +981,11 @@ mod tests {
                                                 failed.app_uptime_ms += 1;
                                                 failed.evidence &= !bridge::STOP_COMPLETE;
                                                 failed.uart_dropped_bytes = 1;
-                                                send(0, Body::Status(failed));
+                                                send(&mut io, 0, Body::Status(failed));
                                             }
                                             if matches!(fault, Fault::WatchdogRawTail) {
                                                 send(
+                                                    &mut io,
                                                     0,
                                                     Body::Raw {
                                                         generation,
@@ -941,11 +1006,13 @@ mod tests {
                                     };
                                     if ready {
                                         send(
+                                            &mut io,
                                             message.header.request_id,
                                             Body::Status(status(target, cause, 0, 0)),
                                         );
                                     } else {
                                         send(
+                                            &mut io,
                                             message.header.request_id,
                                             Body::Status(status(
                                                 State::Stopping,
@@ -955,6 +1022,7 @@ mod tests {
                                             )),
                                         );
                                         send(
+                                            &mut io,
                                             0,
                                             Body::Raw {
                                                 generation,
@@ -963,6 +1031,7 @@ mod tests {
                                             },
                                         );
                                         send(
+                                            &mut io,
                                             message.header.request_id,
                                             Body::Status(status(target, cause, 15, generation)),
                                         );
@@ -971,17 +1040,17 @@ mod tests {
                                 Command::Heartbeat if delayed_heartbeat => {
                                     let mut stopping = status(State::Stopping, 3, 3, generation);
                                     stopping.app_uptime_ms = 3001;
-                                    send(0, Body::Status(stopping));
+                                    send(&mut io, 0, Body::Status(stopping));
                                     let terminal = Status {
                                         state: State::Failed,
                                         evidence: 15,
                                         app_uptime_ms: 3101,
                                         ..stopping
                                     };
-                                    send(0, Body::Status(terminal));
+                                    send(&mut io, 0, Body::Status(terminal));
                                     // The real producer can repeat the final state before
                                     // answering an already-submitted heartbeat.
-                                    send(0, Body::Status(terminal));
+                                    send(&mut io, 0, Body::Status(terminal));
                                     let mut response = response;
                                     if matches!(fault, Fault::WatchdogWrongRpcAck) {
                                         response.command_id += 1;
@@ -1019,7 +1088,9 @@ mod tests {
                                         fault,
                                         Fault::WatchdogMissingRpcAck | Fault::WatchdogWrongRpcAck
                                     ) {
-                                        std::thread::sleep(Duration::from_millis(100));
+                                        if io.delay(Duration::from_millis(100)).is_err() {
+                                            return commands;
+                                        }
                                         if io.write_all(&bridge_ack).is_err() {
                                             return commands;
                                         }
@@ -1033,7 +1104,9 @@ mod tests {
                                         Fault::WatchdogMissingBridgeAck
                                             | Fault::WatchdogWrongBridgeAck
                                     ) {
-                                        std::thread::sleep(Duration::from_millis(100));
+                                        if io.delay(Duration::from_millis(100)).is_err() {
+                                            return commands;
+                                        }
                                         if io.write_all(&ack).is_err() {
                                             return commands;
                                         }
@@ -1050,11 +1123,15 @@ mod tests {
                                         };
                                     // Force separate reads so terminal cannot accidentally
                                     // consume both pending acknowledgments in one batch.
-                                    std::thread::sleep(Duration::from_millis(100));
+                                    if io.delay(Duration::from_millis(100)).is_err() {
+                                        return commands;
+                                    }
                                     if io.write_all(first).is_err() {
                                         return commands;
                                     }
-                                    std::thread::sleep(Duration::from_millis(100));
+                                    if io.delay(Duration::from_millis(100)).is_err() {
+                                        return commands;
+                                    }
                                     if io.write_all(second).is_err() {
                                         return commands;
                                     }
@@ -1070,12 +1147,8 @@ mod tests {
             commands
         })
     }
-    fn transport() -> (UnixStream, UnixStream) {
-        let (a, b) = UnixStream::pair().unwrap();
-        a.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
-        a.set_write_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        (a, b)
+    fn transport() -> (Host, test_transport::Peer) {
+        Host::pair()
     }
     #[test]
     fn autonomous_failure_drain_retains_terminal_evidence_but_never_recovers() {
@@ -1100,15 +1173,17 @@ mod tests {
             Fault::WatchdogRawTail,
         ] {
             let (mut io, other) = transport();
+            let clock = io.clock.clone();
             let control = Arc::new(PeerControl::default());
             let peer = peer_with_control(other, fault, control.clone());
-            let started = Instant::now();
+            let started = clock.now();
             let mut diagnostic = vec![];
             let mut completion = vec![];
             let mut accepted_terminal = false;
             let mut packet_count = 0;
-            let error = run(
+            let error = run_with_clock(
                 &mut io,
+                &clock,
                 [7; 16],
                 || Desired {
                     enabled: true,
@@ -1139,8 +1214,8 @@ mod tests {
             // is still sending. Cancel and join that test-owned sender before
             // closing its transport; do not turn expected teardown into EPIPE.
             control.finished.store(true, Ordering::Release);
-            let commands = peer.join().unwrap();
             drop(io);
+            let commands = peer.join().unwrap();
             assert_eq!(commands, [Command::Hello, Command::StartBeacon]);
             assert_eq!(
                 error.to_string(),
@@ -1222,15 +1297,14 @@ mod tests {
             } else {
                 assert!(diagnostic.iter().all(|report| report == &diagnostic[0]));
             }
-            if matches!(fault, Fault::WatchdogMissing | Fault::WatchdogRepeated) {
-                assert!(started.elapsed() >= Duration::from_millis(3250));
-            }
-            let limit = if matches!(fault, Fault::WatchdogRepeated) {
-                4500
-            } else {
-                5000
+            // A noisy peer cannot renew the fixed diagnostic drain. Its next
+            // 75ms fragment arrives during best-effort RPC close, at3300ms.
+            let expected = match fault {
+                Fault::WatchdogMissing => Duration::from_millis(3250),
+                Fault::WatchdogRepeated => Duration::from_millis(3300),
+                _ => Duration::ZERO,
             };
-            assert!(started.elapsed() < Duration::from_millis(limit));
+            assert_eq!(clock.now().duration_since(started), expected, "{fault:?}");
         }
     }
 
@@ -1245,11 +1319,13 @@ mod tests {
             Fault::WatchdogWrongBridgeAck,
         ] {
             let (mut io, other) = transport();
+            let clock = io.clock.clone();
             let peer = peer(other, fault);
             let mut proof = Vec::new();
-            let started = Instant::now();
-            let error = run(
+            let started = clock.now();
+            let error = run_with_clock(
                 &mut io,
+                &clock,
                 [7; 16],
                 || Desired {
                     enabled: true,
@@ -1287,9 +1363,11 @@ mod tests {
                 "terminal was validated before pending-ACK cleanup"
             );
             if missing {
-                assert!(started.elapsed() >= Duration::from_millis(4250));
+                assert_eq!(
+                    clock.now().duration_since(started),
+                    Duration::from_millis(4250)
+                );
             }
-            assert!(started.elapsed() < Duration::from_secs(6));
         }
     }
 
@@ -1307,6 +1385,7 @@ mod tests {
         let mut io = io::Cursor::new(bytes);
         let mut link = Link {
             io: &mut io,
+            clock: &SystemClock,
             decoder: rpc::Decoder::default(),
             correlation: rpc::Correlation::default(),
             pending_messages: VecDeque::new(),
@@ -1335,12 +1414,14 @@ mod tests {
     #[test]
     fn actual_rpc_bytes_drive_pause_resume_finish_without_implicit_reconnect() {
         let (mut io, other) = transport();
+        let clock = io.clock.clone();
         let peer = peer(other, Fault::None);
         let wanted = Arc::new(AtomicU8::new(1));
         let read = wanted.clone();
         let mut packets = 0;
-        run(
+        run_with_clock(
             &mut io,
+            &clock,
             [7; 16],
             || Desired {
                 enabled: read.load(Ordering::Acquire) == 1,
@@ -1379,10 +1460,12 @@ mod tests {
     #[test]
     fn bound_failure_retains_producer_counters_without_clean_success() {
         let (mut io, other) = transport();
+        let clock = io.clock.clone();
         let peer = peer(other, Fault::Loss);
         let mut reported = None;
-        assert!(run(
+        assert!(run_with_clock(
             &mut io,
+            &clock,
             [7; 16],
             || Desired {
                 enabled: true,
@@ -1412,12 +1495,14 @@ mod tests {
     fn disabled_attachment_can_identify_and_stop_without_starting_uart() {
         for fault in [Fault::None, Fault::StateFirst] {
             let (mut io, other) = transport();
+            let clock = io.clock.clone();
             let peer = peer(other, fault);
             let stop = Arc::new(AtomicU8::new(0));
             let wanted = stop.clone();
             let mut terminal = None;
-            run(
+            run_with_clock(
                 &mut io,
+                &clock,
                 [9; 16],
                 || Desired {
                     enabled: false,
@@ -1452,10 +1537,12 @@ mod tests {
     #[test]
     fn missing_app_started_times_out_without_hello_or_rf() {
         let (mut io, other) = transport();
+        let clock = io.clock.clone();
         let peer = peer(other, Fault::MissingAppStarted);
-        let before = Instant::now();
-        assert!(run(
+        let before = clock.now();
+        assert!(run_with_clock(
             &mut io,
+            &clock,
             [8; 16],
             || Desired {
                 enabled: true,
@@ -1464,7 +1551,7 @@ mod tests {
             |_| Ok(())
         )
         .is_err());
-        assert!(before.elapsed() < Duration::from_secs(6));
+        assert_eq!(clock.now().duration_since(before), TRANSITION_TIMEOUT);
         drop(io);
         assert!(peer.join().unwrap().is_empty());
     }
@@ -1473,10 +1560,12 @@ mod tests {
     fn missing_or_malformed_hello_never_starts_or_retries_and_closes_owned_rpc() {
         for fault in [Fault::MissingHello, Fault::MalformedHello] {
             let (mut io, other) = transport();
+            let clock = io.clock.clone();
             let peer = peer(other, fault);
-            let started = Instant::now();
-            assert!(run(
+            let started = clock.now();
+            assert!(run_with_clock(
                 &mut io,
+                &clock,
                 [8; 16],
                 || Desired {
                     enabled: true,
@@ -1485,9 +1574,109 @@ mod tests {
                 |_| Ok(())
             )
             .is_err());
-            assert!(started.elapsed() < Duration::from_secs(3));
+            assert_eq!(
+                clock.now().duration_since(started),
+                if matches!(fault, Fault::MissingHello) {
+                    ACK_TIMEOUT
+                } else {
+                    Duration::ZERO
+                }
+            );
             drop(io);
             assert_eq!(peer.join().unwrap(), [Command::Hello]);
+        }
+    }
+    #[test]
+    fn real_unix_stream_bytes_complete_without_clock_progress() {
+        let (mut io, other) = UnixStream::pair().unwrap();
+        // Only a broken-fixture guard. Protocol correctness uses the frozen
+        // injected clock and completed peer I/O, never this wall-clock limit.
+        io.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        io.set_write_timeout(Some(Duration::from_secs(30))).unwrap();
+        other
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        other
+            .set_write_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let peer = peer(other, Fault::None);
+        let clock = test_transport::ManualClock::new();
+        let start = clock.now();
+        let stop = std::cell::Cell::new(false);
+        run_with_clock(
+            &mut io,
+            &clock,
+            [9; 16],
+            || Desired {
+                enabled: false,
+                shutdown: stop.get(),
+            },
+            |event| {
+                if matches!(event, Output::Bridge(Event::Hello { .. })) {
+                    stop.set(true);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        drop(io);
+        assert_eq!(peer.join().unwrap(), [Command::Hello, Command::Stop]);
+        assert_eq!(clock.now(), start);
+    }
+    #[test]
+    fn cli_and_write_deadlines_expire_at_the_exact_injected_boundary() {
+        struct Blocked<'a> {
+            clock: &'a test_transport::ManualClock,
+            steps: VecDeque<Duration>,
+            calls: usize,
+        }
+        impl Blocked<'_> {
+            fn step(&mut self) -> io::Error {
+                self.calls += 1;
+                self.clock.advance(
+                    self.steps
+                        .pop_front()
+                        .expect("I/O called at expired deadline"),
+                );
+                io::ErrorKind::WouldBlock.into()
+            }
+        }
+        impl Read for Blocked<'_> {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(self.step())
+            }
+        }
+        impl Write for Blocked<'_> {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(self.step())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        for writing in [false, true] {
+            let clock = test_transport::ManualClock::new();
+            let deadline = clock.now() + ACK_TIMEOUT;
+            let mut io = Blocked {
+                clock: &clock,
+                steps: [
+                    ACK_TIMEOUT - Duration::from_nanos(1),
+                    Duration::from_nanos(1),
+                ]
+                .into(),
+                calls: 0,
+            };
+            let error = if writing {
+                write_bounded(&mut io, &clock, b"command", deadline).unwrap_err()
+            } else {
+                read_until(&mut io, &clock, b"prompt", 128, deadline).unwrap_err()
+            };
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            assert_eq!(clock.now(), deadline);
+            assert_eq!(
+                io.calls, 2,
+                "one read just before deadline, none at deadline"
+            );
         }
     }
 }
