@@ -26,6 +26,7 @@ final class SessionModel: ObservableObject {
   @Published var setupError: String?
   @Published var locationProviders: [String] = []
   @Published var sessionSources: [String] = []
+  @Published var rayhunterTransports: [String] = []
   @Published var backendBuild: String?
   @Published var appliedSetupName: String?
   @Published var validation: String?
@@ -107,6 +108,11 @@ final class SessionModel: ObservableObject {
         self.sessionSources = sources.compactMap(\.string)
       } else {
         self.sessionSources = []
+      }
+      if case .array(let transports) = status["rayhunter_transports"] {
+        self.rayhunterTransports = transports.compactMap(\.string)
+      } else {
+        self.rayhunterTransports = []
       }
       if case .array(let providers) = status["location_providers"] {
         self.locationProviders = providers.compactMap(\.string)
@@ -356,6 +362,24 @@ final class SessionModel: ObservableObject {
   func removeReceiver(id: String) { editPlan { try PlanEditing.remove($0, id: id) } }
   func planSourceField(id: String, field: String, value: JSONValue) {
     editPlan { try PlanEditing.change($0, receiverID: id, field: field, value: value) }
+  }
+  var canManageRayhunterUSB: Bool {
+    connected && canEditPlan && rayhunterTransports.contains("managed_adb_usb")
+  }
+  func setRayhunterConnection(id: String, managedUSB: Bool) {
+    guard !managedUSB || canManageRayhunterUSB else {
+      error = "Connect to a backend with managed USB support before selecting this connection."
+      return
+    }
+    editPlan { try PlanEditing.rayhunterConnection($0, receiverID: id, managedUSB: managedUSB) }
+  }
+  func setRayhunterADBField(id: String, field: String, value: String) {
+    guard canManageRayhunterUSB, ["executable", "serial"].contains(field),
+      let receiver = plannedReceivers.first(where: { $0.id == id }),
+      receiver.kind == "rayhunter", case .object(var adb) = receiver.source["adb"]
+    else { return }
+    adb[field] = .string(value)
+    planSourceField(id: id, field: "adb", value: .object(adb))
   }
   var planLocation: JSONValue? {
     (try? JSONDecoder().decode(JSONValue.self, from: Data(configText.utf8)))?["location"]

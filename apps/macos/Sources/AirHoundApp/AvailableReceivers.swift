@@ -19,7 +19,9 @@ struct AvailableReceivers: View {
             "kind": .string("rayhunter"), "endpoint": .string(""), "decoder": .string(""),
           ]))
       }.disabled(!session.canEditPlan || !session.sessionSources.contains("rayhunter"))
-      Text("Requires a prepared local raw-feed forward and the separate Rayhunter decoder.").font(
+      Text(
+        "Requires the separate Rayhunter decoder and either a selected USB device or a prepared local raw-feed endpoint."
+      ).font(
         .caption
       ).foregroundStyle(.secondary)
       if let inventory = session.inventory {

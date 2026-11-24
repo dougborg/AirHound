@@ -67,6 +67,77 @@ final class SetupPresentationTests: XCTestCase {
     XCTAssertEqual(session.configText, valid, "The active plan cannot be edited")
   }
 
+  func testRayhunterTransportEditsRequireCapabilityAndPreserveSessionPlan() throws {
+    let suite = "rayhunter-edit-" + UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let session = SessionModel(preferences: defaults)
+    session.configText =
+      #"{"version":1,"alert_policy":"silent","future_option":{"keep":true},"location":{"kind":"gpsd","endpoint":"127.0.0.1:2947"},"receivers":[{"id":"cell","source":{"kind":"rayhunter","endpoint":"ws://127.0.0.1:9000","decoder":"/fixture/decoder","future_source":42}},{"id":"ble","source":{"kind":"native_ble"}}]}"#
+    let original = session.configText
+    session.connected = true
+    session.setRayhunterConnection(id: "cell", managedUSB: true)
+    XCTAssertEqual(session.configText, original, "An older backend must not offer managed USB")
+    session.rayhunterTransports = ["managed_adb_usb"]
+    session.setRayhunterConnection(id: "cell", managedUSB: true)
+    XCTAssertNil(session.plannedReceivers[0].source["endpoint"])
+    XCTAssertEqual(session.plannedReceivers[0].endpoint, "Choose a USB device")
+    session.setRayhunterADBField(id: "cell", field: "executable", value: "/fixture/adb")
+    session.setRayhunterADBField(id: "cell", field: "serial", value: "selected-usb")
+    let config = try JSONDecoder().decode(JSONValue.self, from: Data(session.configText.utf8))
+    XCTAssertEqual(config["alert_policy"], .string("silent"))
+    XCTAssertEqual(config["future_option"]?["keep"], .bool(true))
+    XCTAssertEqual(config["location"]?["kind"], .string("gpsd"))
+    let receiver = session.plannedReceivers[0]
+    XCTAssertEqual(receiver.endpoint, "USB · selected-usb")
+    XCTAssertEqual(receiver.source["adb"]?["executable"], .string("/fixture/adb"))
+    XCTAssertEqual(receiver.source["decoder"], .string("/fixture/decoder"))
+    XCTAssertEqual(receiver.source["future_source"], .integer(42))
+    XCTAssertEqual(session.plannedReceivers[1].kind, "native_ble")
+    XCTAssertFalse(session.isActive, "Changing transport never starts a recording or helper")
+    let managed = session.configText
+    session.setRayhunterADBField(id: "cell", field: "remote_port", value: "1234")
+    XCTAssertEqual(
+      session.configText, managed, "The UI cannot edit backend-owned forwarding policy")
+    session.connected = false
+    session.setRayhunterADBField(id: "cell", field: "serial", value: "other")
+    XCTAssertEqual(
+      session.configText, managed, "Cached capability cannot authorize disconnected edits")
+    session.connected = true
+    session.capture = .object(["active": .bool(true)])
+    session.setRayhunterConnection(id: "cell", managedUSB: false)
+    session.setRayhunterADBField(id: "cell", field: "serial", value: "other")
+    XCTAssertEqual(session.configText, managed, "An active plan stays immutable")
+    session.capture = .object(["active": .bool(false)])
+    session.beginBackgroundRefresh()
+    XCTAssertTrue(session.submitSetupMutation {})
+    session.setRayhunterConnection(id: "cell", managedUSB: false)
+    XCTAssertEqual(session.configText, managed, "Queued actions protect the submitted plan")
+  }
+
+  func testRayhunterModeSwitchPreservesUnknownFieldsAndAllowsLegacyEndpoint() throws {
+    let suite = "rayhunter-mode-" + UUID().uuidString
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let session = SessionModel(preferences: defaults)
+    session.configText =
+      #"{"version":1,"receivers":[{"id":"cell","source":{"kind":"rayhunter","decoder":"/decoder","adb":{"executable":"/adb","serial":"usb","future":true},"future_source":42}}]}"#
+    session.connected = true
+    session.rayhunterTransports = ["managed_adb_usb"]
+    session.setRayhunterADBField(id: "cell", field: "serial", value: "updated")
+    session.setRayhunterConnection(id: "cell", managedUSB: true)
+    XCTAssertEqual(session.plannedReceivers[0].source["adb"]?["future"], .bool(true))
+    XCTAssertEqual(session.plannedReceivers[0].source["adb"]?["serial"], .string("updated"))
+    session.rayhunterTransports = []
+    session.setRayhunterConnection(id: "cell", managedUSB: false)
+    XCTAssertNil(session.plannedReceivers[0].source["adb"])
+    XCTAssertEqual(session.plannedReceivers[0].source["endpoint"], .string(""))
+    session.planSourceField(id: "cell", field: "endpoint", value: .string("ws://127.0.0.1:9000"))
+    XCTAssertEqual(session.plannedReceivers[0].endpoint, "ws://127.0.0.1:9000")
+    XCTAssertEqual(session.plannedReceivers[0].source["decoder"], .string("/decoder"))
+    XCTAssertEqual(session.plannedReceivers[0].source["future_source"], .integer(42))
+  }
+
   func testHistoricalHealthAndPollingDoNotImplyActiveCapture() {
     let session = SessionModel()
     session.connected = true
