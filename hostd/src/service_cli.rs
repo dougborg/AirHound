@@ -46,6 +46,11 @@ pub(crate) enum ClientCommand {
     CaptureStatus,
     /// Show the connected service's capabilities (not RF readiness)
     Status,
+    /// Wait for authenticated Hello and Status without starting capture
+    WaitReady {
+        #[arg(long, default_value_t = 5000, value_parser = clap::value_parser!(u64).range(1..=60_000))]
+        timeout_ms: u64,
+    },
     /// List durable recordings, newest first
     Recordings {
         #[arg(long)]
@@ -413,6 +418,13 @@ fn read_config(path: &Path) -> io::Result<Value> {
 }
 
 pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()> {
+    if let ClientCommand::WaitReady { timeout_ms } = command {
+        let status =
+            airhound_client::readiness::wait_for_ready(path, Duration::from_millis(timeout_ms))
+                .await
+                .map_err(io::Error::other)?;
+        return crate::observation::write_json(&mut io::stdout(), &status);
+    }
     let mut client = Client::connect(path, Duration::from_secs(20))
         .await
         .map_err(io::Error::other)?;
@@ -461,6 +473,7 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
         }
         ClientCommand::CaptureStatus => client.capture(airhound_api::CaptureAction::Status).await,
         ClientCommand::Status => client.status().await,
+        ClientCommand::WaitReady { .. } => unreachable!("handled before connecting"),
         ClientCommand::Recordings { before, limit } => client.recordings(before, limit).await,
         ClientCommand::Records {
             run_id,
@@ -487,6 +500,37 @@ pub(crate) async fn client(path: &Path, command: ClientCommand) -> io::Result<()
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[test]
+    fn readiness_cli_rejects_invalid_budgets_before_io() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Arguments {
+            #[command(subcommand)]
+            command: ClientCommand,
+        }
+        for milliseconds in ["0", "60001", "-1", "invalid"] {
+            assert!(Arguments::try_parse_from([
+                "fixture",
+                "wait-ready",
+                "--timeout-ms",
+                milliseconds
+            ])
+            .is_err());
+        }
+        for milliseconds in [1, 5000, 60000] {
+            let parsed = Arguments::try_parse_from([
+                "fixture",
+                "wait-ready",
+                "--timeout-ms",
+                &milliseconds.to_string(),
+            ])
+            .unwrap();
+            assert!(
+                matches!(parsed.command, ClientCommand::WaitReady { timeout_ms } if timeout_ms == milliseconds)
+            );
+        }
+    }
+
     #[tokio::test]
     async fn profile_load_returns_editable_configuration_after_serial_alias_collision() {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};

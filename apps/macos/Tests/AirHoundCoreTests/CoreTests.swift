@@ -161,6 +161,41 @@ final class CoreTests: XCTestCase {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     return executable
   }
+  func testAbsoluteDeadlineExpiresDuringDispatchWithoutLaunchingChild() async throws {
+    for expired in [5.0, 5.001] {
+      let time = DispatchDeadlineTime(expired: expired)
+      let scheduling = ProcessScheduling(
+        now: { time.read() }, launched: { time.launched($0) })
+      do {
+        _ = try await DiscoveryProcess(scheduling: scheduling).runUntil(
+          executable: URL(fileURLWithPath: "/bin/echo"), arguments: ["not launched"], deadline: 5)
+        XCTFail("Dispatch must not renew the startup budget")
+      } catch { XCTAssertEqual(error as? DiscoveryError, .timedOut) }
+      XCTAssertEqual(time.pid, 0)
+      XCTAssertEqual(time.reads, 2, "Entry check then actual collector check")
+    }
+  }
+
+  func testAbsoluteDeadlineIncludesLaunchAndReapsOwnedChild() async throws {
+    for expired in [5.0, 5.001] {
+      let time = ControlledProcessTime()
+      let scheduling = ProcessScheduling(
+        now: { time.now },
+        launched: { pid in
+          time.launched(pid)
+          time.advance(expired)
+        })
+      do {
+        _ = try await DiscoveryProcess(scheduling: scheduling).runUntil(
+          executable: URL(fileURLWithPath: "/bin/cat"), arguments: [], deadline: 5)
+        XCTFail("Launch time cannot start a fresh relative timeout")
+      } catch { XCTAssertEqual(error as? DiscoveryError, .timedOut) }
+      XCTAssertGreaterThan(time.pid, 0)
+      XCTAssertEqual(kill(time.pid, 0), -1)
+      XCTAssertEqual(errno, ESRCH, "Only the readiness child was reaped")
+    }
+  }
+
   func testProcessForwardsOnlyPassiveArguments() async throws {
     let executable = try script(
       "[ \"$#\" = 3 ] && [ \"$1\" = devices ] && [ \"$2\" = list ] && [ \"$3\" = --json ] || exit 9\nprintf '%s' '"
@@ -521,5 +556,36 @@ private final class ControlledProcessTime: @unchecked Sendable {
     lock.lock()
     cancelled = true
     lock.unlock()
+  }
+}
+
+/// Simulates time consumed before the queued collector starts, without a sleep
+/// or assumptions about how quickly its dispatch queue runs.
+private final class DispatchDeadlineTime: @unchecked Sendable {
+  private let lock = NSLock()
+  private let expired: Double
+  private var count = 0
+  private var child: Int32 = 0
+  init(expired: Double) { self.expired = expired }
+  func read() -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    count += 1
+    return count == 1 ? 0 : expired
+  }
+  func launched(_ pid: Int32) {
+    lock.lock()
+    child = pid
+    lock.unlock()
+  }
+  var pid: Int32 {
+    lock.lock()
+    defer { lock.unlock() }
+    return child
+  }
+  var reads: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return count
   }
 }

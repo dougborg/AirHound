@@ -7,6 +7,8 @@ use std::{io, path::Path, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+pub mod readiness;
+
 /// A 4-byte big-endian length followed by UTF-8 JSON; reject before allocating.
 /// Generic IO keeps framing usable by a future authenticated transport adapter.
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
@@ -73,17 +75,35 @@ pub struct Client<S = UnixStream> {
 }
 impl Client<UnixStream> {
     pub async fn connect(path: &Path, timeout: Duration) -> Result<Self, ClientError> {
+        Self::connect_for_readiness(path, timeout)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    async fn connect_for_readiness(
+        path: &Path,
+        timeout: Duration,
+    ) -> Result<Self, readiness::AttemptFailure> {
+        use readiness::AttemptFailure;
         let stream = tokio::time::timeout(timeout, UnixStream::connect(path))
             .await
-            .map_err(|_| ClientError::Timeout)??;
+            .map_err(|_| AttemptFailure::terminal(ClientError::Timeout))?
+            .map_err(AttemptFailure::connection)?;
         // Authenticate the local peer before sending configuration bytes. A future
         // remote transport must provide its own authentication before handshake.
-        if stream.peer_cred()?.uid() != unsafe { libc::geteuid() } {
-            return Err(ClientError::Protocol(
+        if stream
+            .peer_cred()
+            .map_err(|error| AttemptFailure::terminal(ClientError::Io(error)))?
+            .uid()
+            != unsafe { libc::geteuid() }
+        {
+            return Err(AttemptFailure::terminal(ClientError::Protocol(
                 "backend has a different effective user".into(),
-            ));
+            )));
         }
-        Self::handshake(stream, timeout).await
+        Self::handshake(stream, timeout)
+            .await
+            .map_err(AttemptFailure::terminal)
     }
 }
 impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {

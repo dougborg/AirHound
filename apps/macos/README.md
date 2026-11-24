@@ -23,7 +23,10 @@ notarized. Its identifier is `tools.airhound.desktop`. The optional argument to
 `bundle.sh` embeds that exact backend executable inside **AirHound Service.app**
 (`tools.airhound.service`), with its own signed privacy usage descriptions.
 The GUI starts this application through LaunchServices and waits for the shared
-service socket; short-lived client commands use its executable directly.
+service to answer authenticated Hello and Status within one five-second startup
+budget; socket existence alone is insufficient. Cancelling this readiness probe
+leaves the service and any recording running. Short-lived client commands use
+its executable directly.
 Omitting the argument builds an app that
 can browse NDJSON and lets you select a trusted backend manually. External radio
 helpers, their runtimes and firmware are not bundled. The native UI targets

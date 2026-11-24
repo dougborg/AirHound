@@ -42,7 +42,7 @@ struct ProcessScheduling: Sendable {
   var signalling: @Sendable (Int32, TimeInterval) -> Void = { _, _ in }
 }
 
-public struct DiscoveryProcess {
+public struct DiscoveryProcess: Sendable {
   private let scheduling: ProcessScheduling
   public init() { scheduling = ProcessScheduling() }
   init(scheduling: ProcessScheduling) { self.scheduling = scheduling }
@@ -52,6 +52,28 @@ public struct DiscoveryProcess {
   )
     async throws -> Data
   {
+    try await run(
+      executable: executable, arguments: arguments, timeout: timeout,
+      outputLimit: outputLimit, absoluteDeadline: nil)
+  }
+
+  /// Startup probes share their caller's monotonic deadline across dispatch,
+  /// process launch and IO. Existing callers retain their ordinary timeout API.
+  public func runUntil(
+    executable: URL, arguments: [String], deadline: TimeInterval,
+    outputLimit: Int = 4 * 1024 * 1024
+  ) async throws -> Data {
+    let remaining = deadline - scheduling.now()
+    guard deadline.isFinite, remaining > 0 else { throw DiscoveryError.timedOut }
+    return try await run(
+      executable: executable, arguments: arguments, timeout: remaining,
+      outputLimit: outputLimit, absoluteDeadline: deadline)
+  }
+
+  private func run(
+    executable: URL, arguments: [String], timeout: TimeInterval,
+    outputLimit: Int, absoluteDeadline: TimeInterval?
+  ) async throws -> Data {
     let cancellation = Cancellation()
     return try await withTaskCancellationHandler(
       operation: {
@@ -61,7 +83,8 @@ public struct DiscoveryProcess {
               with: Result {
                 try Self.collect(
                   executable, arguments: arguments, timeout: timeout, limit: outputLimit,
-                  cancellation: cancellation, scheduling: scheduling)
+                  cancellation: cancellation, scheduling: scheduling,
+                  absoluteDeadline: absoluteDeadline)
               })
           }
         }
@@ -77,12 +100,14 @@ public struct DiscoveryProcess {
 
   private static func collect(
     _ executable: URL, arguments: [String] = ["devices", "list", "--json"], timeout: TimeInterval,
-    limit: Int, cancellation: Cancellation, scheduling: ProcessScheduling
+    limit: Int, cancellation: Cancellation, scheduling: ProcessScheduling,
+    absoluteDeadline: TimeInterval?
   ) throws -> Data {
     guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path),
       timeout > 0, limit > 0
     else { throw DiscoveryError.invalidExecutable }
     if cancellation.isCancelled { throw DiscoveryError.cancelled }
+    if let absoluteDeadline, scheduling.now() >= absoluteDeadline { throw DiscoveryError.timedOut }
     let process = Process()
     process.executableURL = executable
     process.arguments = arguments
@@ -132,7 +157,9 @@ public struct DiscoveryProcess {
       scheduling.stdout(output)
       let now = scheduling.now()
       if cancellation.isCancelled { failure = failure ?? .cancelled }
-      if now - start >= timeout { failure = failure ?? .timedOut }
+      if absoluteDeadline.map({ now >= $0 }) ?? (now - start >= timeout) {
+        failure = failure ?? .timedOut
+      }
       if failure != nil && process.isRunning {
         if stopTime == nil {
           scheduling.signalling(SIGTERM, now)
@@ -154,6 +181,9 @@ public struct DiscoveryProcess {
       scheduling.wait(0.01)
     } while true
     process.waitUntilExit()
+    if let absoluteDeadline, scheduling.now() >= absoluteDeadline {
+      failure = failure ?? .timedOut
+    }
     if let failure { throw failure }
     guard process.terminationReason == .exit, process.terminationStatus == 0 else {
       throw DiscoveryError.failed(

@@ -52,6 +52,7 @@ final class SessionModel: ObservableObject {
   private var client: BackendClient?
   private var connectionEpoch = UUID()
   private var pollTask: Task<Void, Never>?
+  private(set) var startupTask: Task<Void, Never>?
   private var polling = false
   private var pendingUserAction: (() async throws -> Void)?
   @Published private(set) var userActionQueued = false
@@ -61,8 +62,10 @@ final class SessionModel: ObservableObject {
   var hasPendingStart: Bool { pendingConfig != nil }
 
   private let preferences: UserDefaults
-  init(preferences: UserDefaults = .standard) {
+  private let readiness: ServiceReadiness
+  init(preferences: UserDefaults = .standard, readiness: ServiceReadiness? = nil) {
     self.preferences = preferences
+    self.readiness = readiness ?? ServiceReadiness()
     if let path = preferences.string(forKey: "serviceSocket") { socketPath = path }
   }
 
@@ -177,8 +180,12 @@ final class SessionModel: ObservableObject {
       ]
       busy = true
       message = "Starting service…"
-      Task {
+      let deadline = readiness.deadline()
+      let startupEpoch = UUID()
+      connectionEpoch = startupEpoch
+      startupTask = Task {
         do {
+          try readiness.check(deadline)
           let running: () -> Bool
           if let application = ServiceLauncher.application(for: executable) {
             let launched = try ServiceLauncher.launch(
@@ -197,24 +204,19 @@ final class SessionModel: ObservableObject {
             service = process
             running = { process.isRunning }
           }
-          for _ in 0..<50 {
-            if FileManager.default.fileExists(atPath: socket.path) {
-              busy = false
-              connect(executable: executable)
-              return
-            }
-            guard running() else {
-              throw ModelError.invalid(
-                "Service exited before becoming ready. Check the directory permissions and database ownership."
-              )
-            }
-            try await Task.sleep(for: .milliseconds(100))
-          }
-          throw ModelError.invalid(
-            "Service has not become ready. Try Connect; no socket has been removed.")
-        } catch {
+          try await readiness.wait(
+            client: BackendClient(executable: executable, socket: socket),
+            deadline: deadline, running: running)
+          guard connectionEpoch == startupEpoch else { throw CancellationError() }
+          startupTask = nil
           busy = false
-          self.error = error.localizedDescription
+          connect(executable: executable)
+        } catch {
+          if connectionEpoch == startupEpoch {
+            startupTask = nil
+            busy = false
+            self.error = error.localizedDescription
+          }
         }
       }
     } catch { self.error = error.localizedDescription }
@@ -870,6 +872,11 @@ final class SessionModel: ObservableObject {
   }
   func disconnect() {
     connectionEpoch = UUID()
+    if let startup = startupTask {
+      startupTask = nil
+      startup.cancel()
+      busy = false
+    }
     recordingEpoch = UUID()
     pollTask?.cancel()
     pollTask = nil
