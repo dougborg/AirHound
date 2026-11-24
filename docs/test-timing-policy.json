@@ -44,6 +44,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
     },
+    "0259936450563744193f8c8ef5626c046ddbe6cc6e68185c7c3d40c1712d423d": {
+      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "4d3cdde3d3f9d79fdfce4703ed81455473b8498d7ac1c14c6593fd9325651af3",
+      "category": "fixed-input",
+      "reason": "These expressions assert the timeout argument passed to an injected fixture hook (2 or 15), not elapsed time. The positive hook waits for actual completion with a separate 30 s hang guard; timeout hooks inject expiration after READY. Descendant cleanup additionally waits for child startup, verifies exact first inventory and successful owned TERM delivery, then observes actual parent reap. The forced startup-ordering test uses explicit state and no clock; no production timeout is weakened.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact-context review approved proposal SHA256 571e55aaa09c110f4b1955fccbb3a9c9dee489e0a053e28c4bcec5e5bd89c631 after reading the composed source and callback control flow."
+    },
     "0260cdb5bd543e90d4a5f540859dd7a62ca7d092ff5128dab3f23d6816615474": {
       "path": "scripts/profile-macos.py",
       "scope": "fixture-file",
@@ -544,6 +554,16 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
     },
+    "1debd83d532cabfb4d6296261a2c0b7bd2d6adaf45be44cf56a48075870c8281": {
+      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "4d3cdde3d3f9d79fdfce4703ed81455473b8498d7ac1c14c6593fd9325651af3",
+      "category": "fixed-input",
+      "reason": "These expressions assert the timeout argument passed to an injected fixture hook (2 or 15), not elapsed time. The positive hook waits for actual completion with a separate 30 s hang guard; timeout hooks inject expiration after READY. Descendant cleanup additionally waits for child startup, verifies exact first inventory and successful owned TERM delivery, then observes actual parent reap. The forced startup-ordering test uses explicit state and no clock; no production timeout is weakened.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact-context review approved proposal SHA256 571e55aaa09c110f4b1955fccbb3a9c9dee489e0a053e28c4bcec5e5bd89c631 after reading the composed source and callback control flow."
+    },
     "1edc9cfb2a15c844f35884d69a6e731a1c4e42993aa0d25056788a694bf5821e": {
       "path": "hostd/src/rayhunter_source.rs",
       "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
@@ -915,20 +935,6 @@
       "scope": "completed_run_hands_off_a_write_that_passed_the_finished_check",
       "rule": "delay-or-deadline",
       "context_sha256": "5851e20a604741d0e9905158bd027cbe109976870443f7c2d1aca101f307430a"
-    },
-    "35545b8e83792d341f65b294ad5bad4a76cb3422bbaf98d3bba16a1302890ec1": {
-      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
-      "scope": "fixture-file",
-      "rule": "delay-import",
-      "context_sha256": "eacf9fe34334b96c29cc7cd4b65b177149c4426cbaf207dd7b4e3a9ea2aeefe6",
-      "category": "fixed-input",
-      "reason": "Asserts the original production timeout argument. The callback injects tested expiration after causal readiness or awaits actual child exit under a separate30s outer guard; it does not wait for this production timeout.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 61,
-      "excerpt": "self.assertEqual(timeout, 2)",
-      "source": "/tmp/airhound-swift-positive-path-clocks",
-      "file_sha256": "9bf9f63526547e610e747660fc7bf8c7550922b38d67c2cefd8924840c2490fa"
     },
     "35c3bee873ea1b9b4c4eefe10801213c233d84a2b15ddb718b075e141cb2ce0d": {
       "path": "scripts/tests/test_test_timing_guard.py",
@@ -1570,19 +1576,15 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
     },
-    "60b75169cd83492eb7bd2ad442f595a1444bb9c83ba447f17006202a058164e2": {
+    "60b3393bd65776ca6b176ffe11505ea2302cd3230212499aaa18270dc556658a": {
       "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "eacf9fe34334b96c29cc7cd4b65b177149c4426cbaf207dd7b4e3a9ea2aeefe6",
+      "context_sha256": "4d3cdde3d3f9d79fdfce4703ed81455473b8498d7ac1c14c6593fd9325651af3",
       "category": "fixed-input",
-      "reason": "Asserts the original production timeout argument. The callback injects tested expiration after causal readiness or awaits actual child exit under a separate30s outer guard; it does not wait for this production timeout.",
+      "reason": "These expressions assert the timeout argument passed to an injected fixture hook (2 or 15), not elapsed time. The positive hook waits for actual completion with a separate 30 s hang guard; timeout hooks inject expiration after READY. Descendant cleanup additionally waits for child startup, verifies exact first inventory and successful owned TERM delivery, then observes actual parent reap. The forced startup-ordering test uses explicit state and no clock; no production timeout is weakened.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 84,
-      "excerpt": "self.assertEqual(timeout, 15)",
-      "source": "/tmp/airhound-swift-positive-path-clocks",
-      "file_sha256": "9bf9f63526547e610e747660fc7bf8c7550922b38d67c2cefd8924840c2490fa"
+      "review": "Independent root exact-context review approved proposal SHA256 571e55aaa09c110f4b1955fccbb3a9c9dee489e0a053e28c4bcec5e5bd89c631 after reading the composed source and callback control flow."
     },
     "60cc29a26ef3672229f67d35176f62b6ca4cb3a53cbf3e3fe964e39dcdf81ce4": {
       "path": "scripts/tests/test_profile_macos.py",
@@ -1783,20 +1785,6 @@
       "reason": "Shared Source::now declaration/fallback retains production UTC+monotonic clock. Unit freshness/health/evidence callers first install controlled_source/set_clock pair, so fallback is not their correctness clock. This exact fallback classification does not exempt an unqualified future Source caller or real-service integration.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-gps-source-final340.json SHA256 0c2ae3de8b7e29de6ab04ccaefd1e45e70bb553e696c34ea4e9ea472e0699283."
-    },
-    "6bd3e710b3f1e59c83ade86c53800e98646aba53e36cc626b37d9bde80ad1659": {
-      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
-      "scope": "fixture-file",
-      "rule": "delay-import",
-      "context_sha256": "eacf9fe34334b96c29cc7cd4b65b177149c4426cbaf207dd7b4e3a9ea2aeefe6",
-      "category": "fixed-input",
-      "reason": "Embedded child publishes ReadyPipe readiness, blocks on signal.pause and child EOF/wait, and acknowledges reaping. No child clock read or sleep decides success. Parent injects timeout after readiness; lexical import/timeout tokens are not a timer dependency.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 162,
-      "excerpt": "\"import os,signal,subprocess,sys,time,json,pathlib\",",
-      "source": "/tmp/airhound-swift-positive-path-clocks",
-      "file_sha256": "9bf9f63526547e610e747660fc7bf8c7550922b38d67c2cefd8924840c2490fa"
     },
     "6c48b810a38939032a7641f7a978ebd11386e921014d64c87edeacda6d05d59d": {
       "path": "drivers/mt7610u/src/stream/hardware.rs",
@@ -2419,20 +2407,6 @@
       "reason": "This call supplies one opaque stdInstant origin to command/filter/record emission. Assertions concern payloads, counts, command state, or output errors, not observed real elapsed time. Async tests additionally hold manual_time for Tokio policies; flush/shutdown tests explicitly register and advance virtual timers. Output ts metadata is not a clock-proximity oracle.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
-    },
-    "8fe61b682717caccc1836a9d57aa798de1241b687b0e01c2d0d5ffda260fb731": {
-      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
-      "scope": "fixture-file",
-      "rule": "delay-import",
-      "context_sha256": "eacf9fe34334b96c29cc7cd4b65b177149c4426cbaf207dd7b4e3a9ea2aeefe6",
-      "category": "fixed-input",
-      "reason": "Asserts the original production timeout argument. The callback injects tested expiration after causal readiness or awaits actual child exit under a separate30s outer guard; it does not wait for this production timeout.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal composed25-proposed-dispositions.json SHA256 2cbf7ab08b55d9157c721550099d89d5d186acc83df7e7657047195d85a29a48.",
-      "line": 189,
-      "excerpt": "self.assertEqual(timeout, 15)",
-      "source": "/tmp/airhound-swift-positive-path-clocks",
-      "file_sha256": "9bf9f63526547e610e747660fc7bf8c7550922b38d67c2cefd8924840c2490fa"
     },
     "90741060746675d429b213d6fac4c3dc26644baffd030f8bc83d1c7a2bc6c1df": {
       "path": "scripts/tests/test_receiver_soak.py",
