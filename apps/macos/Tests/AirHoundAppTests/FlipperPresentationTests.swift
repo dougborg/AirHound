@@ -43,9 +43,11 @@ final class FlipperPresentationTests: XCTestCase {
     server.arguments = ["serve", "--socket", socket.path, "--database", database.path]
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
+    let serviceLog = try FixtureServiceLog(
+      process: server, path: root.appendingPathComponent("service-readiness.log"))
     try server.run()
     defer { XCTAssertTrue(stopOwnedProcess(server), "Private service could not be reaped") }
-    try await awaitFixtureFile(socket)
+    try await serviceLog.wait(for: server)
     let suite = "flipper-integration-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { preferences.removePersistentDomain(forName: suite) }

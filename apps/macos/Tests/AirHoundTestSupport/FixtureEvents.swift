@@ -21,6 +21,54 @@ public final class FixtureReleasePipe {
   }
 }
 
+/// Test-owned services report this diagnostic only after successful listen.
+/// A socket directory entry alone is deliberately not accepted as readiness.
+public final class FixtureServiceLog {
+  private let path: URL
+  private let output: FileHandle
+  public init(process: Process, path: URL, output existing: FileHandle? = nil) throws {
+    self.path = path
+    if let existing {
+      output = existing
+    } else {
+      try Data().write(to: path, options: .withoutOverwriting)
+      output = try FileHandle(forWritingTo: path)
+    }
+    process.standardError = output
+    var environment = process.environment ?? ProcessInfo.processInfo.environment
+    environment["RUST_LOG"] = "airhound_hostd=debug"
+    process.environment = environment
+  }
+  deinit { try? output.close() }
+
+  @MainActor
+  public func wait(
+    for process: Process, onCheck: @escaping @MainActor (Bool) -> Void = { _ in }
+  ) async throws {
+    try await waitForFixtureStorage([path]) { [path] in
+      let reader = try FileHandle(forReadingFrom: path)
+      defer { try? reader.close() }
+      let data = try reader.read(upToCount: 256 * 1024 + 1) ?? Data()
+      guard data.count <= 256 * 1024 else {
+        throw NSError(
+          domain: "AirHoundTestSupport", code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "Service readiness log exceeded its bound"])
+      }
+      let ready = String(decoding: data, as: UTF8.self).split(separator: "\n").contains(where: {
+        $0.hasSuffix("AirHound control socket listening")
+      })
+      onCheck(ready)
+      if ready { return true }
+      guard process.isRunning else {
+        throw NSError(
+          domain: "AirHoundTestSupport", code: 4,
+          userInfo: [NSLocalizedDescriptionKey: "Service exited before reporting listen readiness"])
+      }
+      return false
+    }
+  }
+}
+
 /// A real exit notification, with an outer hang guard. Callers own this Process
 /// and must not install a competing termination handler.
 public func waitForOwnedProcess(_ process: Process, seconds: TimeInterval = 30) -> Bool {
