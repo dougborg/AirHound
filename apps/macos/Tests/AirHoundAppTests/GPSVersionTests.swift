@@ -1,4 +1,5 @@
 import AirHoundCore
+import Darwin
 import XCTest
 
 @testable import AirHoundApp
@@ -169,6 +170,18 @@ final class GPSVersionTests: XCTestCase {
         #"{"schema_version":1,"mode":"passive","platform":"macos","diagnostics":[],"devices":[{"id":"attachment-test","identity_scope":"attachment","name":"Fixture","endpoints":[{"kind":"serial","path":"/dev/cu.test-gps"}],"candidates":[{"kind":"gps","identification_protocol":"ublox","label":"Fixture","support":"candidate","state":"unverified","evidence":[],"requirements":[]}]}]}"#
       try Data(initial.utf8).write(to: devices)
       try response.data().write(to: root.appendingPathComponent("response.json"))
+      let release = root.appendingPathComponent("release")
+      guard mkfifo(release.path, 0o600) == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+      }
+      func releaseResponse() throws {
+        let fd = open(release.path, O_RDWR | O_NONBLOCK)
+        guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        defer { close(fd) }
+        guard "go\n".withCString({ write(fd, $0, 3) }) == 3 else {
+          throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+      }
       let executable = root.appendingPathComponent("fixture")
       // A bounded, private CLI fixture. It has no hardware or service access.
       let script = #"""
@@ -181,13 +194,9 @@ final class GPSVersionTests: XCTestCase {
           recordings) printf '%s\n' '{"runs":[],"has_more":false,"next_before":null}' ;;
           identify)
             /bin/cat "$6" > request.json
+            exec 3<>release
             /usr/bin/touch started
-            count=0
-            while [ ! -e release ] && [ "$count" -lt 300 ]; do
-              /bin/sleep .01
-              count=$((count+1))
-            done
-            [ -e release ] || exit 3
+            IFS= read -r response_release <&3 || exit 3
             if [ -e unsupported ]; then printf '%s\n' 'unsupported identity protocol' >&2; exit 4; fi
             /bin/cat response.json ;;
           *) exit 5 ;;
@@ -212,9 +221,12 @@ final class GPSVersionTests: XCTestCase {
         FileManager.default.fileExists(atPath: root.appendingPathComponent("started").path),
         "Connection and refresh must never identify automatically")
       session.readGPSVersion(target)
-      try await wait {
-        FileManager.default.fileExists(atPath: root.appendingPathComponent("started").path)
-      }
+      try await awaitFixtureFile(root.appendingPathComponent("started"))
+      // Release even if a subsequent assertion/setup throws. The normal backend
+      // process deadline remains only an outer guard for a hung fixture.
+      defer { try? releaseResponse() }
+      XCTAssertTrue(session.busy, "The response must still be held at the explicit release barrier")
+      XCTAssertNil(session.error)
       if scenario == "endpoint-changed" {
         try Data(
           initial.replacingOccurrences(of: "/dev/cu.test-gps", with: "/dev/cu.replaced").utf8
@@ -224,7 +236,7 @@ final class GPSVersionTests: XCTestCase {
       } else {
         try Data().write(to: root.appendingPathComponent("unsupported"))
       }
-      try Data().write(to: root.appendingPathComponent("release"))
+      try releaseResponse()
       try await wait { !session.busy }
       XCTAssertNil(session.gpsVersion(for: target), scenario)
       XCTAssertTrue(session.gpsIdentifications.isEmpty, scenario)
