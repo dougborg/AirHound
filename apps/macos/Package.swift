@@ -10,7 +10,10 @@ let package = Package(
     .executableTarget(
       name: "AirHoundApp", dependencies: ["AirHoundCore"],
       resources: [.copy("Resources/example.ndjson")]),
-    .testTarget(name: "AirHoundCoreTests", dependencies: ["AirHoundCore"]),
-    .testTarget(name: "AirHoundAppTests", dependencies: ["AirHoundApp", "AirHoundCore"]),
+    .target(name: "AirHoundTestSupport", path: "Tests/AirHoundTestSupport"),
+    .testTarget(name: "AirHoundCoreTests", dependencies: ["AirHoundCore", "AirHoundTestSupport"]),
+    .testTarget(
+      name: "AirHoundAppTests",
+      dependencies: ["AirHoundApp", "AirHoundCore", "AirHoundTestSupport"]),
   ]
 )

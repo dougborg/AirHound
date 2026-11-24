@@ -20,12 +20,23 @@ Production deadlines and bounded process cleanup remain in force.
 | `website/tests/*.mjs`, `website/tests/browser/*.ts`, `website/playwright.config.ts` | Current tests use actual DOM readiness/condition assertions and browser operations, without fixed sleeps or elapsed correctness thresholds. Playwright's outer operation/test safeguards are not virtual-time assertions. Keep browser setup isolated from a developer's server. |
 | `.github/scripts`, workflow-invoked fixtures | Include in repository-wide review; job deadlines, fuzz budgets and benchmark durations must be distinguished from correctness gates. |
 
-Remaining Swift work: event-based private-service readiness in core integration
-fixtures; process teardown helpers that poll the real clock; cleanup tests that
-infer non-exit from a small elapsed interval; SwiftUI render/snapshot setup using
-fixed run-loop delays. Optional backend integration tests must be exercised with
-private synthetic services after their helpers change; an environment-based skip
-is not validation of those paths.
+The remaining Swift fixture batch uses shared test-only file/process event helpers.
+Core service startup observes socket creation; replay completion observes durable
+DB/WAL writes and queries finished history rather than polling the actor clock.
+WAL replacement re-arms the watcher under either file/directory delivery order.
+Owned-process cleanup uses termination notifications; its escalation tests inject
+grace expiration after the child has installed its signal policy, then verify
+actual kill/reaping. Optional render fixtures await SwiftUI appearance and flush
+layout/display, instead of guessing readiness from run-loop delays. Session race
+fixtures release actual subprocesses through FIFOs. Process-owned session tests
+refuse bundled backends before launch, avoiding an unowned LaunchServices route.
+
+These optional paths were exercised with private passive/replay services and
+offscreen synthetic views; their environment-based skips alone are not validation.
+Production collector pacing and GUI refresh timers remain production behavior,
+not correctness-time assertions. The repository-wide indirect-helper audit and
+the regression guard below remain unfinished; a clean lexical search does not
+establish completion of #329.
 
 Rust host/core/firmware, companions and drivers are coordinated separately under
 #329. Their findings belong in the same closure checklist. No language or helper

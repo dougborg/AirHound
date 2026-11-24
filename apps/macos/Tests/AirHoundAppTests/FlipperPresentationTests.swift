@@ -1,4 +1,5 @@
 import AirHoundCore
+import AirHoundTestSupport
 import AppKit
 import Darwin
 import SwiftUI
@@ -30,8 +31,8 @@ final class FlipperPresentationTests: XCTestCase {
     replay.standardOutput = FileHandle.nullDevice
     replay.standardError = FileHandle.nullDevice
     try replay.run()
-    defer { XCTAssertTrue(stopOwned(replay), "Replay fixture could not be reaped") }
-    guard waitForExit(replay, seconds: 5) else {
+    defer { XCTAssertTrue(stopOwnedProcess(replay), "Replay fixture could not be reaped") }
+    guard waitForOwnedProcess(replay, seconds: 5) else {
       throw ModelError.invalid("Private replay fixture exceeded its deadline")
     }
     XCTAssertEqual(replay.terminationStatus, 0)
@@ -43,7 +44,7 @@ final class FlipperPresentationTests: XCTestCase {
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
     try server.run()
-    defer { XCTAssertTrue(stopOwned(server), "Private service could not be reaped") }
+    defer { XCTAssertTrue(stopOwnedProcess(server), "Private service could not be reaped") }
     try await awaitFixtureFile(socket)
     let suite = "flipper-integration-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -97,44 +98,33 @@ final class FlipperPresentationTests: XCTestCase {
     XCTAssertEqual(model.runs.count, 1, "Only the empty replay fixture may exist")
   }
 
-  private func waitForExit(_ process: Process, seconds: TimeInterval) -> Bool {
-    let deadline = ProcessInfo.processInfo.systemUptime + seconds
-    while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
-      Thread.sleep(forTimeInterval: 0.01)
-    }
-    return !process.isRunning
-  }
-
-  private func stopOwned(_ process: Process, grace: TimeInterval = 2) -> Bool {
-    guard process.isRunning else { return true }
-    process.terminate()
-    if waitForExit(process, seconds: grace) { return true }
-    // Only this test's still-running Process is eligible for forced cleanup.
-    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
-    return waitForExit(process, seconds: 2)
-  }
-
-  func testPrivateFixtureDeadlineKillsAndReapsUncooperativeOwnedProcess() throws {
-    let ready = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "ah-flipper-cleanup-" + UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: ready) }
+  func testPrivateFixtureDeadlineKillsAndReapsUncooperativeOwnedProcess() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try LocalFiles.privateDirectory(directory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let ready = directory.appendingPathComponent("ready")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
     process.arguments = [
-      "-c", "trap '' TERM; : > \"$1\"; while :; do :; done", "fixture", ready.path,
+      "-c", "trap '' TERM; : > \"$1\"; kill -STOP $$; exit 9", "fixture", ready.path,
     ]
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     try process.run()
-    defer { XCTAssertTrue(stopOwned(process, grace: 0.05)) }
-    let deadline = ProcessInfo.processInfo.systemUptime + 2
-    while !FileManager.default.fileExists(atPath: ready.path)
-      && ProcessInfo.processInfo.systemUptime < deadline
-    { Thread.sleep(forTimeInterval: 0.01) }
-    XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
-    XCTAssertFalse(
-      waitForExit(process, seconds: 0.05), "Fixture must actually outlive its deadline")
-    XCTAssertTrue(stopOwned(process, grace: 0.05))
+    defer { XCTAssertTrue(stopOwnedProcess(process)) }
+    try await awaitFixtureFile(ready)
+    var waits = 0
+    XCTAssertTrue(
+      stopOwnedProcess(process, grace: 2) { child, seconds in
+        waits += 1
+        if waits == 1 {
+          XCTAssertEqual(seconds, 2)
+          XCTAssertTrue(child.isRunning)
+          return false  // Explicit virtual grace expiration.
+        }
+        return waitForOwnedProcess(child, seconds: seconds)
+      })
+    XCTAssertEqual(waits, 2)
     XCTAssertEqual(process.terminationReason, .uncaughtSignal)
     XCTAssertEqual(process.terminationStatus, SIGKILL)
     XCTAssertEqual(Darwin.kill(process.processIdentifier, 0), -1)
@@ -261,7 +251,7 @@ final class FlipperPresentationTests: XCTestCase {
     XCTAssertNil(model.currentReceiverIdentity(id: "bridge"))
   }
 
-  func testRenderFlipperPrototypeRequirementsAndProvenance() throws {
+  func testRenderFlipperPrototypeRequirementsAndProvenance() async throws {
     guard let destination = ProcessInfo.processInfo.environment["AIRHOUND_RENDER_FLIPPER_DIR"]
     else {
       throw XCTSkip("Set AIRHOUND_RENDER_FLIPPER_DIR for bounded native visual inspection")
@@ -285,20 +275,24 @@ final class FlipperPresentationTests: XCTestCase {
       let window = NSWindow(
         contentRect: NSRect(x: -3000, y: -3000, width: 500, height: 520),
         styleMask: [.titled], backing: .buffered, defer: false)
+      defer { window.close() }
       window.isReleasedWhenClosed = false
       window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-      let view = NSHostingView(rootView: content)
+      let appeared = XCTestExpectation(description: "Synthetic Flipper content appeared")
+      let view = NSHostingView(rootView: content.onAppear { appeared.fulfill() })
       window.contentView = view
       window.orderBack(nil)
-      for _ in 0..<10 {
-        view.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+      guard await XCTWaiter.fulfillment(of: [appeared], timeout: 30) == .completed else {
+        throw ModelError.invalid("Synthetic SwiftUI content did not appear")
       }
+      // The SwiftUI lifecycle event establishes content installation. Flush the
+      // actual layout/display pass; no number of run-loop turns guesses readiness.
+      view.layoutSubtreeIfNeeded()
+      view.displayIfNeeded()
       let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
       view.cacheDisplay(in: view.bounds, to: bitmap)
       try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(
         to: URL(fileURLWithPath: destination).appendingPathComponent("flipper-\(name).png"))
-      window.close()
     }
   }
 }

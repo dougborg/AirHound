@@ -1,3 +1,4 @@
+import AirHoundTestSupport
 import Darwin
 import XCTest
 
@@ -72,55 +73,42 @@ final class SetupTests: XCTestCase {
     XCTAssertNil(inventory.receiverChoices[0].candidate.supportIssue)
   }
 
-  private func waitForExit(_ process: Process, seconds: TimeInterval) -> Bool {
-    let deadline = ProcessInfo.processInfo.systemUptime + seconds
-    while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
-      Thread.sleep(forTimeInterval: 0.01)
-    }
-    return !process.isRunning
-  }
-
-  private func stopOwned(_ process: Process, grace: TimeInterval = 2) -> Bool {
-    guard process.isRunning else { return true }
-    process.terminate()
-    // Foundation waitUntilExit can remain in its run loop after the child has
-    // exited on a Swift async test worker. Poll its state with a fixed deadline.
-    if waitForExit(process, seconds: grace) { return true }
-    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
-    return waitForExit(process, seconds: 2)
-  }
-
   func testProfileFixtureCleanupHandlesAlreadyExitedAndUncooperativeChildren() async throws {
     for ignoresTermination in [false, true] {
-      let ready = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "ah-profile-cleanup-" + UUID().uuidString)
-      defer { try? FileManager.default.removeItem(at: ready) }
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        UUID().uuidString)
+      try LocalFiles.privateDirectory(directory)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let ready = directory.appendingPathComponent("ready")
       let process = Process()
       process.executableURL = URL(fileURLWithPath: "/bin/sh")
       process.arguments = [
         "-c",
-        ignoresTermination
-          ? "trap '' TERM; : > \"$1\"; while :; do :; done"
-          : "exit 0",
+        ignoresTermination ? "trap '' TERM; : > \"$1\"; kill -STOP $$; exit 9" : "exit 0",
         "fixture", ready.path,
       ]
       process.standardOutput = FileHandle.nullDevice
       process.standardError = FileHandle.nullDevice
       try process.run()
-      defer { XCTAssertTrue(stopOwned(process, grace: 0.05)) }
+      defer { XCTAssertTrue(stopOwnedProcess(process)) }
       if ignoresTermination {
-        let deadline = ProcessInfo.processInfo.systemUptime + 2
-        while !FileManager.default.fileExists(atPath: ready.path)
-          && ProcessInfo.processInfo.systemUptime < deadline
-        { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
-        XCTAssertFalse(waitForExit(process, seconds: 0.05))
+        try await waitForFixtureFile(ready)
+        var waits = 0
+        XCTAssertTrue(
+          stopOwnedProcess(process, grace: 2) { child, seconds in
+            waits += 1
+            if waits == 1 {
+              XCTAssertEqual(seconds, 2)
+              XCTAssertTrue(child.isRunning)
+              return false  // Explicit virtual grace expiration, not elapsed wall time.
+            }
+            return waitForOwnedProcess(child, seconds: seconds)
+          })
+        XCTAssertEqual(waits, 2)
       } else {
-        XCTAssertTrue(waitForExit(process, seconds: 2))
+        XCTAssertTrue(waitForOwnedProcess(process))
+        XCTAssertTrue(stopOwnedProcess(process))
       }
-      let started = ProcessInfo.processInfo.systemUptime
-      XCTAssertTrue(stopOwned(process, grace: 0.05))
-      XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2.5)
       XCTAssertEqual(process.terminationStatus, ignoresTermination ? SIGKILL : 0)
       XCTAssertEqual(Darwin.kill(process.processIdentifier, 0), -1)
       XCTAssertEqual(errno, ESRCH, "Owned child must be reaped")
@@ -143,11 +131,10 @@ final class SetupTests: XCTestCase {
     server.standardOutput = FileHandle.nullDevice
     server.standardError = FileHandle.nullDevice
     try server.run()
-    defer { XCTAssertTrue(stopOwned(server), "Private profile service did not exit after cleanup") }
-    for _ in 0..<100 {
-      if FileManager.default.fileExists(atPath: socket.path) { break }
-      try await Task.sleep(for: .milliseconds(50))
+    defer {
+      XCTAssertTrue(stopOwnedProcess(server), "Private profile service did not exit after cleanup")
     }
+    try await waitForFixtureFile(socket)
     let client = BackendClient(executable: URL(fileURLWithPath: path), socket: socket)
     let config = Data(
       #"{"version":1,"alert_policy":"silent","receivers":[{"id":"my-ble","source":{"kind":"native_ble"}}]}"#

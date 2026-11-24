@@ -1,4 +1,5 @@
 import AirHoundCore
+import AirHoundTestSupport
 import XCTest
 
 @testable import AirHoundApp
@@ -8,6 +9,10 @@ final class SessionTests: XCTestCase {
   func testServiceOwnedLifetimeAcrossPresentationDisconnect() async throws {
     guard let path = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
       throw XCTSkip("Set AIRHOUND_TEST_BACKEND for app/service lifecycle tests.")
+    }
+    guard ServiceLauncher.application(for: URL(fileURLWithPath: path)) == nil else {
+      throw XCTSkip(
+        "This Process-owned fixture requires a standalone backend, not a LaunchServices bundle.")
     }
     let suite = "AirHound-tests-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -21,10 +26,7 @@ final class SessionTests: XCTestCase {
     model.startService(executable: URL(fileURLWithPath: path))
     defer {
       model.disconnect()
-      if let process = model.service, process.isRunning {
-        process.terminate()
-        process.waitUntilExit()
-      }
+      if let process = model.service { XCTAssertTrue(stopOwnedProcess(process)) }
     }
     try await awaitModelState([model.objectWillChange]) { !model.busy }
     XCTAssertTrue(model.connected, model.error ?? model.message)
@@ -269,6 +271,7 @@ final class SessionTests: XCTestCase {
     let wrapper = root.appendingPathComponent("delayed-client.sh")
     let entered = root.appendingPathComponent("entered")
     let release = root.appendingPathComponent("release")
+    let responseBarrier = try FixtureReleasePipe(release)
     let armed = root.appendingPathComponent("armed")
     func quote(_ value: String) -> String {
       "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -277,13 +280,9 @@ final class SessionTests: XCTestCase {
       #!/bin/sh
       for argument in "$@"; do
         if [ "$argument" = records ] && [ -f \(quote(armed.path)) ]; then
+          exec 3<>\(quote(release.path))
           : > \(quote(entered.path))
-          attempts=0
-          while [ ! -f \(quote(release.path)) ]; do
-            attempts=$((attempts + 1))
-            [ "$attempts" -lt 200 ] || exit 70
-            sleep 0.05
-          done
+          IFS= read -r released <&3 || exit 70
         fi
       done
       exec \(quote(path)) "$@"
@@ -293,7 +292,7 @@ final class SessionTests: XCTestCase {
     let delayed = SessionModel(preferences: defaults)
     delayed.connect(executable: wrapper)
     defer {
-      try? Data().write(to: release)
+      try? responseBarrier.release()
       delayed.disconnect()
     }
     try await waitIdle(delayed)
@@ -305,7 +304,7 @@ final class SessionTests: XCTestCase {
     XCTAssertTrue(
       FileManager.default.fileExists(atPath: entered.path), "Records request must be in flight")
     delayed.leaveRecording()
-    try Data().write(to: release)
+    try responseBarrier.release()
     try await waitIdle(delayed)
     XCTAssertNil(delayed.browsingRun)
     XCTAssertNil(latePresentation.recording, "An in-flight page must not publish after leaving")
@@ -333,7 +332,8 @@ final class SessionTests: XCTestCase {
     replay.standardOutput = FileHandle.nullDevice
     replay.standardError = FileHandle.nullDevice
     try replay.run()
-    replay.waitUntilExit()
+    defer { XCTAssertTrue(stopOwnedProcess(replay)) }
+    XCTAssertTrue(waitForOwnedProcess(replay))
     XCTAssertEqual(replay.terminationStatus, 0)
     let service = Process()
     service.executableURL = URL(fileURLWithPath: path)
@@ -344,12 +344,7 @@ final class SessionTests: XCTestCase {
     service.standardOutput = FileHandle.nullDevice
     service.standardError = FileHandle.nullDevice
     try service.run()
-    defer {
-      if service.isRunning {
-        service.terminate()
-        service.waitUntilExit()
-      }
-    }
+    defer { XCTAssertTrue(stopOwnedProcess(service)) }
     try await awaitFixtureFile(socket)
     let suite = "AirHound-queued-setup-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
