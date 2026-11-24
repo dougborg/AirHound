@@ -67,12 +67,22 @@ pub enum UartOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct TimingStats {
+    pub max_completed_us: u32,
+    pub completed_overruns: u32,
+    pub last_timeout_us: u32,
+    pub last_timeout_length: u16,
+    pub last_timeout_accepted: u16,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
     pub occupied: u16,
     pub queued: u16,
     pub high_water: u16,
     pub max_residence_us: u32,
     pub max_poll_gap_us: u32,
+    pub timing: TimingStats,
     pub drops: u32,
     pub by_kind: [u32; 5],
     pub by_reason: [u32; 6],
@@ -107,6 +117,16 @@ pub fn diagnostic_stats(
         capacity, reserved, s.occupied, s.queued, s.high_water, s.max_residence_us, s.max_poll_gap_us,
         s.closed, s.saturated, s.drops, s.by_kind[0], s.by_kind[1], s.by_kind[2], s.by_kind[3], s.by_kind[4],
         s.by_reason[0], s.by_reason[1], s.by_reason[2], s.by_reason[3], s.by_reason[4], s.by_reason[5], s.uart_lost_after_ble_enqueue, s.handoff_rejections))
+}
+
+/// Separate line preserves the existing pool/loss diagnostic schema. Values are
+/// FIFO-acceptance timing, not physical wire completion or measured display time.
+pub fn diagnostic_timing(s: TimingStats) -> Result<crate::protocol::MsgBuffer, core::fmt::Error> {
+    crate::serial_output::diagnostic(log::Level::Info, format_args!(
+        "UART service: no_acceptance_us={} total_cap_us={} max_completed_us={} completed_overruns={} last_timeout_us={} last_timeout_len={} last_timeout_accepted={}",
+        crate::serial_output::NO_ACCEPTANCE_BUDGET_US, crate::serial_output::MAX_SERVICE_BUDGET_US,
+        s.max_completed_us, s.completed_overruns, s.last_timeout_us,
+        s.last_timeout_length, s.last_timeout_accepted))
 }
 
 struct State<const N: usize> {
@@ -380,6 +400,25 @@ impl<M: RawMutex, const N: usize, const R: usize> Pool<M, N, R> {
                 .max(micros.min(u32::MAX as u64) as u32);
         });
     }
+    #[cfg(any(feature = "firmware", test))]
+    fn line_timing(&self, sample: crate::serial_output::LineTiming) {
+        self.state.lock(|s| {
+            let mut s = s.borrow_mut();
+            let stats = &mut s.stats;
+            let micros = sample.elapsed_us.min(u32::MAX as u64) as u32;
+            stats.saturated |= sample.elapsed_us > u32::MAX as u64;
+            if sample.completed {
+                stats.timing.max_completed_us = stats.timing.max_completed_us.max(micros);
+                if sample.overrun {
+                    increment(&mut stats.timing.completed_overruns, &mut stats.saturated);
+                }
+            } else {
+                stats.timing.last_timeout_us = micros;
+                stats.timing.last_timeout_length = sample.length;
+                stats.timing.last_timeout_accepted = sample.accepted;
+            }
+        });
+    }
     fn release(&self, index: usize, reason: Option<Reason>, ble: bool, draining: bool) {
         self.state.lock(|s| {
             let mut s = s.borrow_mut();
@@ -565,12 +604,13 @@ impl<M: RawMutex, const N: usize, const R: usize> Draining<'_, M, N, R> {
         mut now_micros: impl FnMut() -> u64,
         mut poll_gap: impl FnMut(u64),
     ) -> UartOutcome {
-        use crate::serial_output::{drain_cooperative, resynchronize_lf, LineError};
-        match drain_cooperative(
+        use crate::serial_output::{drain_cooperative_observed, resynchronize_lf, LineError};
+        match drain_cooperative_observed(
             self.bytes(),
             &mut output_step,
             &mut now_micros,
             &mut poll_gap,
+            |sample| self.pool.line_timing(sample),
         )
         .await
         {
@@ -628,7 +668,7 @@ mod tests {
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     #[test]
-    fn display_delayed_prefix_resynchronizes_before_next_health_without_ble_retry() {
+    fn watchdog_expired_prefix_resynchronizes_before_next_health_without_ble_retry() {
         use crate::serial_output::Step;
         use core::cell::{Cell, RefCell};
         let pool = pool::<8, 2>();
@@ -663,9 +703,9 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
         assert_eq!(uart.borrow().len(), 16);
-        // Model one ordinary display redraw's minimum pixel-wire time. This
-        // demonstrates budget behavior; it does not measure hardware latency.
-        now.set(now.get() + 8_880);
+        // Force the reviewed no-acceptance threshold. This models scheduler
+        // absence, not a measured display duration or a physical UART cause.
+        now.set(40_000);
         assert_eq!(
             write.as_mut().poll(&mut cx),
             Poll::Ready(UartOutcome::TimeoutResynchronized)
@@ -716,6 +756,98 @@ mod tests {
         assert_eq!(stats.uart_lost_after_ble_enqueue, 1);
         assert_eq!(stats.occupied, 0);
         assert!(!stats.closed);
+        assert_eq!(stats.timing.last_timeout_length, 512);
+        assert_eq!(stats.timing.last_timeout_accepted, 16);
+        assert_eq!(stats.timing.last_timeout_us, 40_000);
+        assert_eq!(stats.timing.completed_overruns, 0);
+    }
+
+    #[test]
+    fn completed_lf_crossing_total_is_reported_once_without_loss_or_resync() {
+        use crate::serial_output::Step;
+        use core::cell::{Cell, RefCell};
+        let pool = pool::<4, 1>();
+        let _owner = pool.writer_owner().unwrap();
+        let mut record = [b'x'; 94];
+        record[93] = b'\n';
+        assert!(send(&pool, Kind::Observation, &record, 0));
+        let now = Cell::new(0u64);
+        let uart = RefCell::new(Vec::new());
+        let mut line = pool.take(0).unwrap();
+        line.mark_ble_enqueued();
+        let mut write = std::boxed::Box::pin(line.write_cooperative(
+            |chunk, n| {
+                uart.borrow_mut().extend_from_slice(chunk);
+                *n = chunk.len();
+                // Positive acceptance stays <40ms apart. The final step crosses
+                // only the immutable 62,040us total allowance while accepting LF.
+                now.set(if uart.borrow().len() == 94 {
+                    63_000
+                } else {
+                    now.get() + 10_000
+                });
+                Ok::<_, ()>(Step::Complete)
+            },
+            || now.get(),
+            |_| {},
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
+        assert_eq!(write.as_mut().poll(&mut cx), Poll::Ready(UartOutcome::Sent));
+        drop(write);
+        assert_eq!(*uart.borrow(), record);
+        let s = pool.stats();
+        assert_eq!(s.timing.max_completed_us, 63_000);
+        assert_eq!(s.timing.completed_overruns, 1);
+        assert_eq!(
+            (s.drops, s.uart_lost_after_ble_enqueue, s.occupied),
+            (0, 0, 0)
+        );
+        assert!(!s.closed);
+    }
+
+    #[test]
+    fn owned_lease_delivers_large_frame_with_observed_scheduling_gaps_once() {
+        use crate::serial_output::Step;
+        use core::cell::{Cell, RefCell};
+        let pool = pool::<4, 1>();
+        let _owner = pool.writer_owner().unwrap();
+        let mut record = [b'x'; 310];
+        record[309] = b'\n';
+        assert!(send(&pool, Kind::Detection, &record, 0));
+        let now = Cell::new(0u64);
+        let uart = RefCell::new(Vec::new());
+        let mut line = pool.take(0).unwrap();
+        line.mark_ble_enqueued();
+        let mut write = std::boxed::Box::pin(line.write_cooperative(
+            |chunk, n| {
+                uart.borrow_mut().extend_from_slice(chunk);
+                *n = chunk.len();
+                Ok::<_, ()>(Step::Complete)
+            },
+            || now.get(),
+            |gap| pool.poll_gap(gap),
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            match write.as_mut().poll(&mut cx) {
+                Poll::Pending => now.set(now.get() + 19_882),
+                Poll::Ready(outcome) => {
+                    assert_eq!(outcome, UartOutcome::Sent);
+                    break;
+                }
+            }
+        }
+        drop(write);
+        assert_eq!(*uart.borrow(), record);
+        let s = pool.stats();
+        assert_eq!(s.timing.max_completed_us, 79_528);
+        assert_eq!(s.timing.completed_overruns, 0);
+        assert_eq!(s.max_poll_gap_us, 19_882);
+        assert_eq!(
+            (s.drops, s.uart_lost_after_ble_enqueue, s.occupied),
+            (0, 0, 0)
+        );
     }
 
     #[test]
@@ -744,12 +876,12 @@ mod tests {
         ));
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
-        now.set(20_000);
+        now.set(40_000);
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
         assert_eq!(pool.stats().occupied, 2, "damaged lease remains exclusive");
-        now.set(20_000 + RESYNC_BUDGET_US - 1);
+        now.set(40_000 + RESYNC_BUDGET_US - 1);
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
-        now.set(20_000 + RESYNC_BUDGET_US);
+        now.set(40_000 + RESYNC_BUDGET_US);
         assert_eq!(
             write.as_mut().poll(&mut cx),
             Poll::Ready(UartOutcome::Closed)
@@ -786,7 +918,7 @@ mod tests {
         ));
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
-        now.set(20_000);
+        now.set(40_000);
         assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
         drop(write);
         let stats = pool.stats();
@@ -822,7 +954,7 @@ mod tests {
             ));
             let mut cx = Context::from_waker(Waker::noop());
             assert_eq!(write.as_mut().poll(&mut cx), Poll::Pending);
-            now.set(20_000);
+            now.set(40_000);
             assert_eq!(
                 write.as_mut().poll(&mut cx),
                 Poll::Ready(UartOutcome::Closed)
@@ -1079,6 +1211,7 @@ mod tests {
             high_water: 64,
             max_residence_us: u32::MAX,
             max_poll_gap_us: u32::MAX,
+            timing: TimingStats::default(),
             drops: u32::MAX,
             by_kind: [u32::MAX; 5],
             by_reason: [u32::MAX; 6],
@@ -1093,6 +1226,42 @@ mod tests {
         assert_eq!(line.iter().filter(|&&c| c == b'\n').count(), 1);
         assert!(!crate::serial_output::is_observation(&line));
         assert!(!line.contains(&b'{'));
+    }
+
+    #[test]
+    fn bounded_timing_metadata_saturates_and_formats_without_record_payloads() {
+        use crate::serial_output::LineTiming;
+        let pool = pool::<4, 1>();
+        pool.state
+            .lock(|s| s.borrow_mut().stats.timing.completed_overruns = u32::MAX);
+        pool.line_timing(LineTiming {
+            length: 512,
+            accepted: 512,
+            elapsed_us: u64::MAX,
+            completed: true,
+            overrun: true,
+        });
+        pool.line_timing(LineTiming {
+            length: 512,
+            accepted: 256,
+            elapsed_us: u64::MAX,
+            completed: false,
+            overrun: true,
+        });
+        let s = pool.stats();
+        assert!(s.saturated);
+        assert_eq!(s.timing.max_completed_us, u32::MAX);
+        assert_eq!(s.timing.completed_overruns, u32::MAX);
+        assert_eq!(s.timing.last_timeout_us, u32::MAX);
+        assert_eq!(core::mem::size_of::<TimingStats>(), 16);
+        let line = diagnostic_timing(s.timing).unwrap();
+        assert!(line.len() <= SLOT_BYTES);
+        assert_eq!(line.last(), Some(&b'\n'));
+        assert_eq!(line.iter().filter(|&&c| c == b'\n').count(), 1);
+        assert!(!line.contains(&b'{'));
+        let text = core::str::from_utf8(&line).unwrap();
+        assert!(text.contains("completed_overruns=4294967295"));
+        assert!(text.contains("last_timeout_len=512 last_timeout_accepted=256"));
     }
 
     fn status(uptime: u32) -> crate::protocol::DeviceMessage<'static> {

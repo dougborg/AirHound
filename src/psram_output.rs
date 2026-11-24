@@ -93,3 +93,14 @@ pub fn report() {
         }
     }
 }
+
+/// No payload buffer survives the caller's yield between health records.
+pub fn report_timing() {
+    match airhound::output_pool::diagnostic_timing(pool().stats().timing) {
+        Ok(line) => publish_bytes(&line, Kind::Health),
+        Err(_) => {
+            increment(&SERIALIZE_ERRORS);
+            increment(&crate::serial_console::FORMAT_ERRORS);
+        }
+    }
+}

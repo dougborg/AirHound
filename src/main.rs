@@ -1026,7 +1026,7 @@ fn forward_ble(line: &[u8]) -> airhound::output_pool::BleAdmission {
 
 /// Sole runtime writer. The PSRAM lease, cursor and small scratch survive yields;
 /// no full line is stored in the future. Ordinary display work counts against
-/// the original absolute 20ms line budget.
+/// the fixed length-aware service budget and 40ms no-acceptance watchdog.
 #[cfg(feature = "m5stickc")]
 #[embassy_executor::task]
 async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Blocking>) {
@@ -1134,6 +1134,8 @@ async fn status_task() {
         #[cfg(feature = "m5stickc")]
         {
             psram_output::report();
+            embassy_futures::yield_now().await;
+            psram_output::report_timing();
             embassy_futures::yield_now().await;
         }
 

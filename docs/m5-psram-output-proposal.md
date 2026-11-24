@@ -36,7 +36,7 @@ The eight-slot reserve protects the structured Status/StreamStats records and co
 
 Retain the exact configured UART0 owner and panic handoff. Store only a slot handle, cursor, and fixed deadline in the output future. Copy at most 16 payload bytes from PSRAM into a tiny internal scratch buffer **before** entering the current readiness/write critical section. The existing HAL contract at pinned `esp-hal c8080c3`, `uart/mod.rs:801–825`, says `write_ready=true` makes the next `write` nonblocking; partial progress must still be checked.
 
-On `Blocked`, yield immediately with interrupts enabled. Also yield after at most four successful 16-byte steps (64 bytes) so a continuously ready FIFO cannot monopolize the executor. Preserve the original 20 ms per-line absolute deadline, including time spent yielding; never renew it on progress. The deadline starts when transmission begins, not when the record enters the queue. Measure queue residence separately. Do not add blocking flushes or IRQ-masked waits.
+On `Blocked`, yield immediately with interrupts enabled. Also yield after at most four successful 16-byte steps (64 bytes) so a continuously ready FIFO cannot monopolize the executor. The prospective cooperative service policy below replaces the original absolute 20 ms record deadline. It starts when transmission begins, not when the record enters the queue. Measure queue residence separately. Do not add blocking flushes or IRQ-masked waits.
 
 Partial hard write error permanently disables normal UART output. An ordinary line timeout instead retains the exclusive draining lease while attempting one LF under a separate fixed 20 ms absolute recovery budget. The original payload is never retried and still counts as one lost record with reason `Timeout`, even if recovery succeeds. FIFO ordering places the LF after the accepted prefix and before any subsequent record. Successful LF recovery releases the slot without closing admission; queued health can then expose the timeout counters. Failure, invalid progress, or cancellation during recovery closes admission; cancellation retains the original timeout attribution rather than counting a second loss. This does not extend the original line deadline or make a timeout pass zero-loss acceptance. Silence in the earlier physical run does not establish that this path was its cause.
 
@@ -60,11 +60,68 @@ Report fixed capacity/reserve, current occupied/queued counts, lifetime occupanc
 
 ## Required evidence before deployment
 
-1. Portable tests exercise ownership/reuse, cancellation before and after commit, exhaustion, reserved admission, FIFO framing, and exact typed drop reconciliation. An adversarial fake FIFO alternates blocked/partial progress while an independent producer/button sentinel progresses. Verify a 512-byte record still completes within the unchanged 20 ms bound under the chosen fair scheduling model; permanently blocked or slow-progress output fails at the original deadline and never splices records. Test panic handoff at each step and no PSRAM use by the logger/panic adapter.
+1. Portable tests exercise ownership/reuse, cancellation before and after commit, exhaustion, reserved admission, FIFO framing, and exact typed drop reconciliation. An adversarial fake FIFO alternates blocked/partial progress while an independent producer/button sentinel progresses. Verify a 512-byte record completes under the declared scheduling model; blocked output reaches the no-acceptance watchdog and slow positive progress reaches the immutable total limit. Neither failure may splice records. Test panic handoff at each step and no PSRAM use by the logger/panic adapter.
 2. A finite burst test must fail the old four-slot implementation and pass the proposed admitted-load envelope without suppressing losses. A sustained overload test must remain bounded and report losses honestly. Exercise health/commands under observation saturation, staging saturation, no BLE client and a slow BLE client. No busy-waiting producer or unbounded queue/allocation is acceptable.
 3. Build actual M5 and XIAO CI targets. Inspect linked memory/task sizes and allocation layout, including the diagnostic pump, command-task state, and UART future. Startup stack reservation must remain **at least 7,168 bytes**, unchanged. Reusing the old output channel for diagnostics avoids a second large DRAM staging allocation; removing command-buffer state may recover space, but only the target ELF establishes the net result. If gates fail, redesign placement/state; do not lower thresholds or enlarge the internal heap blindly.
 4. Independently review unsafe pool initialization/aliasing, locks, cancellation, IRQ/cache boundaries, parser compatibility, and exact target artifacts before any flash. Existing current-image rollback remains pinned. The next authorized physical check must retain explicit panic rejection, complete periodic coverage, typed output loss, prospective memory review, late continuous BLE/Wi-Fi, buttons, and post-close/lifecycle scope. No new flash is authorized by a promising design or host test.
 
-The 20 ms budget including cooperative yields is a real scheduling risk to measure on the target; success under a favorable fake scheduler is insufficient evidence. If the bounded design cannot meet it under the existing workload, report that result before proposing a separate reviewed deadline change.
+The earlier absolute 20 ms record budget failed on the target. Its receipts remain failed; successful portable scheduling tests are not physical acceptance of the replacement policy.
 
 Decision requested: approve this bounded pool/cooperative-writer implementation scope, or narrow the telemetry/ownership interface before code is written. Remaining output loss and memory findings stay open until measured on a reviewed candidate.
+
+
+## Prospective cooperative UART service budgets
+
+The completed display/resynchronization observer retained four typed Timeout
+losses (three Detection records and one short BLE record), despite continued
+output after LF recovery. Its maximum sampled intra-line poll gap was 19,903 us.
+This is consistent with multiple scheduling gaps accumulating past the old
+20 ms total allowance; it does not identify display execution or FIFO state as
+the cause of a particular loss. No earlier failed receipt is reclassified.
+
+The candidate uses two checks before every at-most-16-byte FIFO step:
+
+- A 40,000 us **no-acceptance watchdog**, measured since the last positive,
+  validated FIFO acceptance (or the initial drain attempt). Blocked, zero bytes,
+  readiness, and yields cannot renew it. It includes unscheduled time, so expiry
+  does not prove a physically stalled UART.
+- An immutable total service allowance for a validated length `L <= 512`:
+  `min(200000, 40000 + ceil(10 * L * 1000000 / 460800) + 20000 * max(0, ceil(L / 64) - 1))`
+  microseconds. Arithmetic uses u64 after validating the protocol bound. Empty
+  input is a no-op; oversized input fails before FIFO access. The 94/310/512-byte
+  allowances are 62,040 / 126,728 / 191,112 us. The wire-time term assumes 8N1;
+  delivery returns at FIFO acceptance, not physical wire completion, and never
+  deliberately waits for the allowance. Partial writes may require more yields
+  than this nominal full-step model and can still exhaust the fixed total.
+
+Elapsed subtraction wraps on the monotonic u64 clock. Equality expires a budget.
+The adapter samples immediately after each validated step as well: an interrupted
+nonfinal step cannot erase an already expired interval by renewing the watchdog.
+If the final step already accepted all bytes (including the framed LF), the record
+is complete and must not be retried or falsely counted as an incomplete timeout.
+Its elapsed time and completed-overrun count are reported instead. These are
+poll-time checks, not preemption or guaranteed wall-clock bounds under starvation.
+
+The single owner, 64-byte/four-step yield quantum, panic exclusion, BLE ordering,
+loss attribution, and separate fixed 20 ms LF-only recovery are unchanged. A
+payload timeout is still one lost record even after successful LF recovery; no
+payload retry or pool reopening occurs. The generic pathological 64-slot service
+allowance including LF is at most `64 * (200 + 20) ms = 14.08 s`, not ordinary
+latency. Reserved capacity is finite and does not guarantee lossless admission.
+
+Sixteen bytes of bounded timing metadata in the existing PSRAM pool record the
+maximum completed-record elapsed time, completed overruns, and the last timeout's
+length, accepted prefix length and elapsed time. A separate `UART service:`
+health line reports these without payloads or changing the existing pool/loss
+line schema; periodic publication yields between lines and retains no 512-byte
+buffer across an await. Zero last-timeout fields mean no reported timeout when
+the reconciled timeout count is zero. Values saturate and flag saturation.
+Queue residence remains commit-to-take time, and intra-line poll gaps do not
+measure display-row duration or global button latency.
+
+Prospective physical acceptance still requires zero output loss, full health
+coverage, the separate <20 ms intra-line poll-gap responsiveness criterion, and
+manual display/button checks. Completed overruns must be reported and assessed,
+not hidden as on-time completions. Target stack, heap reservations and memory
+gates are unchanged and require the final linked image. This policy does not
+modify scan settings, the XIAO output path, or the legacy synchronous writer.

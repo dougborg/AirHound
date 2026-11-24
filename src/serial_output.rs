@@ -9,7 +9,35 @@ use core::fmt::{self, Write};
 use crate::protocol::MsgBuffer;
 
 pub const FIFO_CHUNK: usize = 16;
+/// Legacy synchronous writer allowance; the M5 cooperative path uses two budgets.
 pub const LINE_BUDGET_US: u64 = 20_000;
+pub const NO_ACCEPTANCE_BUDGET_US: u64 = 40_000;
+pub const MAX_SERVICE_BUDGET_US: u64 = 200_000;
+pub const MAX_LINE_BYTES: usize = 512;
+
+/// Finite service allowance, not a wire-time guarantee. Validate before widening
+/// and multiplying: even 10 * 512 * 1_000_000 exceeds a 32-bit usize.
+pub fn service_budget_us(length: usize) -> Option<u64> {
+    if length > MAX_LINE_BYTES {
+        return None;
+    }
+    let length = length as u64;
+    let wire_us = (10 * length * 1_000_000).div_ceil(460_800);
+    let yields = length.div_ceil(64).saturating_sub(1);
+    Some((NO_ACCEPTANCE_BUDGET_US + wire_us + 20_000 * yields).min(MAX_SERVICE_BUDGET_US))
+}
+
+/// One terminal timing sample, excluding queue wait and subsequent LF recovery.
+/// A final FIFO step may return after a deadline: completed bytes cannot be
+/// undone. Such a completion is reported explicitly, never retried as a loss.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineTiming {
+    pub length: u16,
+    pub accepted: u16,
+    pub elapsed_us: u64,
+    pub completed: bool,
+    pub overrun: bool,
+}
 /// Separately bounded delimiter recovery. This never extends a record's budget
 /// or retries its payload; the original timed-out record remains lost.
 pub const RESYNC_BUDGET_US: u64 = 20_000;
@@ -102,15 +130,37 @@ pub enum LineError<E> {
 
 /// Bounded cooperative polling for a stable, externally owned payload. Only a
 /// 16-byte internal scratch buffer survives a yield, never a 512-byte record.
-/// The absolute deadline includes other executor work (including display SPI).
+/// Both budgets include other executor work. Only validated positive acceptance
+/// renews the 40ms watchdog; the length-aware total allowance never renews.
 #[cfg(any(feature = "firmware", test))]
-pub async fn drain_cooperative<E>(
-    line: &[u8],
-    output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
-    now_micros: impl FnMut() -> u64,
-    poll_gap: impl FnMut(u64),
-) -> Result<(), LineError<E>> {
-    drain_with_budget(line, output_step, now_micros, poll_gap, LINE_BUDGET_US).await
+pub fn drain_cooperative<'a, E: 'a>(
+    line: &'a [u8],
+    output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E> + 'a,
+    now_micros: impl FnMut() -> u64 + 'a,
+    poll_gap: impl FnMut(u64) + 'a,
+) -> impl core::future::Future<Output = Result<(), LineError<E>>> + 'a {
+    drain_cooperative_observed(line, output_step, now_micros, poll_gap, |_| {})
+}
+
+#[cfg(any(feature = "firmware", test))]
+pub fn drain_cooperative_observed<'a, E: 'a>(
+    line: &'a [u8],
+    output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E> + 'a,
+    now_micros: impl FnMut() -> u64 + 'a,
+    poll_gap: impl FnMut(u64) + 'a,
+    timing: impl FnMut(LineTiming) + 'a,
+) -> impl core::future::Future<Output = Result<(), LineError<E>>> + 'a {
+    // Return the inner future directly; do not retain another copy of its
+    // arguments in an outer async state machine.
+    drain_with_budget(
+        line,
+        output_step,
+        now_micros,
+        poll_gap,
+        service_budget_us(line.len()),
+        Some(NO_ACCEPTANCE_BUDGET_US),
+        timing,
+    )
 }
 
 /// The sole writer must retain its damaged record's lease across this call.
@@ -122,7 +172,16 @@ pub async fn resynchronize_lf<E>(
     now_micros: impl FnMut() -> u64,
     poll_gap: impl FnMut(u64),
 ) -> Result<(), LineError<E>> {
-    drain_with_budget(b"\n", output_step, now_micros, poll_gap, RESYNC_BUDGET_US).await
+    drain_with_budget(
+        b"\n",
+        output_step,
+        now_micros,
+        poll_gap,
+        Some(RESYNC_BUDGET_US),
+        None,
+        |_| {},
+    )
+    .await
 }
 
 #[cfg(any(feature = "firmware", test))]
@@ -131,9 +190,16 @@ async fn drain_with_budget<E>(
     mut output_step: impl FnMut(&[u8], &mut usize) -> Result<Step, E>,
     mut now_micros: impl FnMut() -> u64,
     mut poll_gap: impl FnMut(u64),
-    budget_us: u64,
+    budget_us: Option<u64>,
+    no_acceptance_us: Option<u64>,
+    mut timing: impl FnMut(LineTiming),
 ) -> Result<(), LineError<E>> {
+    let budget_us = budget_us.ok_or(LineError::InvalidProgress)?;
+    if line.is_empty() {
+        return Ok(());
+    }
     let started = now_micros();
+    let mut accepted_at = started;
     let mut previous = started;
     let mut offset = 0;
     let mut quantum = 0;
@@ -141,7 +207,16 @@ async fn drain_with_budget<E>(
         let now = now_micros();
         poll_gap(now.wrapping_sub(previous));
         previous = now;
-        if now.wrapping_sub(started) >= budget_us {
+        if now.wrapping_sub(started) >= budget_us
+            || no_acceptance_us.is_some_and(|limit| now.wrapping_sub(accepted_at) >= limit)
+        {
+            timing(LineTiming {
+                length: line.len() as u16,
+                accepted: offset as u16,
+                elapsed_us: now.wrapping_sub(started),
+                completed: false,
+                overrun: true,
+            });
             return Err(LineError::Timeout);
         }
         let length = (line.len() - offset).min(FIFO_CHUNK);
@@ -161,7 +236,32 @@ async fn drain_with_budget<E>(
         }
         offset += wrote;
         quantum += 1;
-        if offset == line.len() {
+        // The cooperative record policy samples after acceptance too. Interrupts
+        // may delay this step's return; resetting accepted_at first would hide an
+        // expired interval. LF recovery retains its separate admission deadline.
+        if no_acceptance_us.is_some() {
+            let after = now_micros();
+            let elapsed_us = after.wrapping_sub(started);
+            let overrun = elapsed_us >= budget_us
+                || no_acceptance_us.is_some_and(|limit| after.wrapping_sub(accepted_at) >= limit);
+            if offset == line.len() || overrun {
+                timing(LineTiming {
+                    length: line.len() as u16,
+                    accepted: offset as u16,
+                    elapsed_us,
+                    completed: offset == line.len(),
+                    overrun,
+                });
+                return if offset == line.len() {
+                    Ok(())
+                } else {
+                    Err(LineError::Timeout)
+                };
+            }
+            if wrote > 0 {
+                accepted_at = after;
+            }
+        } else if offset == line.len() {
             return Ok(());
         }
         if step == Step::Blocked || quantum == 4 {
@@ -303,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn cooperative_blocked_and_slow_output_keep_original_deadline() {
+    fn cooperative_blocked_and_slow_output_have_distinct_fixed_limits() {
         use core::{
             cell::Cell,
             future::Future,
@@ -332,20 +432,20 @@ mod tests {
             let mut cx = Context::from_waker(Waker::noop());
             loop {
                 match future.as_mut().poll(&mut cx) {
-                    Poll::Pending => now.set(now.get() + 1000),
+                    Poll::Pending => now.set(now.get() + 2000),
                     Poll::Ready(result) => {
                         assert_eq!(result, Err(LineError::Timeout));
                         break;
                     }
                 }
             }
-            assert_eq!(now.get(), LINE_BUDGET_US);
+            assert_eq!(now.get(), if slow_progress { 192_000 } else { 40_000 });
             assert!(sent.get() < 512);
         }
     }
 
     #[test]
-    fn ordinary_blocking_display_overlap_is_included_and_can_fail_deadline() {
+    fn cooperative_service_tolerates_the_prior_synthetic_display_overlap() {
         use core::{
             cell::Cell,
             future::Future,
@@ -371,19 +471,18 @@ mod tests {
             match future.as_mut().poll(&mut cx) {
                 Poll::Pending => {
                     turns += 1;
-                    // The actual display has ~8.64ms row-wire cost plus
-                    // formatting/commands. A 12ms model is deliberately allowed
-                    // to fail; this is not a claimed hardware latency bound.
+                    // Preserve the old failing 12ms redraw model as regression
+                    // evidence. This is not a measured display latency bound.
                     now.set(now.get() + 1400 + if turns == 2 { 12_000 } else { 0 });
                 }
                 Poll::Ready(result) => {
-                    assert_eq!(result, Err(LineError::Timeout));
+                    assert_eq!(result, Ok(()));
                     break;
                 }
             }
         }
         assert_eq!(max_gap.get(), 13_400);
-        assert!(now.get() >= LINE_BUDGET_US);
+        assert_eq!(now.get(), 21_800);
     }
 
     #[test]
@@ -434,6 +533,274 @@ mod tests {
                 future.as_mut().poll(&mut cx),
                 Poll::Ready(Err(LineError::InvalidProgress))
             );
+        }
+    }
+
+    #[test]
+    fn observed_sized_frames_tolerate_repeated_scheduling_gaps_without_waiting_for_budget() {
+        use core::{
+            cell::{Cell, RefCell},
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for (length, expected_elapsed) in [(94, 19_882), (310, 79_528), (512, 139_174)] {
+            let now = Cell::new(0u64);
+            let bytes = RefCell::new(Vec::new());
+            let sample = Cell::new(None);
+            let line = vec![b'x'; length];
+            let future = drain_cooperative_observed(
+                &line,
+                |chunk, n| {
+                    assert!(chunk.len() <= 16);
+                    bytes.borrow_mut().extend_from_slice(chunk);
+                    *n = chunk.len();
+                    Ok::<_, ()>(Step::Complete)
+                },
+                || now.get(),
+                |_| {},
+                |value| sample.set(Some(value)),
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            loop {
+                let before = bytes.borrow().len();
+                match future.as_mut().poll(&mut cx) {
+                    Poll::Pending => {
+                        assert_eq!(bytes.borrow().len() - before, 64);
+                        now.set(now.get() + 19_882);
+                    }
+                    Poll::Ready(result) => {
+                        assert_eq!(result, Ok(()));
+                        break;
+                    }
+                }
+            }
+            assert_eq!(*bytes.borrow(), line);
+            assert_eq!(now.get(), expected_elapsed);
+            assert_eq!(
+                sample.get(),
+                Some(LineTiming {
+                    length: length as u16,
+                    accepted: length as u16,
+                    elapsed_us: expected_elapsed,
+                    completed: true,
+                    overrun: false
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_lengths_are_checked_before_arithmetic_or_fifo_access() {
+        use core::{
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        assert_eq!(service_budget_us(94), Some(62_040));
+        assert_eq!(service_budget_us(310), Some(126_728));
+        assert_eq!(service_budget_us(512), Some(191_112));
+        assert_eq!(service_budget_us(usize::MAX), None);
+        for length in [0, 513] {
+            let line = vec![b'x'; length];
+            let future = drain_cooperative(
+                &line,
+                |_, _| -> Result<Step, ()> { panic!("must not access FIFO") },
+                || panic!("must not start clock"),
+                |_| {},
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(
+                future.as_mut().poll(&mut cx),
+                Poll::Ready(if length == 0 {
+                    Ok(())
+                } else {
+                    Err(LineError::InvalidProgress)
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_watchdog_threshold_and_clock_wrap_reject_before_next_step() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for start in [0u64, u64::MAX - 20_000] {
+            let now = Cell::new(start);
+            let calls = Cell::new(0);
+            let sample = Cell::new(None);
+            let future = drain_cooperative_observed(
+                b"short BLE\n",
+                |_, _| {
+                    calls.set(calls.get() + 1);
+                    Ok::<_, ()>(Step::Blocked)
+                },
+                || now.get(),
+                |_| {},
+                |value| sample.set(Some(value)),
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(future.as_mut().poll(&mut cx), Poll::Pending);
+            now.set(start.wrapping_add(39_999));
+            assert_eq!(future.as_mut().poll(&mut cx), Poll::Pending);
+            now.set(start.wrapping_add(40_000));
+            assert_eq!(
+                future.as_mut().poll(&mut cx),
+                Poll::Ready(Err(LineError::Timeout))
+            );
+            assert_eq!(calls.get(), 2);
+            assert_eq!(sample.get().unwrap().elapsed_us, 40_000);
+            assert_eq!(sample.get().unwrap().accepted, 0);
+        }
+    }
+
+    #[test]
+    fn tiny_positive_acceptance_cannot_renew_total_or_hide_step_overrun() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        // Four single-byte acceptances per turn keep renewing the watchdog,
+        // but this short record still expires at its immutable total threshold.
+        let now = Cell::new(0u64);
+        let calls = Cell::new(0);
+        let sample = Cell::new(None);
+        let line = [b'x'; 94];
+        let future = drain_cooperative_observed(
+            &line,
+            |_, n| {
+                calls.set(calls.get() + 1);
+                *n = 1;
+                Ok::<_, ()>(Step::Progress)
+            },
+            || now.get(),
+            |_| {},
+            |value| sample.set(Some(value)),
+        );
+        let mut future = pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        for t in [0, 20_000, 40_000, 62_039] {
+            now.set(t);
+            assert_eq!(future.as_mut().poll(&mut cx), Poll::Pending);
+        }
+        now.set(62_040);
+        assert_eq!(
+            future.as_mut().poll(&mut cx),
+            Poll::Ready(Err(LineError::Timeout))
+        );
+        assert_eq!(calls.get(), 16);
+        assert_eq!(sample.get().unwrap().accepted, 16);
+        assert_eq!(sample.get().unwrap().elapsed_us, 62_040);
+    }
+
+    #[test]
+    fn interrupted_step_reports_completed_frame_or_incomplete_timeout_without_retry() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for (length, completed) in [(16, true), (17, false)] {
+            for start in [0u64, u64::MAX - 100] {
+                let now = Cell::new(start);
+                let sample = Cell::new(None);
+                let calls = Cell::new(0);
+                let line = vec![b'x'; length];
+                let future = drain_cooperative_observed(
+                    &line,
+                    |chunk, n| {
+                        calls.set(calls.get() + 1);
+                        *n = chunk.len();
+                        now.set(start.wrapping_add(40_000));
+                        Ok::<_, ()>(Step::Complete)
+                    },
+                    || now.get(),
+                    |_| {},
+                    |value| sample.set(Some(value)),
+                );
+                let mut future = pin!(future);
+                let mut cx = Context::from_waker(Waker::noop());
+                assert_eq!(
+                    future.as_mut().poll(&mut cx),
+                    Poll::Ready(if completed {
+                        Ok(())
+                    } else {
+                        Err(LineError::Timeout)
+                    })
+                );
+                assert_eq!(calls.get(), 1);
+                assert_eq!(
+                    sample.get(),
+                    Some(LineTiming {
+                        length: length as u16,
+                        accepted: 16,
+                        elapsed_us: 40_000,
+                        completed,
+                        overrun: true
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unvalidated_acceptance_never_renews_watchdog_or_creates_timing_success() {
+        use core::{
+            cell::Cell,
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        for case in 0..5 {
+            let sampled = Cell::new(false);
+            let future = drain_cooperative_observed(
+                b"0123456789abcdef",
+                |_, n| {
+                    let step = match case {
+                        0 => {
+                            *n = 0;
+                            Step::Progress
+                        }
+                        1 => {
+                            *n = 16;
+                            Step::Progress
+                        }
+                        2 => {
+                            *n = 1;
+                            Step::Blocked
+                        }
+                        3 => {
+                            *n = 0;
+                            Step::Complete
+                        }
+                        _ => {
+                            *n = 17;
+                            Step::Complete
+                        }
+                    };
+                    Ok::<_, ()>(step)
+                },
+                || 0,
+                |_| {},
+                |_| sampled.set(true),
+            );
+            let mut future = pin!(future);
+            let mut cx = Context::from_waker(Waker::noop());
+            assert_eq!(
+                future.as_mut().poll(&mut cx),
+                Poll::Ready(Err(LineError::InvalidProgress))
+            );
+            assert!(!sampled.get());
         }
     }
 
