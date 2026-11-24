@@ -51,6 +51,8 @@ pub enum ScanEvent {
         address: Option<[u8; 6]>,
     },
     WiFi(WiFiEvent),
+    // CoreWLAN is the only live producer; shared handling is tested on every platform.
+    #[cfg_attr(all(not(target_os = "macos"), not(test)), allow(dead_code))]
     WiFiDetailed {
         event: WiFiEvent,
         metadata: Box<airhound_hostd::wifi_metadata::Metadata>,
