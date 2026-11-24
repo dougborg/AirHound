@@ -72,6 +72,13 @@ pub fn acquire(port: impl AsRef<Path>) -> io::Result<Lease> {
     let directory = PathBuf::from("/tmp").join(format!("airhound-serial-{uid}"));
     acquire_in(&directory, &identity, uid)
 }
+/// Cooperative selected-device ownership for managed ADB subscriptions. This
+/// shares the proven private lock implementation, not a physical serial port.
+pub fn acquire_adb(serial: &str) -> io::Result<Lease> {
+    let uid = unsafe { libc::geteuid() };
+    let directory = PathBuf::from("/tmp").join(format!("airhound-serial-{uid}"));
+    acquire_in(&directory, &format!("adb-usb:{serial}:tcp:8082"), uid)
+}
 fn acquire_in(directory: &Path, identity: &str, uid: u32) -> io::Result<Lease> {
     match fs::DirBuilder::new().mode(0o700).create(directory) {
         Ok(()) => (),

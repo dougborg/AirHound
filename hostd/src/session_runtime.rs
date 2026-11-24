@@ -130,8 +130,11 @@ pub(crate) async fn prepare(plan: SessionConfig) -> io::Result<Vec<ReceiverTask>
     let mut tasks = Vec::new();
     for receiver in plan.receivers {
         match &receiver.source {
-            Source::Rayhunter { decoder, .. } => {
-                crate::rayhunter_source::validate_decoder(decoder)?
+            Source::Rayhunter { decoder, adb, .. } => {
+                crate::rayhunter_source::validate_decoder(decoder)?;
+                if let Some(adb) = adb {
+                    crate::rayhunter_source::validate_decoder(&adb.executable)?;
+                }
             }
             Source::NativeBle { adapter } => {
                 crate::receiver::validate_selection(adapter.as_deref(), cfg!(target_os = "macos"))
@@ -176,9 +179,14 @@ async fn start_source(
     control: ScanControl,
 ) -> io::Result<()> {
     match source {
-        Source::Rayhunter { endpoint, decoder } => {
-            crate::rayhunter_source::scan(endpoint, decoder, tx, control).await
-        }
+        Source::Rayhunter {
+            endpoint,
+            decoder,
+            adb,
+        } => match adb {
+            Some(adb) => crate::rayhunter_source::scan_adb(adb, decoder, tx, control).await,
+            None => crate::rayhunter_source::scan(endpoint, decoder, tx, control).await,
+        },
         Source::NativeBle { adapter } => {
             let Some((adapter, receiver)) =
                 ble::initialize(receiver::selected(adapter.as_deref()), &control, &tx).await?
