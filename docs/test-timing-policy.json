@@ -4503,6 +4503,46 @@
       "reason": "The reviewed raw-packet pipeline still runs under manual_time and completes on channel closure. std::Instant::now is only an output timestamp origin; assertions use fixed captured_at_us, generation, sequence and fixed CSV UTC. Added RF alias/frequency projection assertions do not depend on elapsed time. Only scope fingerprint changed.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
+    },
+    "8153a78401a45b9ef626a49fdb15e70d6ad532c4edb647eb1263caf608fd2db6": {
+      "path": "apps/macos/Benchmarks/SnapshotPresentationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-read",
+      "context_sha256": "de86e0a58dec971d999d72e997954e693fe947801048ffd80d1dc4d45170dedd",
+      "category": "benchmark-or-physical",
+      "reason": "Physical optimized offscreen benchmark duration, reported as a metric only. Cursor/page/selection/viewport checks are structural and do not compare elapsed time. Small-data unexercised checks are explicitly null.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review approved these four exact physical measurement contexts with benchmark4053743; reviewed code remains byte-identical. No elapsed-time correctness gate."
+    },
+    "16554c7d96b320770ba9aaaedc0a8fbb86cf2fa4b3ae7bb3d7bf00228b6271db": {
+      "path": "apps/macos/Benchmarks/SnapshotPresentationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-reference",
+      "context_sha256": "de86e0a58dec971d999d72e997954e693fe947801048ffd80d1dc4d45170dedd",
+      "category": "benchmark-or-physical",
+      "reason": "Physical optimized offscreen benchmark duration, reported as a metric only. Cursor/page/selection/viewport checks are structural and do not compare elapsed time. Small-data unexercised checks are explicitly null.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review approved these four exact physical measurement contexts with benchmark4053743; reviewed code remains byte-identical. No elapsed-time correctness gate."
+    },
+    "02347f702a781be48d441c124ab6ef8d02f96e676c4afd2bdfb4a31bb0f9c624": {
+      "path": "apps/macos/Benchmarks/SnapshotPresentationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-read",
+      "context_sha256": "de86e0a58dec971d999d72e997954e693fe947801048ffd80d1dc4d45170dedd",
+      "category": "benchmark-or-physical",
+      "reason": "Physical optimized offscreen benchmark duration, reported as a metric only. Cursor/page/selection/viewport checks are structural and do not compare elapsed time. Small-data unexercised checks are explicitly null.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review approved these four exact physical measurement contexts with benchmark4053743; reviewed code remains byte-identical. No elapsed-time correctness gate."
+    },
+    "bca025c68e959edbbc738ce3df810b4a0e73f2d87f8c0bde933ac92ee4db3d5c": {
+      "path": "apps/macos/Benchmarks/SnapshotPresentationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-reference",
+      "context_sha256": "de86e0a58dec971d999d72e997954e693fe947801048ffd80d1dc4d45170dedd",
+      "category": "benchmark-or-physical",
+      "reason": "Physical optimized offscreen benchmark duration, reported as a metric only. Cursor/page/selection/viewport checks are structural and do not compare elapsed time. Small-data unexercised checks are explicitly null.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review approved these four exact physical measurement contexts with benchmark4053743; reviewed code remains byte-identical. No elapsed-time correctness gate."
     }
   },
   "migration_baseline": {
