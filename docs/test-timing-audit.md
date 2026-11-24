@@ -68,3 +68,27 @@ Closure requires source review of each classified case, tests of virtual boundar
 and ownership cleanup, appropriate Linux/macOS suites, and independent review. Do
 not lower timeout assertions, relax production behavior, or omit failure cases to
 complete the migration.
+
+## Positive command fixtures and benchmark readiness
+
+Synthetic Core/GPS command fixtures inject a frozen subprocess collector clock
+through `BackendClient`; `SessionModel` accepts a client factory while its
+production default remains unchanged. These tests still execute real private
+commands and verify arguments, outputs, evidence rejection and owned cleanup.
+Run them through `apps/macos/run-tests.py`, whose outer watchdog inventories and
+cleans owned descendants if a frozen-clock fixture hangs. The positive native
+runner test injects actual child completion and asserts the original timeout
+argument, keeping a separate outer child-exit guard. Deadline/cancellation tests
+retain explicitly advanced clocks and their before/at/after assertions.
+
+`TableBenchmark` waits for actual SwiftUI `onAppear` and layout before resolving
+its scroll view. Its measured workload still includes the explicitly labeled
+1 ms run-loop service per scroll step; measurements are informational, with no
+elapsed-time correctness threshold. The outer render watchdog only fails a
+stuck benchmark.
+
+Optional actual-service/LaunchServices integration tests retain production
+startup and request budgets. They exercise the deployed protocol path and are
+kept as integration evidence, not deterministic unit proof. Production collector
+polling and refresh cadence remain separately tracked by the operational delay
+audit. These qualifications do not close the repository-wide #329 migration.

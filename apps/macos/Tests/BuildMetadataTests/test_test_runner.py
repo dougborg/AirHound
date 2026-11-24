@@ -56,9 +56,15 @@ class TestRunnerTests(unittest.TestCase):
     def test_failure_and_unbuffered_environment_are_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             for status in (0, 7):
+                def completed(process, timeout):
+                    self.own_fixture(process)
+                    self.assertEqual(timeout, 2)
+                    # Actual exit is causal; this separate bound is only the
+                    # owned-child infrastructure guard, not the tested deadline.
+                    return process.wait(timeout=30)
                 self.assertEqual(runner.run([sys.executable, "-c",
                     f"import os,sys; assert os.environ['NSUnbufferedIO']=='YES'; sys.exit({status})"],
-                    2, Path(directory)), status)
+                    2, Path(directory), wait_for_exit=completed), status)
 
     def test_timeout_kills_and_reaps_owned_uncooperative_child(self):
         self.require_inventory()

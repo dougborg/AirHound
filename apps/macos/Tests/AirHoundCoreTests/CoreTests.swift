@@ -196,17 +196,23 @@ final class CoreTests: XCTestCase {
     }
   }
 
+  // Positive-path fixtures use actual IO/exit, not the collector's production
+  // deadline. The test runner's owned-process watchdog remains the hang guard.
+  private func fixtureProcess() -> DiscoveryProcess {
+    DiscoveryProcess(scheduling: ProcessScheduling(now: { 0 }))
+  }
+
   func testProcessForwardsOnlyPassiveArguments() async throws {
     let executable = try script(
       "[ \"$#\" = 3 ] && [ \"$1\" = devices ] && [ \"$2\" = list ] && [ \"$3\" = --json ] || exit 9\nprintf '%s' '"
         + inventory + "'\n")
-    let data = try await DiscoveryProcess().run(executable: executable)
+    let data = try await fixtureProcess().run(executable: executable)
     XCTAssertEqual(try Inventory.decode(data).devices.count, 1)
   }
   func testNonzeroExitAndStderr() async throws {
     let executable = try script("printf 'backend unavailable' >&2\nexit 7\n")
     do {
-      _ = try await DiscoveryProcess().run(executable: executable)
+      _ = try await fixtureProcess().run(executable: executable)
       XCTFail("Expected failure")
     } catch { XCTAssertEqual(error as? DiscoveryError, .failed(7, "backend unavailable")) }
   }
@@ -264,7 +270,7 @@ final class CoreTests: XCTestCase {
       let executable = try script(
         "while :; do printf 'abcdefghijklmnopqrstuvwxyz'" + redirect + "; done\n")
       do {
-        _ = try await DiscoveryProcess().run(executable: executable, outputLimit: 1024)
+        _ = try await fixtureProcess().run(executable: executable, outputLimit: 1024)
         XCTFail("Expected overflow")
       } catch { XCTAssertEqual(error as? DiscoveryError, .outputLimit) }
     }
@@ -274,7 +280,8 @@ final class CoreTests: XCTestCase {
       "[ \"$#\" = 4 ] && [ \"$1\" = client ] && [ \"$2\" = --socket ] && [ \"$3\" = '/tmp/socket with $characters' ] && [ \"$4\" = status ] || exit 9\nprintf '{}'\n"
     )
     let client = BackendClient(
-      executable: executable, socket: URL(fileURLWithPath: "/tmp/socket with $characters"))
+      executable: executable, socket: URL(fileURLWithPath: "/tmp/socket with $characters"),
+      process: fixtureProcess())
     let data = try await client.request(["status"])
     XCTAssertEqual(String(decoding: data, as: UTF8.self), "{}")
   }
