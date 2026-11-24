@@ -96,10 +96,12 @@ cargo +stable fmt --manifest-path clients/mcp/Cargo.toml --check
 ```
 
 The separate Cargo root and lockfile keep MCP dependencies out of firmware and
-hostd. CI runs on Linux and macOS. SDK-driven integration tests launch only this
-stdio adapter and a fake local backend: initialization, tool metadata, forwarding,
-unknown fields, backend errors and input bounds are synthetic checks. They do not
-establish acceptance in a particular MCP application or any live radio support.
+hostd. CI runs on Linux and macOS. A real stdio executable smoke checks initialization
+and tool metadata. SDK forwarding, unknown fields, backend errors, cancellation
+and input bounds use an in-process adapter with a synthetic Unix backend and
+controlled time. See [test timing](../TESTING.md) for deadline and process-guard
+coverage. These checks do not establish acceptance in a particular MCP application
+or any live radio support.
 
 Follow-up capture controls and event subscriptions depend on the shared backend
 contract in [#238](https://github.com/dougborg/AirHound/issues/238); this adapter is

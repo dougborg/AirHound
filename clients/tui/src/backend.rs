@@ -74,6 +74,10 @@ pub async fn validate(socket: &Path, config: &Path) -> Result<Value, String> {
 }
 
 #[cfg(test)]
+#[path = "../../../hostd/crates/airhound-client/src/test_clock.rs"]
+mod test_clock;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use airhound_api::{Command, Hello, Request, Response, MAX_FRAME_BYTES, METHODS, VERSION};
@@ -115,8 +119,9 @@ mod tests {
         })
         .unwrap()
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn refresh_uses_shared_client_and_only_passive_methods() {
+        let time = super::test_clock::ManualTime::hold().await;
         let fixture = Fixture::new();
         let listener = UnixListener::bind(fixture.socket()).unwrap();
         let server = tokio::spawn(async move {
@@ -145,9 +150,11 @@ mod tests {
         assert_eq!(snapshot.inventory["devices"][0]["id"], "fixture");
         assert_eq!(snapshot.status["capture_control"], false);
         server.await.unwrap();
+        time.finish().await;
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn validation_forwards_json_without_a_local_planner() {
+        let time = super::test_clock::ManualTime::hold().await;
         let fixture = Fixture::new();
         let listener = UnixListener::bind(fixture.socket()).unwrap();
         let path = fixture.0.join("session.json");
@@ -185,9 +192,11 @@ mod tests {
             .unwrap_err()
             .contains("receiver list empty"));
         server.await.unwrap();
+        time.finish().await;
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn missing_service_and_bounded_regular_config_fail_cleanly() {
+        let time = super::test_clock::ManualTime::hold().await;
         let fixture = Fixture::new();
         assert!(refresh(&fixture.socket()).await.is_err());
         let path = fixture.0.join("oversized.json");
@@ -202,11 +211,12 @@ mod tests {
         let fifo = fixture.0.join("input.fifo");
         let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), read_config(&fifo))
-                .await
-                .unwrap()
-                .is_err()
+        // A nonblocking open plus regular-file validation must reject the FIFO.
+        // The outer test runner guards hangs; no one-second speed assertion.
+        assert_eq!(
+            read_config(&fifo).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
         );
+        time.finish().await;
     }
 }
