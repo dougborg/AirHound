@@ -6,8 +6,25 @@ GPL Rayhunter helper. No decoder code is linked into AirHound.
 
 Explicit receiver configuration uses `kind: rayhunter`, a loopback WebSocket
 `endpoint` ending in `/raw-diag`, and an absolute `decoder` executable path.
-An explicitly selected ADB forward is prepared separately. Discovery/validation never installs software,
+Direct endpoint mode uses a separately prepared forward. Alternatively, omit
+`endpoint` and provide `adb: {"executable":"/absolute/path/to/adb","serial":"USB_SERIAL"}`.
+The backend advertises `managed_adb_usb` in `rayhunter_transports`. It validates
+the selected authorized USB transport and owns a dynamically allocated local
+forward to device port 8082 for each subscription. Supplying both modes is rejected.
+Discovery/validation never installs software,
 changes modem logging, starts a recording, or selects an arbitrary attached device.
+
+Managed ADB pins the executable hash for the recording and records the selected
+USB identity, returned local port and remote port with source provenance. Pause,
+Finish and reconnect close the helper and remove only the returned, rechecked
+forward tuple; Resume allocates a fresh one. The cooperative per-user lease does
+not establish global DIAG exclusivity. A lost allocation response is an explicit
+unknown ownership failure, never permission to remove a guessed forward.
+Cancellation lets the bounded owner finish allocation and cleanup; normal shutdown
+awaits its result. Process crashes cannot guarantee remote cleanup, and ADB's
+list/remove interface is not atomic against unrelated actors replacing a tuple.
+No server kill, remove-all, network-device selection or modem command is used.
+The command contract follows the [ADB manual](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/user/adb.1.md).
 
 The helper emits versioned, bounded JSON IPC. A hello identifies the raw protocol,
 reader epoch and initial sequence. Exact device-read frames are chunked below the

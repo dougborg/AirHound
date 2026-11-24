@@ -20,6 +20,7 @@ mod service_cli;
 mod session_resources;
 mod session_runtime;
 use health::{Phase, Scanner};
+mod adb_forward;
 mod ble_packet;
 mod ble_source;
 mod external_scanner;

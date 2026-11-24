@@ -1,4 +1,5 @@
-//! Explicit, read-only Rayhunter subscription. No ADB, modem or recording controls.
+//! Explicit Rayhunter subscription with optional owned ADB forwarding.
+//! No modem or recording controls.
 use crate::{
     control::{wait_running, ScanControl},
     health::{Phase, Scanner},
@@ -30,7 +31,7 @@ pub(crate) fn validate_decoder(path: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
-async fn decoder_hash(path: &std::path::Path) -> io::Result<String> {
+pub(crate) async fn decoder_hash(path: &std::path::Path) -> io::Result<String> {
     validate_decoder(path)?;
     let mut file = tokio::fs::File::open(path)
         .await?
@@ -58,7 +59,30 @@ pub(crate) async fn scan(
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
 ) -> io::Result<()> {
+    scan_inner(endpoint, decoder, None, tx, control).await
+}
+
+pub(crate) async fn scan_adb(
+    adb: airhound_hostd::session::RayhunterAdb,
+    decoder: PathBuf,
+    tx: mpsc::Sender<ScanEvent>,
+    control: ScanControl,
+) -> io::Result<()> {
+    scan_inner(String::new(), decoder, Some(adb), tx, control).await
+}
+
+async fn scan_inner(
+    endpoint: String,
+    decoder: PathBuf,
+    adb: Option<airhound_hostd::session::RayhunterAdb>,
+    tx: mpsc::Sender<ScanEvent>,
+    control: ScanControl,
+) -> io::Result<()> {
     let hash = decoder_hash(&decoder).await?;
+    let adb_hash = match &adb {
+        Some(config) => Some(decoder_hash(&config.executable).await?),
+        None => None,
+    };
     let mut state = control.subscribe();
     let origin = Instant::now();
     let mut connection = 0u64;
@@ -114,13 +138,44 @@ pub(crate) async fn scan(
             Phase::Initializing,
             "rayhunter_connecting",
         );
-        let mut child = Command::new(&decoder)
-            .args(["--endpoint", &endpoint])
+        let forward = match &adb {
+            Some(config) => Some(
+                crate::adb_forward::Forward::open(
+                    config.clone(),
+                    adb_hash.clone().expect("managed ADB hash"),
+                )
+                .await?,
+            ),
+            None => None,
+        };
+        if state.borrow().shutdown
+            || !state.borrow().enabled
+            || state.borrow().generation != generation
+        {
+            if let Some(forward) = forward {
+                forward.close().await?;
+            }
+            continue;
+        }
+        let selected_endpoint = forward
+            .as_ref()
+            .map_or(endpoint.as_str(), |f| f.endpoint.as_str());
+        let mut child = match Command::new(&decoder)
+            .args(["--endpoint", selected_endpoint])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
-            .spawn()?;
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                if let Some(forward) = forward {
+                    forward.close().await?;
+                }
+                return Err(error);
+            }
+        };
         previous_subscription = Some((generation, connection));
         let mut input = BufReader::new(
             child
@@ -163,6 +218,9 @@ pub(crate) async fn scan(
                 record["decoder_sha256"] = hash.clone().into();
                 record["location_time_basis"] = serde_json::json!("host_ingress_not_rf_capture");
                 record["receiver_location"] = location.unwrap_or(serde_json::Value::Null);
+                if let Some(forward) = &forward {
+                    record["host_transport"] = forward.provenance.clone();
+                }
                 if !valid {
                     valid = true;
                     control.set_health(Scanner::Cellular, Phase::Running, "rayhunter_subscription");
@@ -179,11 +237,13 @@ pub(crate) async fn scan(
         // Stop/Pause and protocol failure always reap this exact owned helper.
         // Cancellation additionally uses Tokio's kill-on-drop/reaper path.
         let _ = child.start_kill();
-        timeout(Duration::from_secs(3), child.wait())
-            .await
-            .map_err(|_| {
-                io::Error::new(io::ErrorKind::TimedOut, "Rayhunter helper reap timeout")
-            })??;
+        let reaped = timeout(Duration::from_secs(3), child.wait()).await;
+        if let Some(forward) = forward {
+            forward.close().await?;
+        }
+        reaped.map_err(|_| {
+            io::Error::new(io::ErrorKind::TimedOut, "Rayhunter helper reap timeout")
+        })??;
         if state.borrow().shutdown || tx.is_closed() {
             break;
         }

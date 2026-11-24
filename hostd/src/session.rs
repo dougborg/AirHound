@@ -94,8 +94,11 @@ pub struct ReceiverConfig {
 pub enum Source {
     /// Experimental read-only subscription through a separately licensed decoder.
     Rayhunter {
+        #[serde(default)]
         endpoint: String,
         decoder: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        adb: Option<RayhunterAdb>,
     },
     NativeBle {
         adapter: Option<String>,
@@ -143,6 +146,34 @@ pub enum Source {
     },
 }
 
+/// Explicit selected USB device; no discovery, modem or recording commands.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RayhunterAdb {
+    pub executable: PathBuf,
+    pub serial: String,
+}
+impl RayhunterAdb {
+    pub fn validate(&self) -> io::Result<()> {
+        if !self.executable.is_absolute()
+            || self.serial.is_empty()
+            || self.serial.len() > 128
+            || !self
+                .serial
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            || !self
+                .serial
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        {
+            return Err(invalid("ADB requires an absolute executable and explicit USB serial (1..128 ASCII letters, digits, ._-); network selectors are unsupported"));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarauderFormat {
@@ -174,6 +205,9 @@ impl SessionConfig {
             for (index, receiver) in receivers.iter().enumerate() {
                 let source = &receiver["source"];
                 let fields: &[&str] = match source["kind"].as_str() {
+                    Some("rayhunter") if source.get("adb").is_some_and(|v| !v.is_null()) => {
+                        &["decoder"]
+                    }
                     Some("rayhunter") => &["endpoint", "decoder"],
                     Some("sniffle") => &["port", "python", "helper"],
                     Some("airhound_serial" | "flipper_marauder") => &["port"],
@@ -283,14 +317,29 @@ impl SessionConfig {
                 ));
             }
             let resource = match &mut receiver.source {
-                Source::Rayhunter { endpoint, decoder } => {
-                    crate::rayhunter::validate_endpoint(endpoint)?;
+                Source::Rayhunter {
+                    endpoint,
+                    decoder,
+                    adb,
+                } => {
+                    let resource = if let Some(adb) = adb {
+                        if !endpoint.is_empty() {
+                            return Err(invalid(
+                                "Rayhunter accepts either endpoint or managed ADB, not both",
+                            ));
+                        }
+                        adb.validate()?;
+                        format!("rayhunter:adb:{}:8082", adb.serial)
+                    } else {
+                        crate::rayhunter::validate_endpoint(endpoint)?;
+                        format!("rayhunter:{endpoint}")
+                    };
                     if !decoder.is_absolute() {
                         return Err(invalid(
                             "Rayhunter decoder must be an absolute executable path",
                         ));
                     }
-                    format!("rayhunter:{endpoint}")
+                    resource
                 }
                 Source::NativeBle { adapter } => {
                     native_ble_count += 1;
@@ -439,6 +488,9 @@ impl Source {
             40
         } else if matches!(self, Self::FlipperMarauder { .. }) {
             8
+        } else if matches!(self, Self::Rayhunter { adb: Some(_), .. }) {
+            // Bounded in-flight allocation, helper reap and owned tuple cleanup.
+            25
         } else {
             5
         })
@@ -446,8 +498,8 @@ impl Source {
     /// Requested configuration only. Actual radio state comes from backend health.
     pub fn assignment(&self) -> serde_json::Value {
         match self {
-            Self::Rayhunter { endpoint, .. } => {
-                serde_json::json!({"mode":"experimental_cellular", "endpoint":endpoint, "media":["cellular"], "pause":"close_subscription", "stop":"close_subscription", "modem_participation":"active_independent_of_host", "capture_clock":"unvalidated", "rf_loss":"unknown"})
+            Self::Rayhunter { endpoint, adb, .. } => {
+                serde_json::json!({"mode":"experimental_cellular", "endpoint":if adb.is_some() { None } else { Some(endpoint) }, "transport":if adb.is_some() { "managed_adb_usb" } else { "configured_loopback" }, "selected_device":adb.as_ref().map(|a| &a.serial), "media":["cellular"], "pause":if adb.is_some() { "close_subscription_and_owned_forward" } else { "close_subscription" }, "stop":if adb.is_some() { "close_subscription_and_owned_forward" } else { "close_subscription" }, "modem_participation":"active_independent_of_host", "capture_clock":"unvalidated", "rf_loss":"unknown"})
             }
             Self::NativeBle { .. } | Self::NativeWifi {} => {
                 serde_json::json!({"mode":"os_managed"})
@@ -488,6 +540,43 @@ impl Source {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rayhunter_managed_adb_is_explicit_exclusive_and_not_a_control_interface() {
+        let plan = json!({"version":1,"receivers":[{"id":"orbic","source":{"kind":"rayhunter","decoder":"/fixture/decoder","adb":{"executable":"/fixture/adb","serial":"USB-device_1"}}}]});
+        let config = SessionConfig::from_json(plan.clone())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert_eq!(
+            config.receivers[0].source.assignment()["transport"],
+            "managed_adb_usb"
+        );
+        assert_eq!(
+            config.receivers[0].source.shutdown_budget(),
+            std::time::Duration::from_secs(25)
+        );
+        let mut both = plan.clone();
+        both["receivers"][0]["source"]["endpoint"] = "ws://127.0.0.1:1234/raw-diag".into();
+        assert!(SessionConfig::from_json(both).unwrap().resolve().is_err());
+        for serial in ["", "host:5555", "-d", "two devices", "device\n"] {
+            let mut bad = plan.clone();
+            bad["receivers"][0]["source"]["adb"]["serial"] = serial.into();
+            assert!(SessionConfig::from_json(bad).unwrap().resolve().is_err());
+        }
+        let mut duplicate = plan.clone();
+        duplicate["receivers"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"second","source":plan["receivers"][0]["source"]}));
+        assert!(SessionConfig::from_json(duplicate)
+            .unwrap()
+            .resolve()
+            .is_err());
+        let mut command = plan;
+        command["receivers"][0]["source"]["adb"]["shell"] = "reboot".into();
+        assert!(SessionConfig::from_json(command).is_err());
+    }
 
     #[test]
     fn rayhunter_requires_explicit_endpoint_and_helper_and_rejects_duplicate_subscription() {
