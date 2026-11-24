@@ -880,7 +880,9 @@ fn ble_main(
 
     // TX notify loop — read from ble_output_rx, notify connected clients
     loop {
-        match ble_output_rx.recv_timeout(Duration::from_millis(100)) {
+        // No periodic work runs here: a message or sender disconnection is the
+        // wakeup. This preserves FIFO draining and the existing disconnect path.
+        match ble_output_rx.recv() {
             Ok(msg) => {
                 if BLE_CLIENTS.load(Ordering::Relaxed) == 0 {
                     continue;
@@ -891,8 +893,7 @@ fn ble_main(
                     tx_char.lock().set_value(&padded).notify();
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvError) => break,
         }
     }
 
