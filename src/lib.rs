@@ -24,6 +24,8 @@ pub mod board;
 pub mod buttons;
 pub mod comm;
 pub mod defaults;
+#[cfg(any(feature = "m5stickc", test))]
+pub mod display_render;
 pub mod filter;
 #[cfg(any(feature = "firmware", test))]
 pub mod health_output;
