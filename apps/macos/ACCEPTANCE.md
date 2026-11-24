@@ -20,7 +20,8 @@ it. First saved-view visual proof and full-rig controls remain separate gaps.
 The staged `8ba1e90` live-selection improvement is not installed or accepted in the
 actual window; unsuccessful window-acquisition preparation did not alter the app.
 
-The M5 now runs `5c3d9eb` / `0.2.0`. Its first ten-minute observer had both media,
+The M5 now runs `3597e59` / `0.2.0`; its ten-minute observer is in progress,
+with no acceptance pass yet. The prior `5c3d9eb` first ten-minute observer had both media,
 complete periodic health and zero sampled loss/timeouts, but failed the sampled
 memory-recovery criterion. A separate no-reset continuation recovered repeatedly
 to the later memory plateau, yet retained 16 scan drops and a 23,006µs writer poll gap;
@@ -34,10 +35,16 @@ Backend-controlled CatSniffer/ALFA/Flipper reception with managed GPS and an ear
 assembled M5 session retain their exact source/firmware scope. They do not establish
 current full-rig GUI acceptance. Earlier official Rayhunter `0.13.0` operation and bounded raw-feed experiments
 remain distinct. The `7de225d` prototype is now installed and seen running after
-one reboot, but its deployment readiness parser failed and separate postboot
-verification remains pending. Raw transport and offline LTE decoding were
-validated earlier; the AirHound cellular source has only private synthetic
-acceptance so far. No contemporaneous GPS/validated UTC/upload eligibility follows
+one reboot, but its original deployment readiness parser failed. Separate read-only
+postboot
+verification later passed with credentials, recording preservation and growth
+verified; the original failure remains retained. Raw transport and offline LTE decoding were
+validated earlier. A separate 5.99-second private AirHound source lifecycle now
+passed Start/Pause/Resume/Finish with two raw frames, six partial LTE observations,
+an explicit pause gap and 19 durable/shared-client records. No complete identity
+was observed, GNSS was not configured, and capture clocks remain unvalidated.
+This does not establish installed-GUI or endurance acceptance. No contemporaneous
+GPS/validated UTC/upload eligibility follows
 from the retained cellular sample. Experimental work in
 [#293](https://github.com/dougborg/AirHound/issues/293) is not a prerequisite for
 the supported rig. The historical ALFA failure below is not its latest overall status.
@@ -60,7 +67,7 @@ later GUI/backend signing identity.
 | Bounded browsing/live polling | Record window eviction and cursor tests; paged/follow controls | Passed rendered table/inspector and next-page check (500 to 1,000 retained records); live following advanced after reconnect |
 | Readiness/recovery/drop distinctions | Unknown-versus-zero tests and preserved backend phases/counters | Automated checks pass |
 | Window close leaves capture running | Service lifetime is independent in code/model tests | Passed on 2026-11-22: Cmd-W terminated GUI; service PID and active run survived, retained records grew, reopened GUI reconnected to that run |
-| Packaged backend startup/signing | Local optimized bundles, plist/codesign/embedded-help checks | Earlier bundle/archive checks passed; the current GUI-only delivery also verified its outer signature and preserved the nested signed backend byte-for-byte. Current native-only control evidence is scoped above; external-rig controls remain separate |
+| Packaged backend startup/signing | Local optimized bundles, plist/codesign/embedded-help checks | Earlier bundle/archive checks passed; the earlier `946d3c0` GUI-only delivery verified its outer signature and preserved its then-nested backend byte-for-byte; `d8ad552` was delivered separately afterward. Current native-only control evidence is scoped above; external-rig controls remain separate |
 | ALFA + CatSniffer capture together | Initial packaged-backend attempt on 2026-11-22 | Historically failed with ALFA MCU timeout; subsequent individual and combined success is recorded in the current hardware ledger, without an endurance claim |
 | Service connection status/popover | User confirmed clicking the bottom status opens the popover on 2026-11-22 | Passed manual interaction check |
 | Native rendered UI/accessibility | Compact predecessor row rendered; current bottom status is available across both tabs | Capture/observations interactions verified with native accessibility and dark-mode screenshots; light appearance and full VoiceOver review not claimed |
