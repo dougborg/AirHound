@@ -242,6 +242,14 @@ impl std::error::Error for ScanError {}
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    async fn pending_once<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        assert!(
+            std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(future.as_mut().poll(cx).is_pending())
+            })
+            .await
+        );
+    }
     fn network() -> wifi_scan::Wifi {
         wifi_scan::Wifi {
             mac: "12:34:56:78:9A:BC".into(),
@@ -307,124 +315,174 @@ mod tests {
         );
         assert!(format_security(&vec![Wpa3EnterpriseSuiteBEap256; 100]).len() <= 64);
     }
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn scan_recovers_from_failure_skips_redacted_results_and_stops_on_close() {
-        let (tx, mut rx) = mpsc::channel(1);
-        let mut scans = std::collections::VecDeque::from([
-            Err(wifi_scan::Error::ScanFailed("temporary".into())),
-            Ok(vec![wifi_scan::Wifi::default()]),
-            Ok(vec![network(), network()]),
-        ]);
-        let task = tokio::spawn(scan_loop_with(
-            tx,
-            crate::control::ScanControl::new(true),
-            move || std::future::ready(Ok(scans.pop_front().unwrap_or(Ok(vec![])))),
-        ));
-        let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
-            panic!("expected WiFi");
-        };
-        assert_eq!(event.ssid.as_str(), "Flock-test");
-        drop(rx);
-        task.await.unwrap().unwrap();
+        crate::test_support::manual_time(async {
+            let (tx, mut rx) = mpsc::channel(1);
+            let mut scans = std::collections::VecDeque::from([
+                Err(wifi_scan::Error::ScanFailed("temporary".into())),
+                Ok(vec![wifi_scan::Wifi::default()]),
+                Ok(vec![network(), network()]),
+            ]);
+            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = calls.clone();
+            let task = scan_loop_with(tx, crate::control::ScanControl::new(true), move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                std::future::ready(Ok(scans.pop_front().unwrap_or(Ok(vec![]))))
+            });
+            tokio::pin!(task);
+            pending_once(task.as_mut()).await;
+            assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+            // Each poll processes a result and registers the next interval.
+            // Assert before expiry, then cross Tokio's next millisecond timer tick.
+            for expected in 2..=3 {
+                tokio::time::advance(SCAN_INTERVAL - Duration::from_millis(1)).await;
+                pending_once(task.as_mut()).await;
+                assert_eq!(
+                    calls.load(std::sync::atomic::Ordering::Relaxed),
+                    expected - 1
+                );
+                tokio::time::advance(Duration::from_millis(2)).await;
+                pending_once(task.as_mut()).await;
+                assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), expected);
+            }
+            let ScanEvent::WiFi(event) = rx.recv().await.unwrap() else {
+                panic!("expected WiFi");
+            };
+            assert_eq!(event.ssid.as_str(), "Flock-test");
+            drop(rx);
+            task.await.unwrap();
+        })
+        .await;
     }
     #[tokio::test]
     async fn closed_output_and_scan_task_failure_are_observable() {
-        let (tx, rx) = mpsc::channel(1);
-        drop(rx);
-        scan_loop_with(tx, crate::control::ScanControl::new(true), || async {
-            panic!("must not scan after receiver closes")
+        crate::test_support::manual_time(async {
+            let (tx, rx) = mpsc::channel(1);
+            drop(rx);
+            scan_loop_with(tx, crate::control::ScanControl::new(true), || async {
+                panic!("must not scan after receiver closes")
+            })
+            .await
+            .unwrap();
+            let (tx, _rx) = mpsc::channel(1);
+            let err = scan_loop_with(tx, crate::control::ScanControl::new(true), || {
+                std::future::ready(Err(ScanError::TaskPanicked))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(err.to_string(), "scan task panicked");
         })
-        .await
-        .unwrap();
-        let (tx, _rx) = mpsc::channel(1);
-        let err = scan_loop_with(tx, crate::control::ScanControl::new(true), || {
-            std::future::ready(Err(ScanError::TaskPanicked))
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(err.to_string(), "scan task panicked");
+        .await;
     }
     #[tokio::test]
     async fn closed_public_scanner_does_not_start_a_hardware_scan() {
-        let (tx, rx) = mpsc::channel(1);
-        drop(rx);
-        scan_loop(tx, crate::control::ScanControl::new(true))
-            .await
-            .unwrap();
+        crate::test_support::manual_time(async {
+            let (tx, rx) = mpsc::channel(1);
+            drop(rx);
+            scan_loop(tx, crate::control::ScanControl::new(true))
+                .await
+                .unwrap();
+        })
+        .await;
     }
     #[tokio::test]
     async fn blocking_worker_returns_results_and_reports_panics() {
-        assert_eq!(blocking_scan(|| 42).await.unwrap(), 42);
-        assert!(matches!(
-            blocking_scan(|| panic!("test worker failure")).await,
-            Err(ScanError::TaskPanicked)
-        ));
-        assert_eq!(
-            ScanError::WorkerUnavailable.to_string(),
-            "could not start WiFi worker"
-        );
+        crate::test_support::manual_time(async {
+            assert_eq!(blocking_scan(|| 42).await.unwrap(), 42);
+            assert!(matches!(
+                blocking_scan(|| panic!("test worker failure")).await,
+                Err(ScanError::TaskPanicked)
+            ));
+            assert_eq!(
+                ScanError::WorkerUnavailable.to_string(),
+                "could not start WiFi worker"
+            );
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn shutdown_does_not_wait_for_a_blocked_native_scan() {
-        let (started, ready) = tokio::sync::oneshot::channel();
-        let (release, blocked) = std::sync::mpsc::channel();
-        let (finished, done) = tokio::sync::oneshot::channel();
-        let control = crate::control::ScanControl::new(true);
-        let (tx, _rx) = mpsc::channel(1);
-        let mut request = Some((started, blocked, finished));
-        let task = tokio::spawn(scan_loop_with(tx, control.clone(), move || {
-            let (started, blocked, finished) = request.take().unwrap();
-            blocking_scan(move || {
-                let _ = started.send(());
-                let _ = blocked.recv();
-                let _ = finished.send(());
-                Ok(vec![network()])
-            })
-        }));
-        ready.await.unwrap();
-        control.shutdown();
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        release.send(()).unwrap();
-        done.await.unwrap();
+        crate::test_support::manual_time(async {
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, blocked) = std::sync::mpsc::channel();
+            struct ReleaseOnDrop(Option<std::sync::mpsc::Sender<()>>);
+            impl Drop for ReleaseOnDrop {
+                fn drop(&mut self) {
+                    if let Some(release) = self.0.take() {
+                        let _ = release.send(());
+                    }
+                }
+            }
+            let mut release = ReleaseOnDrop(Some(release));
+            let (finished, done) = tokio::sync::oneshot::channel();
+            let control = crate::control::ScanControl::new(true);
+            let (tx, _rx) = mpsc::channel(1);
+            let mut request = Some((started, blocked, finished));
+            let task = tokio::spawn(scan_loop_with(tx, control.clone(), move || {
+                let (started, blocked, finished) = request.take().unwrap();
+                blocking_scan(move || {
+                    let _ = started.send(());
+                    let _ = blocked.recv();
+                    let _ = finished.send(());
+                    Ok(vec![network()])
+                })
+            }));
+            ready.await.unwrap();
+            control.shutdown();
+            task.await.unwrap().unwrap();
+            release.0.take().unwrap().send(()).unwrap();
+            done.await.unwrap();
+        })
+        .await;
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn pause_blocks_new_scans_and_discards_pre_pause_results() {
-        use std::sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        };
-        let calls = Arc::new(AtomicUsize::new(0));
-        let counter = calls.clone();
-        let control = crate::control::ScanControl::new(false);
-        let (tx, mut rx) = mpsc::channel(8);
-        let task = tokio::spawn(scan_loop_with(tx, control.clone(), move || {
-            counter.fetch_add(1, Ordering::Relaxed);
-            async {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                Ok(Ok(vec![network()]))
-            }
-        }));
-        tokio::task::yield_now().await;
-        assert_eq!(calls.load(Ordering::Relaxed), 0);
-        control.store(true, Ordering::Relaxed);
-        tokio::task::yield_now().await;
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        control.store(false, Ordering::Relaxed);
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_secs(6)).await;
-        tokio::task::yield_now().await;
-        assert!(rx.try_recv().is_err());
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        control.store(true, Ordering::Relaxed);
-        assert!(matches!(rx.recv().await, Some(ScanEvent::WiFi(_))));
-        assert_eq!(calls.load(Ordering::Relaxed), 2);
-        control.shutdown();
-        task.await.unwrap().unwrap();
+        crate::test_support::manual_time(async {
+            use std::sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            };
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = calls.clone();
+            let control = crate::control::ScanControl::new(false);
+            let (tx, mut rx) = mpsc::channel(8);
+            let (first_result, first) = tokio::sync::oneshot::channel();
+            let (second_result, second) = tokio::sync::oneshot::channel();
+            let mut results = std::collections::VecDeque::from([first, second]);
+            let task = scan_loop_with(tx, control.clone(), move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let result = results
+                    .pop_front()
+                    .expect("only two scans authorized by fixture");
+                async move { result.await.unwrap() }
+            });
+            tokio::pin!(task);
+            pending_once(task.as_mut()).await;
+            assert_eq!(calls.load(Ordering::Relaxed), 0);
+            control.store(true, Ordering::Relaxed);
+            pending_once(task.as_mut()).await;
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            control.store(false, Ordering::Relaxed);
+            pending_once(task.as_mut()).await;
+            first_result.send(Ok(Ok(vec![network()]))).unwrap();
+            pending_once(task.as_mut()).await;
+            assert!(matches!(
+                rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            control.store(true, Ordering::Relaxed);
+            pending_once(task.as_mut()).await;
+            assert_eq!(calls.load(Ordering::Relaxed), 2);
+            second_result.send(Ok(Ok(vec![network()]))).unwrap();
+            pending_once(task.as_mut()).await;
+            assert!(matches!(rx.recv().await, Some(ScanEvent::WiFi(_))));
+            control.shutdown();
+            task.await.unwrap();
+        })
+        .await;
     }
 }
