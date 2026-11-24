@@ -45,6 +45,12 @@ final class SessionModel: ObservableObject {
   @Published var browsingRun: String?
   @Published var followLive = false
   @Published var hasMoreRecords = false
+  @Published private(set) var savedPages: SavedRecordPages?
+  @Published private(set) var browsingTitle = ""
+  @Published private(set) var browsingTotal: Int64 = 0
+  @Published private(set) var readingRecords = false
+  @Published private(set) var recordReadError: String?
+  private var failedSavedTarget: SavedRecordPages?
   private var window = RecordWindow()
   private var recordingEpoch = UUID()
   private var hasPresentedWindow = false
@@ -64,15 +70,20 @@ final class SessionModel: ObservableObject {
   private let preferences: UserDefaults
   private let readiness: ServiceReadiness
   private let clientFactory: (URL, URL) -> BackendClient
+  private let recordReader: (BackendClient, String, Int64, Int) async throws -> RecordPage
   init(
     preferences: UserDefaults = .standard, readiness: ServiceReadiness? = nil,
     clientFactory: @escaping (URL, URL) -> BackendClient = {
       BackendClient(executable: $0, socket: $1)
+    },
+    recordReader: @escaping (BackendClient, String, Int64, Int) async throws -> RecordPage = {
+      try await $0.records(runID: $1, after: $2, limit: $3)
     }
   ) {
     self.preferences = preferences
     self.readiness = readiness ?? ServiceReadiness()
     self.clientFactory = clientFactory
+    self.recordReader = recordReader
     if let path = preferences.string(forKey: "serviceSocket") { socketPath = path }
   }
 
@@ -710,16 +721,29 @@ final class SessionModel: ObservableObject {
       self.recordingEpoch = UUID()
       self.hasPresentedWindow = false
       self.followLive = self.isActive && self.activeID == run.id
+      self.savedPages = self.followLive ? nil : SavedRecordPages()
+      self.failedSavedTarget = nil
+      self.browsingTitle =
+        "\(run.startedAt.formatted(date: .abbreviated, time: .standard)) · \(run.id)"
+      self.browsingTotal = run.recordCount
+      self.hasMoreRecords = false
+      self.recordReadError = nil
+      app.recording = nil
+      app.recordingLabel = "Loading recording · \(run.recordCount.formatted()) records"
+      app.isExample = false
       app.selectedTab = "observations"
       app.recordingRevision = UUID()
       try await self.fetchRecords()
     }
   }
 
-  func loadMoreRecords() { submitRecordRead(rewind: false) }
-  func rewindRecords() { submitRecordRead(rewind: true) }
+  func loadMoreRecords() { submitRecordRead(direction: .next) }
+  func rewindRecords() { submitRecordRead(direction: .first) }
+  func previousRecords() { submitRecordRead(direction: .previous) }
+  func retryRecords() { submitRecordRead(direction: .retry) }
+  private enum RecordDirection { case first, previous, next, retry }
 
-  private func submitRecordRead(rewind: Bool) {
+  private func submitRecordRead(direction: RecordDirection) {
     guard let client, let app = observationApp else { return }
     let connection = connectionEpoch
     let epoch = recordingEpoch
@@ -727,7 +751,19 @@ final class SessionModel: ObservableObject {
     submitUserAction {
       try self.requireCurrent(client, epoch: connection)
       guard self.recordingEpoch == epoch, app.recordingSelection == selection else { return }
-      if rewind {
+      if let pages = self.savedPages {
+        let target: SavedRecordPages?
+        switch direction {
+        case .first: target = SavedRecordPages()
+        case .previous: target = pages.back()
+        case .next: target = pages.next()
+        case .retry: target = self.failedSavedTarget ?? pages
+        }
+        guard let target else { return }
+        try await self.fetchRecords(savedTarget: target)
+        return
+      }
+      if direction == .first {
         self.window = RecordWindow()
         self.recordingEpoch = UUID()
         self.hasPresentedWindow = false
@@ -738,46 +774,76 @@ final class SessionModel: ObservableObject {
     }
   }
 
-  private func fetchRecords() async throws {
+  private func fetchRecords(savedTarget: SavedRecordPages? = nil) async throws {
     guard let client, let id = browsingRun, let app = observationApp else { return }
     let epoch = recordingEpoch
     let selection = app.recordingSelection
-    let current = window
+    let saved = savedTarget ?? savedPages
+    let current = saved == nil ? window : RecordWindow()
+    readingRecords = true
+    recordReadError = nil
+    defer {
+      if recordingEpoch == epoch, browsingRun == id, app.recordingSelection == selection {
+        readingRecords = false
+      }
+    }
     do {
-      let page = try await client.records(runID: id, after: current.cursor, limit: 500)
+      let page = try await recordReader(client, id, saved?.position.after ?? current.cursor, 500)
       guard recordingEpoch == epoch, browsingRun == id, app.recordingSelection == selection else {
         return
       }
       // Serialization, decoding and evidence formatting can take several frames.
       // Keep that work off the main actor while the native table is scrolling.
-      let updated = try await Task.detached(priority: .userInitiated) {
+      let (updated, updatedPages) = try await Task.detached(priority: .userInitiated) {
         var updated = current
+        var pages = saved
+        try pages?.receive(page)
         try updated.append(page)
-        return updated
+        if pages != nil, updated.records.count != page.records.count {
+          throw ModelError.invalid("Saved recording page exceeds the presentation limit.")
+        }
+        return (updated, pages)
       }.value
       try Task.checkCancellation()
       guard recordingEpoch == epoch, browsingRun == id, observationApp === app,
         app.recordingSelection == selection
       else { return }
       window = updated
+      savedPages = updatedPages
+      failedSavedTarget = nil
       hasMoreRecords = page.hasMore
       // Polling an unchanged recording must not invalidate every table row.
-      guard !page.records.isEmpty || !hasPresentedWindow else { return }
+      guard updatedPages != nil || !page.records.isEmpty || !hasPresentedWindow else { return }
       app.recording = try window.observations()
       app.recordingLabel =
-        "\(window.records.count) recent records · \(window.omitted) earlier records outside this view"
+        updatedPages?.summary(total: browsingTotal)
+        ?? "\(window.records.count) recent records · \(window.omitted) earlier records outside this view"
+      if updatedPages != nil { app.recordingRevision = UUID() }
       app.isExample = false
       hasPresentedWindow = true
     } catch {
       guard recordingEpoch == epoch, browsingRun == id, observationApp === app,
         app.recordingSelection == selection
       else { return }
+      failedSavedTarget = saved
+      recordReadError = error.localizedDescription
+      if !hasPresentedWindow {
+        app.recordingLabel = "Recording could not be loaded"
+        app.recordingRevision = UUID()
+      }
       throw error
     }
   }
 
   func leaveRecording() {
     browsingRun = nil
+    savedPages = nil
+    failedSavedTarget = nil
+    browsingTitle = ""
+    browsingTotal = 0
+    readingRecords = false
+    recordReadError = nil
+    hasMoreRecords = false
     followLive = false
     observationApp = nil
     window = RecordWindow()

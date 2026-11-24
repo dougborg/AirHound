@@ -75,3 +75,19 @@ window, in addition to the session's current window with the same limits. Decode
 strings/pretty JSON have normal additional memory cost; these are input limits,
 not an 8 MiB resident-memory claim. No list of past windows is accumulated. Rows
 remain recycled AppKit cells, and held updates skip filter/sort and table reload.
+
+Completed recordings open as saved pages, beginning at the first stored record.
+The header identifies the recording by start date/time and full run ID. The
+record range and full recording total count all stored records; the table count
+separately counts decoded observations. Receive-time ranges describe the loaded
+page, not the full recording or modem/GNSS event time. First/Previous/Next page
+replace the displayed page and reset its row selection; they never preload an
+entire recording. Search, filters, sorting and the receiver sidebar explicitly
+apply to the current page only. Other protocols may occur on later pages.
+
+Saved navigation retains at most 256 cursor/ordinal anchors and one bounded
+presentation page; no old page payloads are cached. First page remains available
+when older back-history has been discarded. A failed page request retains the
+previous page and can retry its requested cursor; opening a different recording
+clears the old rows immediately so a loading/error state cannot masquerade as the
+new recording. Live capture keeps its existing bounded rolling/held view.

@@ -57,14 +57,29 @@ struct MainView: View {
           rows: filtered, revision: tableRevision, context: model.recordingRevision,
           selection: Binding(
             get: { presentation.selection },
-            set: { presentation.select($0, liveWindow: model.session.browsingRun != nil) }),
+            set: {
+              presentation.select(
+                $0, liveWindow: model.session.browsingRun != nil && model.session.savedPages == nil)
+            }),
           sortOrder: $sortOrder,
           userScrolled: {
-            if model.session.browsingRun != nil { presentation.hold() }
+            if model.session.browsingRun != nil && model.session.savedPages == nil {
+              presentation.hold()
+            }
           }
         )
         .overlay {
-          if observations.isEmpty {
+          if model.session.readingRecords && observations.isEmpty {
+            ProgressView("Loading selected recording page…")
+          } else if model.session.recordReadError != nil && observations.isEmpty {
+            ContentUnavailableView(
+              "Recording page unavailable", systemImage: "exclamationmark.triangle",
+              description: Text("Use Retry page to load the selected recording."))
+          } else if observations.isEmpty && model.session.savedPages != nil {
+            ContentUnavailableView(
+              "No observations on this page", systemImage: "list.bullet",
+              description: Text("This page may contain status records. Continue with Next page."))
+          } else if observations.isEmpty {
             ContentUnavailableView(
               "Open a recording", systemImage: "doc.text",
               description: Text(
@@ -76,14 +91,19 @@ struct MainView: View {
         }
         Divider()
         HStack {
-          Text("\(filtered.count) of \(observations.count) observations")
+          Text(
+            "\(filtered.count) of \(observations.count) observations\(model.session.savedPages == nil ? "" : " on this page")"
+          )
           Spacer()
           Text(presentation.label)
         }.font(.caption).foregroundStyle(.secondary).padding(10)
       }
       .navigationTitle("AirHound")
       .navigationSubtitle(presentation.label)
-      .searchable(text: $search, placement: .toolbar, prompt: "Search observations")
+      .searchable(
+        text: $search, placement: .toolbar,
+        prompt: model.session.savedPages == nil ? "Search observations" : "Search this page"
+      )
       .inspector(isPresented: $showInspector) {
         InspectorView(observation: selected).inspectorColumnWidth(min: 260, ideal: 300, max: 420)
       }
@@ -241,25 +261,61 @@ struct RecordNavigation: View {
     if session.browsingRun != nil {
       VStack(alignment: .leading, spacing: 6) {
         HStack {
-          Text("Stored recording").font(.headline)
-          Toggle(
-            "Follow live",
-            isOn: Binding(
-              get: { session.followLive && !held },
-              set: { follow in
-                session.followLive = follow
-                if follow { resume() } else { hold() }
-              })
-          ).toggleStyle(.checkbox)
+          Text(session.savedPages == nil ? "Live recording" : "Saved recording").font(.headline)
           Spacer()
-          Button("From Beginning") {
-            resume()
-            session.rewindRecords()
-          }.disabled(!session.canSubmitAction)
-          Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
-            resume()
-            session.loadMoreRecords()
-          }.disabled(!session.canSubmitAction)
+          if let pages = session.savedPages {
+            Button("First page") { session.rewindRecords() }
+              .disabled(!session.canSubmitAction || pages.position.offset == 0)
+            Button("Previous page") { session.previousRecords() }
+              .disabled(!session.canSubmitAction || !pages.canGoBack)
+            Button("Next page") { session.loadMoreRecords() }
+              .disabled(!session.canSubmitAction || !pages.hasMore)
+          } else {
+            Toggle(
+              "Follow live",
+              isOn: Binding(
+                get: { session.followLive && !held },
+                set: { follow in
+                  session.followLive = follow
+                  if follow { resume() } else { hold() }
+                })
+            ).toggleStyle(.checkbox)
+            Button("From Beginning") {
+              resume()
+              session.rewindRecords()
+            }.disabled(!session.canSubmitAction)
+            Button(session.hasMoreRecords ? "Load Next Page" : "Check for New Records") {
+              resume()
+              session.loadMoreRecords()
+            }.disabled(!session.canSubmitAction)
+          }
+        }
+        Text(session.browsingTitle).font(.caption).textSelection(.enabled)
+        if let pages = session.savedPages {
+          Text(pages.summary(total: session.browsingTotal)).font(.callout)
+          if let times = pages.receivedRange {
+            Text("Received \(receivedTime(times.lowerBound)) – \(receivedTime(times.upperBound))")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Text(
+            "Search, filters, sorting and receiver list apply to this page only. Other pages may contain different protocols."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          if !pages.canGoBack && pages.position.offset > 0 {
+            Text(
+              "Earlier page history is outside this view. Use First page to browse from the start."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+        if session.readingRecords {
+          ProgressView("Loading recording page…").controlSize(.small)
+        }
+        if let error = session.recordReadError {
+          HStack {
+            Text(error).font(.caption).foregroundStyle(.red)
+            Button("Retry page") { session.retryRecords() }.disabled(!session.canSubmitAction)
+          }
         }
         if held {
           Text("View held for inspection. Holding this view does not pause capture.")
@@ -269,4 +325,9 @@ struct RecordNavigation: View {
       Divider()
     }
   }
+  private func receivedTime(_ micros: Int64) -> String {
+    Date(timeIntervalSince1970: Double(micros) / 1_000_000)
+      .formatted(date: .abbreviated, time: .standard)
+  }
+
 }
