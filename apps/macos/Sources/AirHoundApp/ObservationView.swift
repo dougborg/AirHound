@@ -47,6 +47,7 @@ struct MainView: View {
             Text("All types").tag("All types")
             Text("Wi-Fi").tag("Wi-Fi")
             Text("Bluetooth").tag("Bluetooth")
+            Text("Cellular").tag("Cellular")
           }.frame(width: 180)
           Toggle("Matches only", isOn: $matchesOnly).toggleStyle(.checkbox)
           Spacer()
