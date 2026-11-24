@@ -1,10 +1,14 @@
 # M5 observation-stream throughput
 
-The no_std M5StickC Plus2 stream uses 460800-baud UART, a 20-slot parsed-event
-queue and a four-slot serialized-output queue. Both processing and output tasks
-yield before acquiring the next record. Yielding after acquisition can retain
-large buffers in the suspended task, consuming DRAM otherwise reserved for the
-startup stack. Explicit one-shot signals gate radio initialization on consumer readiness and
+The current no_std M5StickC Plus2 output architecture uses 460800-baud UART,
+a 20-slot parsed-event queue and a fixed 64-slot PSRAM serialized-output pool,
+including eight slots reserved for health/command admission. A separate four-slot
+internal-RAM channel stages runtime logger messages from arbitrary contexts;
+a task transfers them into the pool. The single writer retains only an exclusive
+pool lease and small scratch buffer across cooperative yields, not a copied
+512-byte record. Holding a full record in a suspended task can consume DRAM
+otherwise reserved for the startup stack. Explicit one-shot signals gate radio
+initialization on consumer readiness and
 the completed splash-to-status redraw. Display failure releases the barrier in
 degraded mode. WiFi capture remains disabled until the BLE host scan-start
 attempt completes; its channel-hopping task starts with capture. The fixed
@@ -12,8 +16,8 @@ two-second splash is UI time, not a guessed radio-settling delay. Normal scan
 intervals and queue/drop accounting are unchanged.
 
 The internal heap remains 64 KiB and the existing observation table remains in
-PSRAM. The queue allocation trades relatively large 512-byte serialized slots for
-smaller parsed events, rather than expanding internal-memory use indiscriminately.
+PSRAM. The 64 × 512-byte output payload storage is also allocated in PSRAM at
+startup; the bounded logger staging channel remains in internal RAM.
 The earlier startup-order image reserved 7,396 bytes for the stack. Every new
 M5 image must independently pass the unchanged 7,168-byte linked-reservation
 gate; this is not a runtime high-water measurement.
@@ -31,22 +35,34 @@ measured. The output candidate removes this known scheduling hazard without
 changing scan mode, intervals, or duplicate filtering. It is not yet hardware
 acceptance or a proven fix for [#320](https://github.com/dougborg/AirHound/issues/320).
 
-After startup, all ordinary M5 diagnostics and JSON records share the existing
-four output slots and a single UART owner. Formatting and bounded try-enqueue
-do not wait for the UART. Diagnostics flatten CR/LF and escape opening braces: the
-legacy host looks for JSON after a log prefix, so the prefix alone cannot prevent
-a diagnostic containing JSON from being parsed as an observation. Diagnostics
-are not forwarded to BLE subscribers. No additional queue or heap is allocated.
+After startup, all ordinary M5 diagnostics and JSON records reach the PSRAM pool
+and a single UART owner. Observation/diagnostic producers use bounded nonblocking
+admission; commands may await a reserved slot. Diagnostics flatten CR/LF and
+escape opening braces: the legacy host looks for JSON after a log prefix, so
+the prefix alone cannot prevent diagnostic text from becoming an observation.
+Diagnostics are never forwarded to BLE subscribers. Eight reserved slots improve
+structured-health/command admission without guaranteeing lossless delivery.
 
 The UART task checks FIFO readiness and copies at most 16 bytes in one short
-ownership critical section. It polls with interrupts enabled between these steps,
-with an absolute 20 ms deadline per line that never renews on partial progress.
-A maximum 512-byte line takes about 11.1 ms on the wire at 460800/8N1. This is
-bounded polling, not fully asynchronous output: cooperative application tasks
-can be delayed for one line, while interrupts can run during FIFO waits. The task
-yields before the next record. It does not retain a fifth 512-byte record across
-an await, shrink the queue, enlarge the heap, or relax the stack gate. Target
-build, linked-memory audit, and runtime button/reception tests remain required.
+ownership critical section. It yields immediately on blockage and after at most
+four steps (64 bytes), with interrupts enabled outside the brief FIFO copy.
+The prospective dual-budget candidate uses a 40 ms no-acceptance watchdog and
+an immutable length-aware total allowance capped at 200 ms; see the exact
+[service-budget policy](m5-psram-output-proposal.md#prospective-cooperative-uart-service-budgets).
+Positive validated FIFO acceptance renews only the watchdog. The 94/310/512-byte
+allowances are 62.040 / 126.728 / 191.112 ms; actual completion does not wait for
+them. These are poll-time limits, not preemption or measured wire latency.
+A completed final-step overrun is reported separately and never retried as an
+incomplete frame. The separate <20 ms intra-line poll-gap responsiveness gate
+and zero-output-loss criterion remain unchanged.
+
+The candidate adds bounded elapsed/overrun/last-timeout diagnostics without a
+new payload buffer or relaxed memory gate. It has portable test coverage, but
+its final target build, linked-memory audit and physical acceptance remain
+pending. The prior 600-second display/resynchronization attempt continued both
+radios and recovered after four typed timeout losses; its strict verdict remains
+failed. That observation does not establish which task or FIFO condition caused
+each timeout. No historical benchmark below measures the new budget policy.
 
 Boot diagnostics are synchronous only before the runtime ownership handoff and
 radio readiness barrier. The panic pre-backtrace hook permanently takes the same
@@ -55,24 +71,30 @@ ordinary line is abandoned and never resumed. Controller-blob assertion text
 written before that hook is outside normal framing guarantees and remains fatal
 diagnostic evidence. XIAO keeps its existing console implementation.
 
-Periodic M5 health publication also yields before Status and again before
-StreamStats. This separates an optional scan-loss diagnostic and the two health
-records into different executor polls. Serialization remains synchronous in a
-helper, so no 512-byte buffer survives these yields. A four-slot channel regression
-reproduces the former same-poll burst rejecting both health records and verifies
-that consumer progress admits them. Yielding does not reserve space: competing
-producers can still fill the queue, and those rejections still increment
-`output_drops`. This does not attribute all observed output or diagnostic losses
-to the periodic burst or establish lossless health delivery under saturation.
+Periodic M5 health publication yields between diagnostic and structured records.
+Serialization remains synchronous in helpers, so no 512-byte buffer survives
+these yields. The historical four-slot regression reproduced health-record
+rejection from a same-poll burst; current pool admission and reserved slots are
+separate bounds. Competing producers can still exhaust ordinary admission, and
+those rejections remain counted. Sampled pool diagnostics distinguish occupancy,
+queue residence, writer poll gaps, record classes and loss reasons.
 
-A UART error or line timeout permanently disables normal serial writes until
-reboot; subsequent records cannot be joined to a partial line. BLE forwarding may
-continue and carry aggregate failure counts. No error path logs recursively.
-The periodic `Serial output stats` diagnostic distinguishes logger queue drops,
-format failures and UART failures; it is itself best-effort. These causes also
-increment the existing strict `output_drops` or `serialize_errors` counters, so
-legacy consumers do not silently lose failure evidence. A stopped UART cannot
-promise a final serial counter report.
+An ordinary payload timeout retains the exclusive draining lease for one LF-only
+resynchronization attempt under a separate fixed 20 ms budget. Successful LF
+recovery releases the damaged record and permits ordered output to continue;
+the original record still counts once as lost. Its payload and BLE admission
+are never retried. A hard UART error, invalid progress, failed LF recovery,
+or cancellation closes normal UART admission until reboot. Panic takes UART
+ownership permanently before backtrace output. The closed pool is never reopened. Ordered bounded BLE fallback can continue for JSON,
+with separate admission/loss accounting; this does not prove BLE delivery.
+
+The periodic `Serial output stats` diagnostic distinguishes logger drops,
+format failures and UART failures. `Output pool` reports typed pool losses and
+`UART service` reports elapsed timing, completed overruns and the last timeout's
+length/accepted prefix. These reports are themselves bounded and fallible. Legacy
+`output_drops`/`serialize_errors` retain applicable loss evidence, and a permanently
+closed UART cannot promise a final serial counter report. No error path logs
+recursively.
 
 ## What the loss counters mean
 
@@ -95,6 +117,10 @@ that the radio never received, including traffic on a different WiFi channel.
 Counters are cumulative since boot; compare consecutive samples to locate loss.
 
 ## Reproduce
+
+The command below documents the historical 0.1.1 experiment procedure, not
+acceptance of the current candidate. New candidate testing uses a separately
+reviewed image-bound observer with current timing and loss diagnostics.
 
 Use a compatible data cable, release the device from any VM USB forwarding,
 close other serial readers and keep the radio environment as consistent as
