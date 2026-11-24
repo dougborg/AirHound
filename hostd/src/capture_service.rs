@@ -12,13 +12,18 @@ use tokio::{
 };
 
 pub(crate) enum Action {
-    Start { request_id: String, config: Value },
+    Start {
+        request_id: String,
+        config: Value,
+    },
     Pause(String),
     Resume(String),
     Finish(String),
     Status,
     Identify(airhound_hostd::discovery::identify::Request),
     Shutdown,
+    #[cfg(test)]
+    AwaitCompletion,
 }
 struct Request {
     action: Action,
@@ -38,12 +43,57 @@ impl Handle {
             .map_err(|_| io::Error::other("capture request was not acknowledged"))?
     }
 }
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct TestHooks {
+    records: Option<mpsc::UnboundedSender<Value>>,
+    gps_source: Option<crate::gpsd::Source>,
+    maintenance: Option<crate::test_support::TimerWitness>,
+    recovered: Option<mpsc::UnboundedSender<Value>>,
+}
+#[cfg(test)]
+struct RecordWitness {
+    records: Option<mpsc::UnboundedSender<Value>>,
+    pending: Vec<u8>,
+}
+#[cfg(test)]
+impl io::Write for RecordWitness {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        for part in bytes.split_inclusive(|b| *b == b'\n') {
+            self.pending.extend_from_slice(part);
+            if part.last() == Some(&b'\n') {
+                if let Some(records) = &self.records {
+                    let _ = records
+                        .send(serde_json::from_slice(&self.pending).map_err(io::Error::other)?);
+                }
+                self.pending.clear();
+            }
+        }
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 pub(crate) fn spawn(database: PathBuf) -> (Handle, JoinHandle<io::Result<()>>) {
     spawn_with_active(database, None)
 }
 fn spawn_with_active(
     database: PathBuf,
     initial: Option<Active>,
+) -> (Handle, JoinHandle<io::Result<()>>) {
+    spawn_with_hooks(
+        database,
+        initial,
+        #[cfg(test)]
+        TestHooks::default(),
+    )
+}
+fn spawn_with_hooks(
+    database: PathBuf,
+    initial: Option<Active>,
+    #[cfg(test)] hooks: TestHooks,
 ) -> (Handle, JoinHandle<io::Result<()>>) {
     let (tx, mut rx) = mpsc::channel::<Request>(8);
     let task = tokio::spawn(async move {
@@ -54,17 +104,40 @@ fn spawn_with_active(
         let mut maintenance = tokio::time::interval(Duration::from_secs(2));
         maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         maintenance.reset();
+        #[cfg(test)]
+        let mut registered = false;
+        #[cfg(test)]
+        let mut maintenance_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
+            let tick = maintenance.tick();
+            #[cfg(test)]
+            let tick = async {
+                match &hooks.maintenance {
+                    Some(witness) => {
+                        witness
+                            .clone()
+                            .observe_persistent(maintenance_deadline, tick, &mut registered, |_| {
+                                true
+                            })
+                            .await
+                    }
+                    None => tick.await,
+                }
+            };
             let request = tokio::select! {
                 // Recovery writes occur only on this background timer,
                 // never as a side effect of Status/history requests.
                 biased;
-                _ = maintenance.tick() => {
+                _ = tick => {
                     collect_finished(&mut active, &mut last, &mut recovery).await;
                     if active.is_none() { recovery.attempt(database.clone()).await; }
                     // Fixed delay after completion: a slow/busy SQLite retry
                     // must not make the next tick immediately ready and starve requests.
                     maintenance.reset();
+                    #[cfg(test)] {
+                        maintenance_deadline=tokio::time::Instant::now()+Duration::from_secs(2);
+                        if let Some(recovered)=&hooks.recovered {let _=recovered.send(recovery.status());}
+                    }
                     continue;
                 }
                 request = rx.recv() => match request { Some(request) => request, None => break },
@@ -104,7 +177,15 @@ fn spawn_with_active(
                     } else if recovery.pending {
                         Err(io::Error::other(recovery.start_error()))
                     } else {
-                        match start(database.clone(), request_id, config).await {
+                        match start(
+                            database.clone(),
+                            request_id,
+                            config,
+                            #[cfg(test)]
+                            hooks.clone(),
+                        )
+                        .await
+                        {
                             Ok(run) => {
                                 let status = run.status();
                                 active = Some(run);
@@ -158,6 +239,15 @@ fn spawn_with_active(
                     } else {
                         Err(invalid("recording is not active in this service"))
                     }
+                }
+                #[cfg(test)]
+                Action::AwaitCompletion => {
+                    if let Some(run) = active.take() {
+                        let result = run.complete().await;
+                        recovery.note(&result);
+                        last = Some(result);
+                    }
+                    Ok(json!({"active":false,"last":last}))
                 }
                 Action::Shutdown => {
                     if let Some(run) = active.take() {
@@ -317,7 +407,12 @@ impl Active {
         }
     }
 }
-async fn start(database: PathBuf, request_id: String, config: Value) -> io::Result<Active> {
+async fn start(
+    database: PathBuf,
+    request_id: String,
+    config: Value,
+    #[cfg(test)] hooks: TestHooks,
+) -> io::Result<Active> {
     if serde_json::to_vec(&config).map_err(io::Error::other)?.len() > airhound_api::MAX_CONFIG_BYTES
     {
         return Err(invalid("session config exceeds 64 KiB"));
@@ -367,17 +462,38 @@ async fn start(database: PathBuf, request_id: String, config: Value) -> io::Resu
     })
     .await
     .map_err(io::Error::other)??;
-    Ok(launch(receivers, filter, writer, gps))
+    Ok(launch_with_hooks(
+        receivers,
+        filter,
+        writer,
+        gps,
+        #[cfg(test)]
+        hooks,
+    ))
 }
-fn launch(
+fn launch_with_hooks(
     receivers: Vec<session_runtime::ReceiverTask>,
     filter: FilterConfig,
     writer: Writer,
     gps: Option<crate::gpsd::Options>,
+    #[cfg(test)] hooks: TestHooks,
 ) -> Active {
     let id = writer.run_id.clone();
+    #[cfg(not(test))]
     let (output, recording) = storage::output::attach(io::sink(), writer);
+    #[cfg(test)]
+    let (output, recording) = storage::output::attach(
+        RecordWitness {
+            records: hooks.records,
+            pending: Vec::new(),
+        },
+        writer,
+    );
     let control = ScanControl::new(true);
+    #[cfg(test)]
+    if let Some(source) = hooks.gps_source {
+        control.set_location_source(source);
+    }
     let capture_control = control.clone();
     let mut stop = control.subscribe();
     let completion = recording.clone();
@@ -441,6 +557,13 @@ mod tests {
             &self,
             receiver: session_runtime::ReceiverTask,
         ) -> (Handle, JoinHandle<io::Result<()>>, String) {
+            self.actor_with_hooks(receiver, TestHooks::default())
+        }
+        fn actor_with_hooks(
+            &self,
+            receiver: session_runtime::ReceiverTask,
+            hooks: TestHooks,
+        ) -> (Handle, JoinHandle<io::Result<()>>, String) {
             let writer = Writer::start(
                 self.path(),
                 RecordingMode::Replay,
@@ -452,8 +575,14 @@ mod tests {
             )
             .unwrap();
             let id = writer.run_id.clone();
-            let active = launch(vec![receiver], FilterConfig::new(), writer, None);
-            let (handle, task) = spawn_with_active(self.path(), Some(active));
+            let active = launch_with_hooks(
+                vec![receiver],
+                FilterConfig::new(),
+                writer,
+                None,
+                hooks.clone(),
+            );
+            let (handle, task) = spawn_with_hooks(self.path(), Some(active), hooks);
             (handle, task, id)
         }
     }
@@ -465,6 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn rayhunter_raw_and_cells_survive_pause_resume_finish_and_history() {
+        crate::test_support::manual_time(async {
         use std::os::unix::fs::PermissionsExt;
         let fixture = Fixture::new();
         let helper = fixture.0.join("decoder");
@@ -481,9 +611,10 @@ mod tests {
         ]);
         // JSON is quoted as a JSON string literal: no shell is involved.
         let input = serde_json::to_string(&records.to_string()).unwrap();
-        std::fs::write(&helper,format!("#!/usr/bin/env python3\nimport json,time\nfor r in json.loads({input}): print(json.dumps(r),flush=True)\nwhile True:\n print(json.dumps({{'ipc_version':1,'kind':'status'}}),flush=True)\n time.sleep(.1)\n")).unwrap();
+        std::fs::write(&helper,format!("#!/usr/bin/env python3\nimport json,signal\nfor r in json.loads({input}): print(json.dumps(r),flush=True)\nsignal.pause()\n")).unwrap();
         std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let (handle, actor) = spawn(fixture.path());
+        let (records_tx,mut records_rx)=mpsc::unbounded_channel();
+        let (handle, actor) = spawn_with_hooks(fixture.path(),None,TestHooks{records:Some(records_tx),..Default::default()});
         let config = json!({"version":1,"receivers":[{"id":"orbic","source":{"kind":"rayhunter","endpoint":"ws://127.0.0.1:9/raw-diag","decoder":helper}}]});
         let start = handle
             .request(Action::Start {
@@ -494,28 +625,18 @@ mod tests {
             .unwrap();
         let id = start["run_id"].as_str().unwrap().to_owned();
         for expected in [1, 2] {
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    let records = storage::Reader::open(&fixture.path())
-                        .unwrap()
-                        .records(&id, 0, 500)
-                        .unwrap()
-                        .records;
-                    if records
-                        .iter()
-                        .filter(|r| r.kind == "cellular_observation")
-                        .count()
-                        >= expected
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            loop {
+                let record=records_rx.recv().await.expect("capture output ended before cell");
+                if record["type"]=="cellular_observation" {
+                    assert_eq!(record["connection_generation"],expected);
+                    break;
                 }
-            })
-            .await
-            .unwrap();
+            }
             if expected == 1 {
                 handle.request(Action::Pause(id.clone())).await.unwrap();
+                // Transition ACK is the actual durable commit barrier after
+                // the observed enqueue; inspect saved history only now.
+                assert_eq!(storage::Reader::open(&fixture.path()).unwrap().records(&id,0,500).unwrap().records.iter().filter(|r|r.kind=="cellular_observation").count(),1);
                 handle.request(Action::Resume(id.clone())).await.unwrap();
             }
         }
@@ -569,10 +690,12 @@ mod tests {
             );
             assert_eq!(before.payload["frame_complete"], true);
         }
+        }).await;
     }
 
     #[tokio::test]
     async fn marauder_replay_reaches_durable_records_with_boot_clock_and_unknown_radio_fields() {
+        crate::test_support::manual_time(async {
         for format in ["pcap", "serial"] {
             let fixture = Fixture::new();
             let path = fixture.0.join("marauder.capture");
@@ -596,17 +719,9 @@ mod tests {
                 .await
                 .unwrap();
             let id = started["run_id"].as_str().unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    let status = handle.request(Action::Status).await.unwrap();
-                    if status["active"] == false {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .unwrap();
+            let completed=handle.request(Action::AwaitCompletion).await.unwrap();
+            assert_eq!(completed["active"],false);
+            assert_eq!(completed["last"]["state"],"finished");
             handle.request(Action::Shutdown).await.unwrap();
             actor.await.unwrap().unwrap();
             let reader = storage::Reader::open(&fixture.path()).unwrap();
@@ -643,18 +758,26 @@ mod tests {
             assert!(packets[1].payload["mac"].is_null());
             assert!(packets[1].payload["detection"].is_null());
         }
+        }).await;
     }
 
     #[tokio::test]
     async fn configured_gpsd_fix_is_retained_with_live_observations_and_shutdown_closes_it() {
+        crate::test_support::manual_time(async {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = listener.local_addr().unwrap().to_string();
+        let fixed:chrono::DateTime<chrono::Utc>="2026-01-01T00:00:00Z".parse().unwrap();
+        let source=crate::gpsd::Source::new(Some("fixture-gps".into()));
+        crate::gpsd::tests::set_clock(&source,fixed,std::time::Instant::now());
+        let updates=Arc::new(tokio::sync::Notify::new());
+        crate::gpsd::tests::observe(&source,updates.clone());
+        let (records_tx,mut records_rx)=mpsc::unbounded_channel();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let version =
                 json!({"class":"VERSION","release":"fixture","proto_major":16,"proto_minor":1});
-            let fix = json!({"class":"TPV","device":"fixture-gps","mode":3,"time":chrono::Utc::now().to_rfc3339(),"lat":10.,"lon":20.,"altMSL":15.,"eph":2.});
+            let fix = json!({"class":"TPV","device":"fixture-gps","mode":3,"time":fixed.to_rfc3339(),"lat":10.,"lon":20.,"altMSL":15.,"eph":2.});
             socket
                 .write_all(format!("{version}\n{fix}\n").as_bytes())
                 .await
@@ -663,14 +786,12 @@ mod tests {
             socket.read_to_end(&mut commands).await.unwrap();
             assert_eq!(commands, b"?WATCH={\"enable\":true,\"json\":true};\n");
         });
-        let receiver = session_runtime::ReceiverTask::fixture(|tx, control| async move {
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                while control.external_location_evidence().is_none() {
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .map_err(io::Error::other)?;
+        let receiver = session_runtime::ReceiverTask::fixture(move |tx, control| async move {
+            loop {
+                let changed=updates.notified();
+                if control.external_location_evidence().is_some() {break;}
+                changed.await;
+            }
             tx.send(crate::observation::ScanEvent::WiFi(
                 airhound::scanner::WiFiEvent {
                     mac: [0x34; 6],
@@ -703,7 +824,7 @@ mod tests {
         )
         .unwrap();
         let id = writer.run_id.clone();
-        let active = launch(
+        let active = launch_with_hooks(
             vec![receiver],
             FilterConfig::new(),
             writer,
@@ -712,25 +833,14 @@ mod tests {
                 device: Some("fixture-gps".into()),
                 managed_executable: None,
             }),
+            TestHooks {records:Some(records_tx),gps_source:Some(source),..Default::default()},
         );
         let (handle, actor) = spawn_with_active(fixture.path(), Some(active));
         let reader = storage::Reader::open(&fixture.path()).unwrap();
-        let observation = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let Some(record) = reader
-                    .records(&id, 0, 100)
-                    .unwrap()
-                    .records
-                    .into_iter()
-                    .find(|record| record.kind == "wifi_observation")
-                {
-                    break record.payload;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        let observation=loop {
+            let record=records_rx.recv().await.expect("capture ended before WiFi output");
+            if record["type"]=="wifi_observation" {break record;}
+        };
         assert_eq!(observation["receiver_location"]["latitude"], 10.);
         assert_eq!(observation["receiver_location"]["device"], "fixture-gps");
         assert_eq!(
@@ -748,113 +858,122 @@ mod tests {
             "finished"
         );
         assert_eq!(reader.runs(1).unwrap()[0].state, "finished");
+        let saved=reader.records(&id,0,100).unwrap().records.into_iter().find(|r|r.kind=="wifi_observation").unwrap();
+        assert_eq!(saved.payload,observation,"Finish is the durable output barrier");
         handle.request(Action::Shutdown).await.unwrap();
         actor.await.unwrap().unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(2), server)
-            .await
-            .unwrap()
-            .unwrap();
+        server.await.unwrap();
+        }).await;
     }
 
     #[tokio::test]
     async fn cancelled_pause_request_still_commits_and_resume_and_finish_drain() {
-        let f = Fixture::new();
-        let cleaned = Arc::new(AtomicBool::new(false));
-        let cleanup = cleaned.clone();
-        let (state_tx, mut state_rx) = mpsc::unbounded_channel();
-        let receiver = session_runtime::ReceiverTask::fixture(move |tx, control| async move {
-            let mut state = control.subscribe();
-            loop {
-                let current = *state.borrow_and_update();
-                if current.shutdown {
-                    break;
+        crate::test_support::manual_time(async {
+            let f = Fixture::new();
+            let cleaned = Arc::new(AtomicBool::new(false));
+            let cleanup = cleaned.clone();
+            let (state_tx, mut state_rx) = mpsc::unbounded_channel();
+            let receiver = session_runtime::ReceiverTask::fixture(move |tx, control| async move {
+                let mut state = control.subscribe();
+                loop {
+                    let current = *state.borrow_and_update();
+                    if current.shutdown {
+                        break;
+                    }
+                    if current.enabled {
+                        tx.send(crate::observation::ScanEvent::BleSourceStatus(
+                            json!({"type":"fixture_observation","address":null}),
+                        ))
+                        .await
+                        .map_err(io::Error::other)?;
+                    }
+                    state_tx.send(current.enabled).unwrap();
+                    state.changed().await.map_err(io::Error::other)?;
                 }
-                if current.enabled {
-                    tx.send(crate::observation::ScanEvent::BleSourceStatus(
-                        json!({"type":"fixture_observation","address":null}),
-                    ))
-                    .await
-                    .map_err(io::Error::other)?;
-                }
-                state_tx.send(current.enabled).unwrap();
-                state.changed().await.map_err(io::Error::other)?;
-            }
-            cleanup.store(true, Ordering::Relaxed);
-            Ok(())
-        });
-        let (handle, actor, id) = f.actor(receiver);
-        assert_eq!(state_rx.recv().await, Some(true));
-        let (reply, cancelled) = oneshot::channel();
-        handle
-            .0
-            .send(Request {
-                action: Action::Pause(id.clone()),
-                reply,
-            })
-            .await
-            .unwrap();
-        drop(cancelled);
-        let status = handle.request(Action::Status).await.unwrap();
-        assert_eq!(status["state"], "paused");
-        assert_eq!(state_rx.recv().await, Some(false));
-        let reader = storage::Reader::open(&f.path()).unwrap();
-        assert_eq!(reader.runs(1).unwrap()[0].state, "paused");
-        assert_eq!(
-            handle.request(Action::Pause(id.clone())).await.unwrap()["state"],
-            "paused"
-        );
-        assert_eq!(
-            handle.request(Action::Resume(id.clone())).await.unwrap()["state"],
-            "recording"
-        );
-        assert_eq!(state_rx.recv().await, Some(true));
-        assert!(handle
-            .request(Action::Finish("wrong-run".into()))
-            .await
-            .is_err());
-        let finish = handle.request(Action::Finish(id.clone())).await.unwrap();
-        assert_eq!(finish["state"], "finished");
-        assert!(cleaned.load(Ordering::Relaxed));
-        assert_eq!(reader.runs(1).unwrap()[0].state, "finished");
-        assert_eq!(
-            reader
-                .records(&id, 0, 100)
-                .unwrap()
-                .records
-                .iter()
-                .filter(|r| r.kind == "fixture_observation")
-                .count(),
-            2
-        );
-        handle.request(Action::Shutdown).await.unwrap();
-        actor.await.unwrap().unwrap();
+                cleanup.store(true, Ordering::Relaxed);
+                Ok(())
+            });
+            let (handle, actor, id) = f.actor(receiver);
+            assert_eq!(state_rx.recv().await, Some(true));
+            let (reply, cancelled) = oneshot::channel();
+            handle
+                .0
+                .send(Request {
+                    action: Action::Pause(id.clone()),
+                    reply,
+                })
+                .await
+                .unwrap();
+            drop(cancelled);
+            let status = handle.request(Action::Status).await.unwrap();
+            assert_eq!(status["state"], "paused");
+            assert_eq!(state_rx.recv().await, Some(false));
+            let reader = storage::Reader::open(&f.path()).unwrap();
+            assert_eq!(reader.runs(1).unwrap()[0].state, "paused");
+            assert_eq!(
+                handle.request(Action::Pause(id.clone())).await.unwrap()["state"],
+                "paused"
+            );
+            assert_eq!(
+                handle.request(Action::Resume(id.clone())).await.unwrap()["state"],
+                "recording"
+            );
+            assert_eq!(state_rx.recv().await, Some(true));
+            assert!(handle
+                .request(Action::Finish("wrong-run".into()))
+                .await
+                .is_err());
+            let finish = handle.request(Action::Finish(id.clone())).await.unwrap();
+            assert_eq!(finish["state"], "finished");
+            assert!(cleaned.load(Ordering::Relaxed));
+            assert_eq!(reader.runs(1).unwrap()[0].state, "finished");
+            assert_eq!(
+                reader
+                    .records(&id, 0, 100)
+                    .unwrap()
+                    .records
+                    .iter()
+                    .filter(|r| r.kind == "fixture_observation")
+                    .count(),
+                2
+            );
+            handle.request(Action::Shutdown).await.unwrap();
+            actor.await.unwrap().unwrap();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn receiver_failure_is_durable_and_service_shutdown_reports_failure() {
-        let f = Fixture::new();
-        let receiver = session_runtime::ReceiverTask::fixture(|_tx, _control| async {
-            Err(io::Error::other("fixture receiver disconnected"))
-        });
-        let (handle, actor, id) = f.actor(receiver);
-        let finished = handle.request(Action::Finish(id)).await.unwrap();
-        assert_eq!(finished["state"], "failed");
-        assert_eq!(
-            storage::Reader::open(&f.path()).unwrap().runs(1).unwrap()[0].state,
-            "failed"
-        );
-        handle.request(Action::Shutdown).await.unwrap();
-        assert!(actor.await.unwrap().is_err());
+        crate::test_support::manual_time(async {
+            let f = Fixture::new();
+            let receiver = session_runtime::ReceiverTask::fixture(|_tx, _control| async {
+                Err(io::Error::other("fixture receiver disconnected"))
+            });
+            let (handle, actor, id) = f.actor(receiver);
+            let finished = handle.request(Action::Finish(id)).await.unwrap();
+            assert_eq!(finished["state"], "failed");
+            assert_eq!(
+                storage::Reader::open(&f.path()).unwrap().runs(1).unwrap()[0].state,
+                "failed"
+            );
+            handle.request(Action::Shutdown).await.unwrap();
+            assert!(actor.await.unwrap().is_err());
+        })
+        .await;
     }
     #[tokio::test]
     async fn terminal_storage_failure_retries_in_background_and_blocks_new_start() {
+        crate::test_support::manual_time(async {
         let f = Fixture::new();
         let (release, wait) = oneshot::channel::<()>();
         let receiver = session_runtime::ReceiverTask::fixture(move |_tx, _control| async move {
             wait.await.map_err(io::Error::other)?;
             Err(io::Error::other("fixture receiver ended"))
         });
-        let (handle, actor, id) = f.actor(receiver);
+        let (maintenance,mut ticks)=crate::test_support::TimerWitness::channel();
+        let (recovered,mut recoveries)=mpsc::unbounded_channel();
+        let (handle, actor, id) = f.actor_with_hooks(receiver,TestHooks{maintenance:Some(maintenance),recovered:Some(recovered),..Default::default()});
         // A deterministic terminal-write failure, without disk filling or a
         // long-lived read transaction that could grow the writer's WAL.
         {
@@ -883,37 +1002,20 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("storage recovery is pending"));
         // Status exposes the pending condition; the independent timer owns writes.
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let status = handle.request(Action::Status).await.unwrap();
-                assert_eq!(status["last"]["state"], "failed");
-                if status["storage_recovery"]["error"].is_string() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .unwrap();
+        crate::test_support::advance_registered_timer(&mut ticks).await;
+        let recovery=recoveries.recv().await.unwrap();
+        assert!(recovery["error"].is_string());
+        let status=handle.request(Action::Status).await.unwrap();
+        assert_eq!(status["last"]["state"],"failed");
         {
             let connection = rusqlite::Connection::open(f.path()).unwrap();
             connection
                 .execute_batch("DROP TRIGGER refuse_terminal;")
                 .unwrap();
         }
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                // Poll only a short-lived read-only SQLite query. No actor
-                // Status/Finish request may drive this terminal repair.
-                let saved = storage::Reader::open(&f.path()).unwrap().runs(1).unwrap();
-                if saved[0].state == "failed" {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .unwrap();
+        crate::test_support::advance_registered_timer(&mut ticks).await;
+        let recovery=recoveries.recv().await.unwrap();
+        assert_eq!(recovery["pending"],false);
         let saved = storage::Reader::open(&f.path())
             .unwrap()
             .runs(1)
@@ -964,5 +1066,6 @@ mod tests {
         );
         handle.request(Action::Shutdown).await.unwrap();
         actor.await.unwrap().unwrap();
+        }).await;
     }
 }

@@ -69,6 +69,10 @@ impl ScanControl {
     pub fn set_location_source(&self, source: crate::gpsd::Source) {
         *self.3.lock().unwrap_or_else(|e| e.into_inner()) = Some(source);
     }
+    #[cfg(test)]
+    pub(crate) fn fixture_location_source(&self) -> Option<crate::gpsd::Source> {
+        self.3.lock().unwrap().clone()
+    }
     /// Outer Some means an explicit external provider; no silent fallback.
     pub fn external_location(&self) -> Option<Option<crate::wigle::Location>> {
         self.3
