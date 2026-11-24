@@ -51,19 +51,19 @@ fn poll_event(fd: i32, deadline: Instant) -> io::Result<()> {
     }
 }
 
-struct Watched {
-    identity: (u64, u64),
+pub(crate) struct Watched {
+    pub(crate) identity: (u64, u64),
     #[cfg(target_os = "macos")]
     file: File,
     #[cfg(target_os = "linux")]
-    descriptor: i32,
+    pub(crate) descriptor: i32,
 }
 /// Watches exact paths plus their parents. Re-registers replaced files before
 /// checking the predicate, including when a parent event precedes old-file removal.
 pub struct FileEvents {
     fd: OwnedFd,
     paths: Vec<PathBuf>,
-    watched: BTreeMap<PathBuf, Watched>,
+    pub(crate) watched: BTreeMap<PathBuf, Watched>,
 }
 impl FileEvents {
     pub fn new(paths: &[&Path]) -> io::Result<Self> {
@@ -98,7 +98,13 @@ impl FileEvents {
         this.refresh()?;
         Ok(this)
     }
-    fn refresh(&mut self) -> io::Result<()> {
+    pub(crate) fn refresh(&mut self) -> io::Result<()> {
+        self.refresh_with(|_| Ok(()))
+    }
+    pub(crate) fn refresh_with(
+        &mut self,
+        mut before_registration: impl FnMut(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
         for path in self.paths.clone() {
             let metadata = match std::fs::metadata(&path) {
                 Ok(value) => value,
@@ -117,6 +123,7 @@ impl FileEvents {
                 continue;
             }
             self.remove(&path);
+            before_registration(&path)?;
             #[cfg(target_os = "macos")]
             {
                 use std::os::unix::fs::OpenOptionsExt;
@@ -200,7 +207,7 @@ impl FileEvents {
         }
         Ok(())
     }
-    fn remove(&mut self, path: &Path) {
+    pub(crate) fn remove(&mut self, path: &Path) {
         if let Some(old) = self.watched.remove(path) {
             #[cfg(target_os = "linux")]
             // SAFETY: descriptor belongs to this inotify instance; already-removed
@@ -211,6 +218,14 @@ impl FileEvents {
             #[cfg(target_os = "macos")]
             drop(old.file); // Closing unregisters the old vnode automatically.
         }
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn ignored_descriptor(&mut self, descriptor: i32) {
+        // IN_IGNORED may refer to an old registration whose numeric descriptor
+        // was reused. Invalidate metadata only: never remove a possibly new
+        // kernel watch. refresh re-adds the exact path before the predicate.
+        self.watched
+            .retain(|_, watched| watched.descriptor != descriptor);
     }
     pub fn until<T>(
         &mut self,
@@ -281,8 +296,7 @@ impl FileEvents {
                         if event.mask & libc::IN_IGNORED != 0 {
                             // An automatically removed watch must be rearmed even
                             // if the filesystem subsequently reuses its inode.
-                            self.watched
-                                .retain(|_, watched| watched.descriptor != event.wd);
+                            self.ignored_descriptor(event.wd);
                         }
                         offset = end;
                     }

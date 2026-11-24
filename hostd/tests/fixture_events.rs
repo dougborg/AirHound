@@ -167,3 +167,53 @@ fn readiness_requires_complete_marker_and_reaps_early_exit_or_oversized_log() {
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn inotify_stat_add_race_and_reused_ignored_descriptor_rearm_without_removing_new_watch() {
+    use std::os::unix::fs::MetadataExt;
+    let root = Root::new();
+    let path = root.0.join("database");
+    let staged = root.0.join("replacement");
+    std::fs::write(&path, b"old").unwrap();
+    std::fs::write(&staged, b"new").unwrap();
+    let mut events = support::FileEvents::new(&[&path]).unwrap();
+    let old = events.watched[&path].identity;
+    events.remove(&path);
+    // Replace after stat but before inotify_add_watch, with no scheduler race.
+    events
+        .refresh_with(|candidate| {
+            if candidate == path.as_path() {
+                std::fs::rename(&staged, &path)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(events.watched[&path].identity, old);
+    let metadata = std::fs::metadata(&path).unwrap();
+    let current = (metadata.dev(), metadata.ino());
+    assert_ne!(current, old);
+    events.refresh().unwrap();
+    assert_eq!(events.watched[&path].identity, current);
+    let current_descriptor = events.watched[&path].descriptor;
+    // Model the worst case: a delayed IN_IGNORED has the same number as a new
+    // live watch. Metadata invalidation must not remove that kernel watch.
+    events.ignored_descriptor(current_descriptor);
+    assert!(!events.watched.contains_key(&path));
+    events.refresh().unwrap();
+    assert_eq!(events.watched[&path].descriptor, current_descriptor);
+    assert_eq!(events.watched[&path].identity, current);
+    let mut wrote = false;
+    events
+        .until(|| {
+            if !wrote {
+                wrote = true;
+                std::fs::write(&path, b"complete")?;
+                Ok(None)
+            } else {
+                Ok((std::fs::read(&path)? == b"complete").then_some(()))
+            }
+        })
+        .unwrap();
+}
