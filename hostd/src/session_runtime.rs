@@ -315,7 +315,7 @@ pub(crate) async fn run_controlled<W, O, C, CF, S>(
     receivers: Vec<ReceiverTask>,
     state: (FilterConfig, ScanControl),
     writer: WigleWriter<W>,
-    mut output: O,
+    output: O,
     gps: Option<gpsd::Options>,
     commands: C,
     shutdown: S,
@@ -327,6 +327,39 @@ where
     CF: Future<Output = ()> + Send + 'static,
     S: Future<Output = io::Result<()>>,
 {
+    run_controlled_with_shutdown_timer(
+        receivers,
+        state,
+        writer,
+        output,
+        gps,
+        commands,
+        (shutdown, tokio::time::sleep),
+    )
+    .await
+}
+
+// Timer injection leaves receiver orchestration and abort/reap behavior shared.
+// Production uses the same max-receiver shutdown duration as before.
+async fn run_controlled_with_shutdown_timer<W, O, C, CF, S, T, TF>(
+    receivers: Vec<ReceiverTask>,
+    state: (FilterConfig, ScanControl),
+    writer: WigleWriter<W>,
+    mut output: O,
+    gps: Option<gpsd::Options>,
+    commands: C,
+    shutdown_policy: (S, T),
+) -> io::Result<()>
+where
+    W: Write + Send + 'static,
+    O: Write + Send + 'static,
+    C: FnOnce(Arc<Mutex<FilterConfig>>, Instant, ScanControl) -> CF,
+    CF: Future<Output = ()> + Send + 'static,
+    S: Future<Output = io::Result<()>>,
+    T: FnOnce(Duration) -> TF,
+    TF: Future<Output = ()>,
+{
+    let (shutdown, shutdown_timer) = shutdown_policy;
     let (config, control) = state;
     let alert_policy = config.alert_policy;
     let config = Arc::new(Mutex::new(config));
@@ -459,15 +492,24 @@ where
     };
     control.shutdown();
     command_task.abort();
-    let cleanup = tokio::time::timeout(budget, async {
-        while let Some(result) = tasks.join_next_with_id().await {
-            if let Err(error) = task_result(result, &mut owners) {
-                failure.get_or_insert(error);
-            }
+    let expired = {
+        let deadline = shutdown_timer(budget);
+        tokio::pin!(deadline);
+        // Tokio timeout also polls completion before checking expiry. Preserve
+        // that precedence when both the final join and deadline are ready.
+        tokio::select! {
+            biased;
+            _ = async {
+                while let Some(result) = tasks.join_next_with_id().await {
+                    if let Err(error) = task_result(result, &mut owners) {
+                        failure.get_or_insert(error);
+                    }
+                }
+            } => false,
+            _ = &mut deadline => true,
         }
-    })
-    .await;
-    if cleanup.is_err() {
+    };
+    if expired {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         failure.get_or_insert(io::Error::other(

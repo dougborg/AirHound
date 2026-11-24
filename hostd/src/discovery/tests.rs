@@ -110,15 +110,7 @@ fn unknown_usb_hidden_by_default_serial_candidates_retained_and_endpoints_dedupl
 }
 #[test]
 fn prerequisite_files_never_become_verified_firmware() {
-    let dir = std::env::temp_dir().join(format!(
-        "airhound-discovery-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir(&dir).unwrap();
+    let dir = crate::test_directory::create("airhound-discovery").unwrap();
     let file = dir.join("helper");
     std::fs::write(&file, b"not executable or valid firmware").unwrap();
     let options = Options {

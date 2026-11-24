@@ -1097,15 +1097,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn serial_symlink_aliases_cannot_open_the_same_resource_twice() {
-        let dir = std::env::temp_dir().join(format!(
-            "airhound-session-alias-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&dir).unwrap();
+        let dir = crate::test_directory::create("airhound-session-alias").unwrap();
         let port = dir.join("port");
         let alias = dir.join("alias");
         std::fs::write(&port, []).unwrap();

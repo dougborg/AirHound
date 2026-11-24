@@ -29,5 +29,7 @@ pub mod rayhunter;
 #[allow(dead_code)]
 mod owned_child;
 #[cfg(test)]
+mod test_directory;
+#[cfg(test)]
 #[allow(dead_code)]
 mod test_support;
