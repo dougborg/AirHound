@@ -123,6 +123,8 @@ embedded-graphics = { version = "~0.8.1", optional = true }
 embedded-hal-bus = { version = "~0.3.0", optional = true }
 
 [dev-dependencies]
+# Test the exact M5 renderer on a host DrawTarget; no runtime dependency change.
+embedded-graphics = "~0.8.1"
 # Exercise the same encoded controller command on a host without ESP dependencies.
 bt-hci = "~0.8.0"
 # Exercise the real cooperative health publisher and bounded channel on host.
