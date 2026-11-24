@@ -5,10 +5,17 @@ The preview is under acceptance, not a signed-off production release.
 
 ## Current scope
 
-The installed backend is `d8ad552` with the reviewed storage-full recovery
-correction; the running Counter Preview GUI remains `946d3c0`. Existing recordings
-and setups were preserved during the authorized recovery rollout. Two subsequent
-native Wi-Fi/BLE recordings used the same unchanged plan through actual GUI
+The installed canonical preview now pairs backend `041c215` with GUI `b7a7c7a`,
+including the reviewed storage recovery, experimental cellular source and stable
+live-selection changes. The rollout preserved recordings and settings, retained
+rollback copies, and launched one GUI with an idle backend without starting capture.
+The user subsequently confirmed connection and opening a saved recording.
+Actual live-selection behavior and native/cellular recording controls on this
+build remain pending.
+
+The earlier `d8ad552` backend / `946d3c0` GUI recovery rollout also preserved
+recordings and setups. Two subsequent native Wi-Fi/BLE recordings on that pair
+used the same unchanged plan through actual GUI
 controls: user validation/first Start, accessibility-driven Pause/Resume and second
 Start, and user-confirmed Finish actions. Both recordings finished; live second-run
 rows were inspected and the user confirmed the saved second-run rows were visible
@@ -17,8 +24,13 @@ and responsive. Independent audit verified prior data and setups remained intact
 This is functional native-only evidence. Both runs exceeded prepared duration
 targets; an automated Finish-confirmation attempt failed before the user completed
 it. First saved-view visual proof and full-rig controls remain separate gaps.
-The staged `8ba1e90` live-selection improvement is not installed or accepted in the
-actual window; unsuccessful window-acquisition preparation did not alter the app.
+The live-selection improvement originating at `8ba1e90` is merged in
+[#326](https://github.com/dougborg/AirHound/pull/326), but merge is not installation
+or actual-window acceptance. The matched preview passed isolated packaged startup
+and regression checks before the completed installation. Earlier unsuccessful
+window-acquisition preparation did not alter the app. Storage and
+cellular source publication is tracked in [#327](https://github.com/dougborg/AirHound/pull/327)
+and [#328](https://github.com/dougborg/AirHound/pull/328), both unmerged at this checkpoint.
 
 The M5 now runs `3597e59` / `0.2.0`. Its ten-minute observer retained both media,
 full periodic health and zero sampled scan/output/timeouts, but the original
@@ -29,11 +41,16 @@ leak-free operation or endurance guarantee follows. The prior `5c3d9eb` first te
 complete periodic health and zero sampled loss/timeouts, but failed the sampled
 memory-recovery criterion. A separate no-reset continuation recovered repeatedly
 to the later memory plateau, yet retained 16 scan drops and a 23,006µs writer poll gap;
-it also remains failed. Same-boot host lifecycle, complete-rig reception and
-physical recovery remain pending. Earlier BLE, zero-input, controller-panic and
+it also remains failed. Subsequent same-boot M5 backend lifecycle passed under the
+reviewed bounded experimental contract. A six-receiver backend-controlled run
+also completed Pause/Resume/Finish with attributed reception; separate offline
+revalidation passed after correcting a runtime-session/storage-UUID comparison
+in its saved-data validator. The original failed receipt is preserved. These are
+not full-rig GUI, physical USB recovery or endurance acceptance. Earlier BLE,
+zero-input, controller-panic and
 output-loss failures are retained in the
 [attached-hardware ledger](../../docs/attached-hardware-validation.md), which owns
-the support matrix. Earlier successful lifecycle evidence belongs to firmware `0.1.1`.
+the support matrix. Earlier successful lifecycle evidence remains scoped to firmware `0.1.1`.
 
 Backend-controlled CatSniffer/ALFA/Flipper reception with managed GPS and an earlier
 assembled M5 session retain their exact source/firmware scope. They do not establish
@@ -52,7 +69,11 @@ fresh host-ingress receiver locations and 328 raw frames; all 948 records matche
 saved history. Its 216 complete-identity observations across 39 radio pairs are not
 tower counts. Pause/Resume/Finish and cleanup passed. This does not establish
 RF-time synchronization, transmitter location, upload eligibility, installed-GUI
-or endurance acceptance. The earlier offline sample remains separately unlocated. Experimental work in
+or endurance acceptance. Subsequent private backend-owned ADB/GNSS acceptance
+and an owned-decoder termination/recovery check also passed with explicit gaps,
+retained raw provenance, live/saved history equality and cleanup. These remain
+backend/helper checks, not physical USB recovery or actual cellular GUI acceptance.
+The earlier offline sample remains separately unlocated. Experimental work in
 [#293](https://github.com/dougborg/AirHound/issues/293) is not a prerequisite for
 the supported rig. The historical ALFA failure below is not its latest overall status.
 
