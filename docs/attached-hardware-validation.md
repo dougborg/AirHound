@@ -16,15 +16,14 @@ separate evidence.
 
 | Receiver | Verified individual scope | Remaining qualification |
 | --- | --- | --- |
-| CatSniffer | 1,587 BLE packet observations, retained raw PDU and available receive metadata; final stopped status and zero reported host drops | RF loss unknown; firmware capabilities were not freshly queried; no coded/extended reception claim |
+| CatSniffer | Reported Sniffle 1.11.0/API 0 identity; 1,587 BLE packet observations, retained raw PDU and available receive metadata; final stopped status and zero reported host drops | RF loss unknown; coded/extended capabilities and reception remain unvalidated |
 | ALFA | 1,378 WiFi observations with available identity/channel metadata; final stopped status, zero reported host/producer drops and no reconnects | Measured RSSI, RX PHY and raw frame/IE enrichment remain unavailable; subsequent combined lifecycle failed |
 | Flipper/AWOK | 949 WiFi packet observations with retained frame bytes and attributed bridge identity; final producer stop acknowledgement and zero reported host/UART/RPC errors or drops | Stop acknowledgement does not prove RF silence; physical USB recovery remains untested |
 | Experimental Orbic + GNSS | A 120-second, single-generation Start/Finish retained 577 LTE observations, 331 complete-identity observations and 513 hash-verified reconstructed raw frames; all cells had qualified receiver-location snapshots, maximum age 1,040 ms | Complete-identity observations are not unique cell or tower counts; this individual check did not exercise Pause/Resume |
 
-The original CatSniffer and ALFA controller receipts remain failed because their
-predicates expected incorrect record-kind names. Separate saved-evidence reviews
-verified the scopes above without recapture or rewriting those receipts. Orbic
-Finish released its owned forward, decoder and GNSS resources.
+Separate offline reviews qualified the CatSniffer and ALFA reception evidence
+while preserving their original failed receipts. Orbic Finish released its owned
+forward, decoder and GNSS resources.
 
 A subsequent combined CatSniffer/ALFA/Flipper/Orbic session retained 10,820 records.
 Every source had positive reception and qualified receiver-location associations
