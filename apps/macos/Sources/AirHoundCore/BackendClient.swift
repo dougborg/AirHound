@@ -5,14 +5,24 @@ import Foundation
 public struct BackendClient {
   public let executable: URL
   public let socket: URL
+  private let process: DiscoveryProcess
 
   public init(executable: URL, socket: URL) {
     self.executable = executable
     self.socket = socket
+    process = DiscoveryProcess()
+  }
+
+  // Synthetic command fixtures can freeze the collector clock while retaining
+  // the real executable, arguments, IO and owned-process cleanup.
+  init(executable: URL, socket: URL, process: DiscoveryProcess) {
+    self.executable = executable
+    self.socket = socket
+    self.process = process
   }
 
   public func request(_ command: [String]) async throws -> Data {
-    try await DiscoveryProcess().run(
+    try await process.run(
       executable: executable,
       arguments: ["client", "--socket", socket.path] + command,
       timeout: 25, outputLimit: 2 * 1024 * 1024)
@@ -26,7 +36,7 @@ public struct BackendClient {
       throw DiscoveryError.timedOut
     }
     let milliseconds = UInt64((remaining * 1000).rounded(.down))
-    let response = try await DiscoveryProcess().runUntil(
+    let response = try await process.runUntil(
       executable: executable,
       arguments: [
         "client", "--socket", socket.path, "wait-ready", "--timeout-ms", String(milliseconds),

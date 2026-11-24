@@ -63,9 +63,16 @@ final class SessionModel: ObservableObject {
 
   private let preferences: UserDefaults
   private let readiness: ServiceReadiness
-  init(preferences: UserDefaults = .standard, readiness: ServiceReadiness? = nil) {
+  private let clientFactory: (URL, URL) -> BackendClient
+  init(
+    preferences: UserDefaults = .standard, readiness: ServiceReadiness? = nil,
+    clientFactory: @escaping (URL, URL) -> BackendClient = {
+      BackendClient(executable: $0, socket: $1)
+    }
+  ) {
     self.preferences = preferences
     self.readiness = readiness ?? ServiceReadiness()
+    self.clientFactory = clientFactory
     if let path = preferences.string(forKey: "serviceSocket") { socketPath = path }
   }
 
@@ -101,7 +108,7 @@ final class SessionModel: ObservableObject {
     connected = false
     pollTask?.cancel()
     preferences.set(socketPath, forKey: "serviceSocket")
-    client = BackendClient(executable: executable, socket: URL(fileURLWithPath: socketPath))
+    client = clientFactory(executable, URL(fileURLWithPath: socketPath))
     perform {
       guard let client = self.client else { return }
       let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))
@@ -205,7 +212,7 @@ final class SessionModel: ObservableObject {
             running = { process.isRunning }
           }
           try await readiness.wait(
-            client: BackendClient(executable: executable, socket: socket),
+            client: clientFactory(executable, socket),
             deadline: deadline, running: running)
           guard connectionEpoch == startupEpoch else { throw CancellationError() }
           startupTask = nil

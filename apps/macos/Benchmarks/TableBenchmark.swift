@@ -19,7 +19,7 @@ private struct HostedTable: View {
 }
 
 @main struct TableBenchmark {
-  @MainActor static func main() throws {
+  @MainActor static func main() async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let lines = (0..<1000).map {
       "{\"type\":\"ble_observation\",\"name\":\"Sensor \($0)\",\"rssi\":-42,\"channel\":37}"
@@ -28,12 +28,15 @@ private struct HostedTable: View {
     let native = ObservationTableCoordinator()
     let nativeView = native.makeScrollView()
     native.update(rows: rows, revision: UUID(), selection: nil, sortOrder: [ObservationSort()])
-    let hosted = NSHostingView(rootView: HostedTable(rows: rows))
-    try run("swiftui", view: hosted)
-    try run("appkit", view: nativeView)
+    let ready = RenderReady()
+    let hosted = NSHostingView(rootView: HostedTable(rows: rows).onAppear { ready.signal() })
+    try await run("swiftui", view: hosted, ready: ready)
+    try await run("appkit", view: nativeView)
   }
 
-  @MainActor private static func run(_ name: String, view: NSView) throws {
+  @MainActor private static func run(_ name: String, view: NSView, ready: RenderReady? = nil)
+    async throws
+  {
     let window = NSWindow(
       contentRect: NSRect(x: -3000, y: -3000, width: 1000, height: 600),
       styleMask: [.borderless], backing: .buffered, defer: false)
@@ -41,13 +44,21 @@ private struct HostedTable: View {
     window.contentView = view
     window.orderBack(nil)
     defer { window.close() }
-    for _ in 0..<10 {
-      window.contentView?.layoutSubtreeIfNeeded()
-      RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-    }
+    window.contentView?.layoutSubtreeIfNeeded()
+    if let ready { try await ready.wait() }
+    window.contentView?.layoutSubtreeIfNeeded()
+    window.contentView?.displayIfNeeded()
     guard let scroll = findScroll(view) else { throw NSError(domain: "No scroll view", code: 1) }
+    measure(name, view: view, window: window, scroll: scroll)
+  }
+
+  @MainActor private static func measure(
+    _ name: String, view: NSView, window: NSWindow, scroll: NSScrollView
+  ) {
     let start = ContinuousClock.now
     for index in 0..<300 {
+      // Measured workload includes the explicit 1 ms run-loop service below;
+      // it is not a correctness gate or a pure renderer-throughput measurement.
       // Exercise recycled rows in both directions, including layout and display.
       let step = index < 150 ? index : 299 - index
       scroll.contentView.scroll(to: NSPoint(x: 0, y: step * 80))
@@ -65,5 +76,39 @@ private struct HostedTable: View {
   }
   @MainActor private static func viewCount(_ view: NSView) -> Int {
     1 + view.subviews.reduce(0) { $0 + viewCount($1) }
+  }
+}
+
+/// Actual SwiftUI mounting is the prerequisite. The wall-clock timer only
+/// terminates a hung benchmark and never supplies a successful readiness result.
+@MainActor
+private final class RenderReady {
+  private var appeared = false
+  private var pending: CheckedContinuation<Void, Error>?
+  private var watchdog: DispatchWorkItem?
+
+  func signal() {
+    appeared = true
+    finish(.success(()))
+  }
+
+  func wait() async throws {
+    if appeared { return }
+    try await withCheckedThrowingContinuation { continuation in
+      pending = continuation
+      let guardWork = DispatchWorkItem {
+        self.finish(.failure(NSError(domain: "Benchmark render readiness", code: 1)))
+      }
+      watchdog = guardWork
+      DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: guardWork)
+    }
+  }
+
+  private func finish(_ result: Result<Void, Error>) {
+    watchdog?.cancel()
+    watchdog = nil
+    let continuation = pending
+    pending = nil
+    continuation?.resume(with: result)
   }
 }

@@ -1,11 +1,17 @@
-import AirHoundCore
 import Darwin
 import XCTest
 
 @testable import AirHoundApp
+@testable import AirHoundCore
 
 @MainActor
 final class GPSVersionTests: XCTestCase {
+  private func fixtureClient(_ executable: URL, _ socket: URL) -> BackendClient {
+    BackendClient(
+      executable: executable, socket: socket,
+      process: DiscoveryProcess(scheduling: ProcessScheduling(now: { 0 })))
+  }
+
   private func inventory(
     identificationProtocol: String? = "ublox", kind: String = "gps",
     port: String = "/dev/cu.test-gps",
@@ -126,7 +132,7 @@ final class GPSVersionTests: XCTestCase {
       to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let socket = root.appendingPathComponent("private.sock")
-    let client = BackendClient(executable: executable, socket: socket)
+    let client = fixtureClient(executable, socket)
     let value = try await client.identifyDevice(config: target.request.data())
     XCTAssertEqual(value, target.request)
     let arguments = try String(
@@ -208,7 +214,7 @@ final class GPSVersionTests: XCTestCase {
       let suite = "GPS-fixture-" + UUID().uuidString
       let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
       defer { defaults.removePersistentDomain(forName: suite) }
-      let session = SessionModel(preferences: defaults)
+      let session = SessionModel(preferences: defaults, clientFactory: fixtureClient)
       session.socketPath = root.appendingPathComponent("private.sock").path
       session.connect(executable: executable)
       defer { session.disconnect() }
@@ -222,8 +228,8 @@ final class GPSVersionTests: XCTestCase {
         "Connection and refresh must never identify automatically")
       session.readGPSVersion(target)
       try await awaitFixtureFile(root.appendingPathComponent("started"))
-      // Release even if a subsequent assertion/setup throws. The normal backend
-      // process deadline remains only an outer guard for a hung fixture.
+      // Release even if a subsequent assertion/setup throws. The collector clock
+      // is frozen; the test runner owns the outer hang guard and descendant cleanup.
       defer { try? releaseResponse() }
       XCTAssertTrue(session.busy, "The response must still be held at the explicit release barrier")
       XCTAssertNil(session.error)
