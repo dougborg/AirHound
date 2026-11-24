@@ -102,4 +102,5 @@ The original migration inventory remains immutable. See the
 [timing policy guide](test-timing-guard.md) for scope, review requirements and
 limitations. Production-delay investigation is separate from this test guard;
 protocol dwell, retry/backoff and periodic work must not be removed merely to
-satisfy a lexical check.
+satisfy a lexical check. See the [production-delay inventory](production-delay-audit.md)
+for current source findings and remaining event-driven follow-ups.
