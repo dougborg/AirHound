@@ -269,7 +269,7 @@ pub fn frame_projection(frame: &[u8]) -> Option<Value> {
     };
     Some(
         json!({"schema_version":1,"source":"raw_80211_management_frame",
-        "information_elements":bounded,"advertised":information_elements(&bounded.bytes,bounded.truncated),
+        "information_elements":{"json_pointer":"/frame_bytes","offset":start,"length":bounded.bytes.len(),"original_length":ies.len(),"truncated":bounded.truncated},"advertised":information_elements(&bounded.bytes,bounded.truncated),
         "privacy_bit":privacy,"bssid":&frame[16..22],"transmitter":&frame[10..16],"receive_phy":null,"receive_frequency_mhz":null}),
     )
 }
