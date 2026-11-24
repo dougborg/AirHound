@@ -23,8 +23,15 @@ wall/modem clocks remain unvalidated. Independent GNSS is receiver location at h
 ingress, not RF capture time; no location is fabricated when unavailable. No WiGLE
 upload or Rayhunter GPS forwarding is part of this slice.
 
+Each helper record snapshots qualified GNSS evidence before queueing, preserving
+the fix time, age, receiver source and uncertainty. An unavailable or stale fix
+is explicitly null. Later filter processing never replaces that snapshot with a
+newer fix, even after queue backpressure.
+
 Pause closes the owned subscription/helper. Resume opens a new bounded connection;
-the possible gap is explicit. Finish closes/reaps only that helper. Modem participation
+an explicit `subscription_pause_resume` discontinuity precedes the resumed
+records, distinct from `transport_disconnect`. Its lost-read count remains unknown
+and it makes no RF-loss claim. Finish closes/reaps only that helper. Modem participation
 and prototype recording continue independently. Transport retries are bounded and
 new connections carry distinct generations even if the upstream epoch is unchanged.
 All queues/records have fixed limits. Raw evidence must precede derived observations;

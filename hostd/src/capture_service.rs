@@ -532,6 +532,24 @@ mod tests {
             .filter(|r| r.kind == "cellular_observation")
             .collect::<Vec<_>>();
         assert_eq!(cells.len(), 2);
+        let gaps = records
+            .iter()
+            .filter(|r| r.kind == "cellular_source_gap")
+            .collect::<Vec<_>>();
+        assert_eq!(gaps.len(), 1);
+        let gap = gaps[0];
+        assert_eq!(gap.payload["reason"], "subscription_pause_resume");
+        assert_eq!(gap.payload["deliberate"], true);
+        assert_eq!(gap.payload["previous_connection_generation"], 1);
+        assert_eq!(gap.payload["connection_generation"], 2);
+        assert!(gap.payload["lost_records"].is_null());
+        assert_eq!(gap.payload["rf_loss"], "unknown");
+        assert!(gap.cursor > cells[0].cursor && gap.cursor < cells[1].cursor);
+        let first_resumed = records
+            .iter()
+            .find(|r| r.payload["connection_generation"] == 2)
+            .unwrap();
+        assert_eq!(first_resumed.cursor, gap.cursor);
         for (i, cell) in cells.iter().enumerate() {
             assert_eq!(cell.payload["session_source"]["receiver_id"], "orbic");
             assert_eq!(cell.payload["observation"]["mnc"], "01");

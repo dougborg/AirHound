@@ -318,7 +318,7 @@ async fn run_external(
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn evidence_identifies_rig_processing_time_and_expires_with_the_fix() {
@@ -345,7 +345,7 @@ mod tests {
         assert!(source.evidence().is_none());
         assert!(source.health()["daemon"].is_null());
     }
-    fn ready() -> Source {
+    pub(crate) fn ready() -> Source {
         let source = Source::new(None);
         feed(
             &source,
@@ -353,7 +353,7 @@ mod tests {
         );
         source
     }
-    fn feed(source: &Source, value: serde_json::Value) {
+    pub(crate) fn feed(source: &Source, value: serde_json::Value) {
         source
             .line(
                 &serde_json::to_vec(&value).unwrap(),
@@ -362,7 +362,7 @@ mod tests {
             )
             .unwrap();
     }
-    fn tpv(time: DateTime<Utc>) -> serde_json::Value {
+    pub(crate) fn tpv(time: DateTime<Utc>) -> serde_json::Value {
         serde_json::json!({"class":"TPV","device":"synthetic","mode":3,
             "time":time.to_rfc3339(),"lat":10.,"lon":20.,"altMSL":15.,"eph":2.})
     }
