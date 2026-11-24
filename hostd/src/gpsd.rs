@@ -592,11 +592,10 @@ pub(crate) mod tests {
             };
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = vec![0; 35];
-                let n = socket.read(&mut request).await.unwrap();
-                assert!(std::str::from_utf8(&request[..n])
-                    .unwrap()
-                    .starts_with("?WATCH="));
+                let expected = b"?WATCH={\"enable\":true,\"json\":true};\n";
+                let mut request = vec![0; expected.len()];
+                socket.read_exact(&mut request).await.unwrap();
+                assert_eq!(request, expected);
                 socket.write_all(&vec![b'x'; MAX_LINE + 1]).await.unwrap();
             });
             assert_eq!(
@@ -608,10 +607,7 @@ pub(crate) mod tests {
             let source = ready();
             let task = tokio::spawn(run(options, source.clone(), control.subscribe()));
             control.shutdown();
-            tokio::time::timeout(Duration::from_secs(1), task)
-                .await
-                .unwrap()
-                .unwrap();
+            task.await.unwrap();
             assert_eq!(source.health()["state"], "stopped");
         })
         .await;
@@ -635,30 +631,22 @@ pub(crate) mod tests {
             let (first, _) = listener.accept().await.unwrap();
             drop(first);
             crate::test_support::advance_registered_timer(&mut retry_rx).await;
-            let (mut second, _) = tokio::time::timeout(Duration::from_secs(4), listener.accept())
-                .await
-                .unwrap()
-                .unwrap();
+            let (mut second, _) = listener.accept().await.unwrap();
             let mut stream = b"{\"class\":\"VERSION\",\"proto_major\":16}\n".to_vec();
             stream.extend(serde_json::to_vec(&tpv(wall())).unwrap());
             stream.push(b'\n');
             second.write_all(&stream).await.unwrap();
-            tokio::time::timeout(Duration::from_secs(1), async {
-                while source.location().is_none() {
-                    updates.notified().await;
-                }
-            })
-            .await
-            .unwrap();
+            // manual_time supplies the real failure watchdog; freshness
+            // and reconnect behavior use only the controlled clocks/events.
+            while source.location().is_none() {
+                updates.notified().await;
+            }
             assert!(control.external_location().is_none());
             control.set_location_source(source.clone());
             assert!(control.external_location().unwrap().is_some());
             assert_eq!(control.health_message()["location"]["source"], "gpsd");
             control.shutdown();
-            tokio::time::timeout(Duration::from_secs(1), task)
-                .await
-                .unwrap()
-                .unwrap();
+            task.await.unwrap();
             assert!(control.external_location().unwrap().is_none());
         })
         .await;
