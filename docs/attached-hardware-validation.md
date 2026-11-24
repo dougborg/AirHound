@@ -34,9 +34,16 @@ its two generations. However, ALFA entered recovery twice and failed before
 Finish; the recording ended **failed**, and the planned repeat was skipped.
 The host's shutdown wording conflated a nonzero child exit with forced termination,
 so that wording alone does not prove a kill or establish radio-cleanup failure.
-The underlying receiver failure remains unresolved. The backend returned idle;
-Orbic/GNSS cleanup and Flipper stop evidence passed. This is partial combined
-reception evidence, not successful combined lifecycle or repeat acceptance.
+The backend returned idle; Orbic/GNSS cleanup and Flipper stop evidence passed.
+This is partial combined reception evidence, not successful combined lifecycle or
+repeat acceptance. A subsequent direct-helper diagnostic, outside the host
+recording pipeline, failed before reaching running state or Pause/Resume. Its
+protocol reported MCU timeout counts 1, 2 and 3, two reconnect attempts, and a
+final cleanup acknowledgement; the child exited with code 1 and was reaped
+without a termination request. No observations were received. This reproduces a
+receiver startup failure without the host pipeline, but does not identify the
+firmware, USB or driver root cause or prove the earlier combined failure had the
+same cause.
 
 Native WiFi address redaction and native BLE initialization timeout remain
 unresolved; current permission approval and diagnosis are incomplete. The M5
