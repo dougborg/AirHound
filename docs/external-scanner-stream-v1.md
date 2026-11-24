@@ -149,6 +149,9 @@ facts: a later successful retry or shutdown does not erase them or imply the
 receiver is currently failed. Current availability and `firmware.load_state`
 remain separate. The helper records the failure before checking retry exhaustion,
 so final stopped status can retain the underlying cause.
+Failure origin is not tagged with a session or attempt identifier. The enclosing
+status identifies when the retained evidence was received; it does not establish
+that the failure occurred in that session or attempt.
 
 Each failure reports a bounded operation (`initialize`, `receive`,
 `pause_shutdown`, `recovery_shutdown` or `stop_shutdown`), kind (`mcu_timeout`,
