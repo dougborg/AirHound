@@ -156,12 +156,13 @@ async fn consume_recovering<R: AsyncRead + Unpin>(
 // Only the strict identity message changes metadata; all other stderr is diagnostic.
 #[cfg(test)]
 async fn read_identity(input: impl AsyncRead + Unpin, control: ScanControl) {
-    read_helper_messages(input, control, Arc::new(Mutex::new(None))).await;
+    read_helper_messages(input, control, Arc::new(Mutex::new(None)), None).await;
 }
 async fn read_helper_messages(
     mut input: impl AsyncRead + Unpin,
     control: ScanControl,
     failure: Arc<Mutex<Option<HelperFailure>>>,
+    #[cfg(test)] identified: Option<mpsc::UnboundedSender<()>>,
 ) {
     use tokio::io::AsyncReadExt;
     let mut chunk = [0u8; 1024];
@@ -178,6 +179,10 @@ async fn read_helper_messages(
                         airhound_hostd::discovery::identify::Firmware::parse(&line)
                     {
                         control.set_receiver_firmware(Some(firmware));
+                        #[cfg(test)]
+                        if let Some(identified) = &identified {
+                            let _ = identified.send(());
+                        }
                     } else if let Some(error) = HelperFailure::parse(&line) {
                         *failure.lock().expect("helper failure lock") = Some(error);
                     } else if !line.is_empty() {
@@ -316,10 +321,33 @@ async fn require_capabilities(
     Ok(())
 }
 
+#[cfg(test)]
+struct TestHooks {
+    retry: crate::test_support::TimerWitness,
+    paused: mpsc::UnboundedSender<()>,
+    identified: mpsc::UnboundedSender<()>,
+}
+
 pub async fn scan(
     source: Source,
     tx: mpsc::Sender<ScanEvent>,
     control: ScanControl,
+) -> io::Result<()> {
+    scan_inner(
+        source,
+        tx,
+        control,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+async fn scan_inner(
+    source: Source,
+    tx: mpsc::Sender<ScanEvent>,
+    control: ScanControl,
+    #[cfg(test)] hooks: Option<TestHooks>,
 ) -> io::Result<()> {
     let mut state = control.subscribe();
     let mut stats = Stats::default();
@@ -432,6 +460,10 @@ pub async fn scan(
                     control.set_receiver_firmware(None);
                     control.set_receiver_availability("paused");
                     control.set_health(Scanner::Ble, Phase::Paused, "sniffle_capture_paused");
+                    #[cfg(test)]
+                    if let Some(hooks) = &hooks {
+                        let _ = hooks.paused.send(());
+                    }
                     // A user pause suspends recovery. Resume gets a fresh outage
                     // budget, while the same configured endpoint stays reserved.
                     recovery = Recovery::default();
@@ -501,6 +533,8 @@ pub async fn scan(
                         output,
                         control.clone(),
                         messages.clone(),
+                        #[cfg(test)]
+                        hooks.as_ref().map(|hooks| hooks.identified.clone()),
                     )));
                     let result = consume_recovering(
                         child.stdout.take().expect("stdout available"),
@@ -552,8 +586,21 @@ pub async fn scan(
                         "sniffle_recovery_expired",
                     ));
                 }
+                let retry = tokio::time::sleep(recovery.delay());
+                #[cfg(test)]
+                let retry = async {
+                    if let Some(hooks) = &hooks {
+                        hooks
+                            .retry
+                            .clone()
+                            .observe(retry.deadline(), retry, |_| true)
+                            .await;
+                    } else {
+                        retry.await;
+                    }
+                };
                 tokio::select! {
-                    _=tokio::time::sleep(recovery.delay())=>{},
+                    _=retry=>{},
                     _=state.changed()=>{},
                     _=tx.closed()=>break,
                 }
@@ -631,108 +678,84 @@ mod tests {
     }
     #[tokio::test]
     async fn ordinary_outage_pause_and_finish_preserve_one_endpoint_owner() {
-        use std::sync::atomic::Ordering;
-        let pty = Pty::new();
-        let root = std::env::temp_dir().join(format!(
-            "airhound-recovery-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let port = root.join("configured-port");
-        std::os::unix::fs::symlink(&pty.port, &port).unwrap();
-        let helper = root.join("fake.py");
-        let script =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/sniffle-source.py");
-        let bytes = pcap(&[frame(0, &[])])
-            .iter()
-            .map(|v| format!("{v:02x}"))
-            .collect::<String>();
-        std::fs::write(&helper, format!(r#"import argparse,importlib.util,json,os,sys,time
+        crate::test_support::manual_time(async {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let pty = Pty::new();
+            let root = std::path::PathBuf::from("/tmp").join(format!(
+                "ah-recovery-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let events = tokio::net::UnixListener::bind(root.join("events")).unwrap();
+            let port = root.join("configured-port");
+            std::os::unix::fs::symlink(&pty.port, &port).unwrap();
+            let helper = root.join("fake.py");
+            let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/sniffle-source.py");
+            let bytes = pcap(&[frame(0, &[])]).iter().map(|v| format!("{v:02x}")).collect::<String>();
+            std::fs::write(&helper, format!(r#"import argparse,importlib.util,json,sys,socket
 spec=importlib.util.spec_from_file_location('helper',{});h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
 p=argparse.ArgumentParser();p.add_argument('--capabilities',action='store_true');p.add_argument('--port');p.add_argument('--lease-fd',type=int);p.add_argument('--channel');a=p.parse_args()
 if a.capabilities: print(json.dumps(h.CAPABILITIES),flush=True);sys.exit(0)
+commands=socket.socket(socket.AF_UNIX);commands.connect({})
 with h.borrowed_port_lease(a.port,a.lease_fd):
  print(json.dumps(dict(type='sniffle_identity',schema_version=1,major=1,minor=11,patch=0,api_level=0)),file=sys.stderr,flush=True)
  sys.stdout.buffer.write(bytes.fromhex('{}'));sys.stdout.buffer.flush()
- while os.path.exists(a.port): time.sleep(.02)
-"#, serde_json::to_string(script.to_str().unwrap()).unwrap(), bytes)).unwrap();
-        let (tx, mut rx) = mpsc::channel(100);
-        let control = ScanControl::new(true);
-        let copy = control.clone();
-        let source = Source::Sniffle {
-            port: port.to_str().unwrap().into(),
-            python: "python3".into(),
-            helper,
-            module_path: None,
-            channel: 37,
-            coded: false,
-        };
-        let (done, result) = tokio::sync::oneshot::channel();
-        let task = AbortTask(tokio::spawn(async move {
-            let _ = done.send(scan(source, tx, copy).await);
-        }));
-        async fn packet(rx: &mut mpsc::Receiver<ScanEvent>) -> u64 {
-            tokio::time::timeout(Duration::from_secs(12), async {
+ assert commands.makefile('rb').readline(64)==b'disconnect\n'
+"#, serde_json::to_string(script.to_str().unwrap()).unwrap(), serde_json::to_string(root.join("events").to_str().unwrap()).unwrap(), bytes)).unwrap();
+            let (tx, mut rx) = mpsc::channel(100);
+            let control = ScanControl::new(true);
+            let copy = control.clone();
+            let source = Source::Sniffle {
+                port: port.to_str().unwrap().into(), python: "python3".into(), helper,
+                module_path: None, channel: 37, coded: false,
+            };
+            let (retry, mut retries) = crate::test_support::TimerWitness::channel();
+            let (paused, mut paused_events) = mpsc::unbounded_channel();
+            let (identified, mut identities) = mpsc::unbounded_channel();
+            let (done, result) = tokio::sync::oneshot::channel();
+            let task = AbortTask(tokio::spawn(async move {
+                let _ = done.send(scan_inner(source, tx, copy, Some(TestHooks { retry, paused, identified })).await);
+            }));
+            async fn packet(rx: &mut mpsc::Receiver<ScanEvent>) -> u64 {
                 loop {
-                    if let ScanEvent::BlePacket(packet) = rx
-                        .recv()
-                        .await
-                        .expect("source ended before expected packet")
-                    {
+                    if let ScanEvent::BlePacket(packet) = rx.recv().await.expect("source ended before packet") {
                         return packet.generation;
                     }
                 }
-            })
-            .await
-            .unwrap()
-        }
-        let generation = packet(&mut rx).await;
-        std::fs::remove_file(&port).unwrap();
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while control.health_message()["receiver"]["availability"] != "recovering" {
-                tokio::time::sleep(Duration::from_millis(20)).await;
             }
-        })
-        .await
-        .unwrap();
-        assert!(control.health_message()["receiver"]
-            .get("firmware")
-            .is_none());
-        for _ in 0..4 {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            assert!(
-                airhound_hostd::serial_lease::acquire(&pty.port).is_err(),
-                "lease must survive ordinary 20-second absence"
-            );
-        }
-        std::os::unix::fs::symlink(&pty.port, &port).unwrap();
-        assert!(packet(&mut rx).await > generation);
-        assert_eq!(
-            control.health_message()["receiver"]["firmware"]["minor"],
-            11
-        );
-        control.store(false, Ordering::SeqCst);
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while control.health().ble.state != Phase::Paused {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+            let generation = packet(&mut rx).await;
+            identities.recv().await.expect("initial helper identity");
+            assert_eq!(control.health_message()["receiver"]["firmware"]["minor"], 11);
+            let (mut child_commands, _) = events.accept().await.unwrap();
+            std::fs::remove_file(&port).unwrap();
+            child_commands.write_all(b"disconnect\n").await.unwrap();
+            // Each advance first proves the actual retry timer is registered
+            // and polled before its deadline. No real outage duration is used.
+            let outage_start = Instant::now();
+            for _ in 0..5 {
+                crate::test_support::advance_registered_timer(&mut retries).await;
+                assert!(airhound_hostd::serial_lease::acquire(&pty.port).is_err());
             }
-        })
-        .await
-        .unwrap();
-        assert!(airhound_hostd::serial_lease::acquire(&pty.port).is_err());
-        control.shutdown();
-        tokio::time::timeout(Duration::from_secs(2), result)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        drop(task);
-        assert!(airhound_hostd::serial_lease::acquire(&pty.port).is_ok());
-        std::fs::remove_dir_all(root).unwrap();
+            assert!(Instant::now() - outage_start >= Duration::from_secs(20)); // virtual clock
+            assert!(control.health_message()["receiver"].get("firmware").is_none());
+            crate::test_support::advance_registered_timer_after(&mut retries, || {
+                std::os::unix::fs::symlink(&pty.port, &port).unwrap();
+            }).await;
+            assert!(packet(&mut rx).await > generation);
+            let (_next_child, _) = events.accept().await.unwrap();
+            identities.recv().await.expect("new helper identity");
+            assert_eq!(control.health_message()["receiver"]["firmware"]["minor"], 11);
+            control.store(false, Ordering::SeqCst);
+            paused_events.recv().await.expect("source ended before pause acknowledgement");
+            assert_eq!(control.health().ble.state, Phase::Paused);
+            assert!(airhound_hostd::serial_lease::acquire(&pty.port).is_err());
+            control.shutdown();
+            result.await.unwrap().unwrap();
+            drop(task);
+            assert!(airhound_hostd::serial_lease::acquire(&pty.port).is_ok());
+            drop(events);
+            std::fs::remove_dir_all(root).unwrap();
+        }).await;
     }
     #[tokio::test]
     async fn already_paused_or_finished_buffered_input_never_publishes_running() {
@@ -927,49 +950,62 @@ with h.borrowed_port_lease(a.port,a.lease_fd):
             .await
             .unwrap());
     }
-    #[tokio::test]
-    async fn pause_and_resume_replay_without_restarting_or_losing_partial_record() {
-        let (mut w, r) = tokio::io::duplex(256);
-        let bytes = pcap(&[frame(0, &[])]);
-        let (tx, mut rx) = mpsc::channel(8);
-        let c = ScanControl::new(true);
-        let mut stats = Stats::default();
-        let feed = async {
-            w.write_all(&bytes[..30]).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            c.store(false, std::sync::atomic::Ordering::Relaxed);
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            c.store(true, std::sync::atomic::Ordering::Relaxed);
-            w.write_all(&bytes[30..]).await.unwrap();
-            w.shutdown().await.unwrap();
-        };
-        let (result, ()) = tokio::join!(consume(r, "test", true, &tx, &c, &mut stats), feed);
-        assert!(result.unwrap());
-        assert_eq!(stats.packets, 1);
+    async fn pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
         assert!(
-            std::iter::from_fn(|| rx.try_recv().ok()).any(|e| matches!(e, ScanEvent::BlePacket(_)))
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                future.as_mut().poll(cx).is_pending()
+            ))
+            .await
         );
     }
     #[tokio::test]
-    async fn live_pause_and_shutdown_cancel_pending_reads() {
-        for shutdown in [false, true] {
+    async fn pause_and_resume_replay_without_restarting_or_losing_partial_record() {
+        crate::test_support::manual_time(async {
             let (mut w, r) = tokio::io::duplex(256);
-            let bytes = pcap(&[]);
-            let (tx, _rx) = mpsc::channel(8);
+            let bytes = pcap(&[frame(0, &[])]);
+            let (tx, mut rx) = mpsc::channel(8);
             let c = ScanControl::new(true);
             let mut stats = Stats::default();
-            let feed = async {
+            {
+                let mut reader = Box::pin(consume(r, "test", true, &tx, &c, &mut stats));
+                w.write_all(&bytes[..30]).await.unwrap();
+                pending(reader.as_mut()).await; // consumed header and partial record; waiting for input
+                assert_eq!(c.health().ble.state, Phase::Running);
+                c.store(false, std::sync::atomic::Ordering::Relaxed);
+                pending(reader.as_mut()).await; // observes Pause, then waits for Resume
+                c.store(true, std::sync::atomic::Ordering::Relaxed);
+                w.write_all(&bytes[30..]).await.unwrap();
+                w.shutdown().await.unwrap();
+                assert!(reader.await.unwrap());
+            }
+            assert_eq!(stats.packets, 1);
+            assert!(std::iter::from_fn(|| rx.try_recv().ok())
+                .any(|e| matches!(e, ScanEvent::BlePacket(_))));
+        })
+        .await;
+    }
+    #[tokio::test]
+    async fn live_pause_and_shutdown_cancel_pending_reads() {
+        crate::test_support::manual_time(async {
+            for shutdown in [false, true] {
+                let (mut w, r) = tokio::io::duplex(256);
+                let bytes = pcap(&[]);
+                let (tx, _rx) = mpsc::channel(8);
+                let c = ScanControl::new(true);
+                let mut stats = Stats::default();
+                let mut reader = Box::pin(consume(r, "test", false, &tx, &c, &mut stats));
                 w.write_all(&bytes).await.unwrap();
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                pending(reader.as_mut()).await;
+                assert_eq!(c.health().ble.state, Phase::Running);
                 if shutdown {
                     c.shutdown()
                 } else {
                     c.store(false, std::sync::atomic::Ordering::Relaxed)
                 }
-            };
-            let (result, ()) = tokio::join!(consume(r, "test", false, &tx, &c, &mut stats), feed);
-            assert!(!result.unwrap());
-        }
+                assert!(!reader.await.unwrap());
+            }
+        })
+        .await;
     }
     #[tokio::test]
     async fn explicit_file_failures_and_replay_completion() {

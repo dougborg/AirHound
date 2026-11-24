@@ -79,9 +79,19 @@ impl TimerWitness {
 }
 
 pub(crate) async fn advance_registered_timer(rx: &mut mpsc::UnboundedReceiver<TimerEvent>) {
+    advance_registered_timer_after(rx, || {}).await;
+}
+
+/// Change a fixture only after the production future has entered its actual
+/// registered retry boundary, before advancing that boundary's virtual clock.
+pub(crate) async fn advance_registered_timer_after(
+    rx: &mut mpsc::UnboundedReceiver<TimerEvent>,
+    after_registered: impl FnOnce(),
+) {
     let Some(TimerEvent::Registered(deadline, waker)) = rx.recv().await else {
         panic!("expected registered deadline before time advancement")
     };
+    after_registered();
     let remaining = deadline
         .checked_duration_since(Instant::now())
         .expect("manual clock must precede registered deadline");
