@@ -174,16 +174,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-runtime-profiler-composed.json SHA256 7c258987277e38a557f50e3edad11c071339924d90c0933f8ae3985614826147."
     },
-    "0983dabea38ad19b77b043a3e5362985c58577a9bec9aa32221e2c9e4702315f": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "rust-test-item",
-      "rule": "delay-or-deadline",
-      "context_sha256": "a348586213222be449ca506428d0caa861702db49f3791f22ef8ed1c0ae347a5",
-      "category": "production-scope",
-      "reason": "Shared graceful-shutdown parser yields cooperatively after an invalid bounded input line before continuing toward a verified stop acknowledgement. This schedules work without a duration or elapsed-time assumption; the overall grace remains bounded and test expiry is injected through lifecycle_timeout. It is not a test settling loop.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "099929f35c725fc78bcf40c383b2635fddcfbee2b3b54282ab660d6c7c3b4739": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
@@ -293,16 +283,6 @@
       "reason": "Operator-invoked serial firmware monitor measures the requested real observation interval and reports elapsed duration. Parser/monitor unit tests supply records/elapsed inputs separately; this is physical diagnostic coverage, not a deterministic fixture clock.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-operational32.json SHA256 2543f4d3bf6e837a69df697bda75b7ac2398e4522f5b14725a44055861e3bcb6."
-    },
-    "0fc8d2883237da6e01cf0731051e6c4d6d033680dcea27c7a8893ed26d3e0036": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-read",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
     "104083229ca0d07c0efb053eeb9d02f6f39f4d4b5d3aceb489efeffe4c2b2e80": {
       "path": "hostd/src/flipper_rpc_session.rs",
@@ -1672,16 +1652,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root approved exact helper source/caller contexts after reviewing ab9ffd3 and running all four tests; proposal SHA2566738312428f675c39daa7cc4f9c93f5cc76a220243ebd8a4205d949ca0782c6a."
     },
-    "66978ecde1dd08a68a4321e02ef8c7832de2e264c7cd0e56599b43501f8725ab": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-reference",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "679273fade8af8713336b36672d0a9f215a57f4d69c5d556645cd3b12713ffef": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
@@ -1831,16 +1801,6 @@
       "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
       "category": "outer-hang-guard",
       "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
-    },
-    "6f4a0c9e287b8cc62ca7cddd9c7a34034d5f0888d9a0a604d2e2c9a795ea880b": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-reference",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
     "703c84c007ee606cab6a2e0732b75e263dca6fef91b385031da935982a6a2e12": {
       "path": "hostd/src/ble_source.rs",
@@ -2300,16 +2260,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-support-capture-service-final340.json SHA256 d25e36acb9c6cdf77cd49b94c77476e570ae06c65cbece78ca40d5617264e7fd."
     },
-    "8ceff44c3153a0cfd9242dea85a3153de9d21b2552811e1298af67c8884efb10": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-read",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "8d03868394fdde3d92739aa69c2bf294e41d072952bd7557d917e3c3f013983d": {
       "path": "hostd/src/adb_forward.rs",
       "scope": "command_inner",
@@ -2339,16 +2289,6 @@
       "reason": "This call supplies one opaque stdInstant origin to command/filter/record emission. Assertions concern payloads, counts, command state, or output errors, not observed real elapsed time. Async tests additionally hold manual_time for Tokio policies; flush/shutdown tests explicitly register and advance virtual timers. Output ts metadata is not a clock-proximity oracle.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
-    },
-    "8e24e9369e0f34d2461fbd76f32fb44ca0586ee6c6f2c900856bdfc5c61ad0dc": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "delay-or-deadline",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
     "8ed444e1a06fd684019ec69270f151d4101f2855ed4bc886434e71b0049f5e81": {
       "path": "hostd/src/main.rs",
@@ -2818,16 +2758,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
     },
-    "a918c4a1c8c1b999a2bf6710112915716cdb1ce25bd151c32febf4337c3a02bf": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-reference",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "a91c62b4264e2ab796b005524b4e46606cda447a33cd587c7f21f7e7e3b68570": {
       "path": "hostd/src/rayhunter_source.rs",
       "scope": "blocked_tick",
@@ -3151,26 +3081,6 @@
       "reason": "TestClock owns Mutex<Instant>, seeded once as opaque origin. Its injected poll closure explicitly changes the value or waits on a release event; readiness assertions compare that stored value to exact injected deadline. Production SystemProbeClock remains separate.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-ublox-final340-corrected.json SHA256 561b1e6b0f48b164efd49e2900d2cf3d2db35cd97d69115f9cd896fd3d48d01e."
-    },
-    "bc12d8546e3a38e78b83ff99ed3ab138fb78ec56f6a4bdab0449a20e33f995e0": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-reference",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
-    "bcffbeb452c6879aca7a91832038cea8d1ff23d88951d99e39e21de177c7f208": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-read",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
     "bd55924a3b29de4363802c8e5e5f1239252f7b78aee1b8633329c14c65f57c2e": {
       "path": "hostd/src/adb_forward.rs",
@@ -4058,16 +3968,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-rpc-after-teardown.json SHA256 6391894d12e4be68a2513996cc0db87115850888b3c434e9a5f1d0a33afddf24."
     },
-    "ef0c54df47432de60cc71d6c41732eb751d5053df3ec6563b502346dc043d79b": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "clock-read",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "ef786ba4bf328893935dc91116df1aa2f8c5fe208509e4919c6d9d9c4fbc74a2": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
@@ -4216,16 +4116,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
     },
-    "f4d55221fa090e3afafa2701420af1571ce6354d045d3a58a4017ab7ff9fc3b7": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "scan_loop_with_timeouts",
-      "rule": "delay-or-deadline",
-      "context_sha256": "d9582bcf1c33f17b677035a4d11fdd0e386f8a824e52b65a92947d3e868f099e",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
-    },
     "f55508065aec86769970b5b182a7462ff3b5c438ce0478ebdc92d2a5c9342aee": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
@@ -4249,16 +4139,6 @@
       "excerpt": "let start = ContinuousClock.now",
       "source": "/tmp/airhound-swift-positive-path-clocks",
       "file_sha256": "7c8cd7ae996f779fe30bb68f0f57062fc6a7dea622560465a3c5e1dc9ac5a3cf"
-    },
-    "f935d3da603c3847c317ac48914692616400ede732b33452c462ce97b84e04e1": {
-      "path": "hostd/src/external_scanner.rs",
-      "scope": "rust-test-item",
-      "rule": "delay-or-deadline",
-      "context_sha256": "a348586213222be449ca506428d0caa861702db49f3791f22ef8ed1c0ae347a5",
-      "category": "virtual-time",
-      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-sources-final340.json SHA256 75661129b1bba4c1406a41b5d00eb69dd8df5d8efb12d9403468679ad895dfb7."
     },
     "f93ee44a1c8c85d8adb996caac923764869973582275744aa764fb96c6225a1e": {
       "path": "scripts/tests/test_helper_capabilities.py",
@@ -4583,6 +4463,116 @@
       "reason": "Test-only Instant import and single absolute 120-second event-wait safeguard. Success requires a complete retained post-listen or exact run-bound post-commit diagnostic; elapsed time can only fail the fixture. Receiving unrelated lines does not renew the deadline. EOF and reader errors fail explicitly, and ServiceChild drop kills/reaps its owned child and joins the reader. No polling interval or elapsed success assertion is used.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent exact-source review of bfe6a92da5dde8afeaaef8e2c89caf82dfa05bbb and proposal61d1aeed; receipt9918edb6e70f67d7a7377018685a674f9dcb43f82ba6107a7f70e7082490a4ad. Root approved application."
+    },
+    "0a78e07e4c2a949c6820efea6e9bf22ca883d28bff2899edabb0f81502b93516": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-read",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "1b8ca203da31042efebb57f6b8941bbb38e9cba93043cd6449d9fe365f1c244b": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "delay-or-deadline",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "3706e5de14a0510a18ba3a10232316eaeae4be2667f0f99f3ff4da69e85fa102": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-reference",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "3fd224d0b5019e89e1cf0f5bca22a879ee950115bda5a6c66b4591d98fc737dd": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-reference",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "4b968baa53f3f129eee681db188957ecd7861e70357bd9abe397579e47578bdc": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "688c757607dc656a0b0b441a264e1a6cf82d8a409c31749565d94bb058430e5f",
+      "category": "production-scope",
+      "reason": "Shared graceful-shutdown parser yields cooperatively after an invalid bounded input line before continuing toward a verified stop acknowledgement. This schedules work without a duration or elapsed-time assumption; the overall grace remains bounded and test expiry is injected through lifecycle_timeout. It is not a test settling loop.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "81902519b38d095f189a282f781cf6121a183da813f0ad38577c9d277427acb3": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-reference",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "9349855e5dd0df8dc8697f90b1a0f6981b84efc4345a65e9bdbb3daa3bc3399a": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-read",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "b7c4aef2cbe0dceab8d55cea9afb9297d142169e1604252aba1ed8eb6ae2e5e1": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "delay-or-deadline",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "bd997cbea7694e9e07466c4464dfd4464cbd5b25816d01ccf8f15830db59cf3e": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-read",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "c1d860f020c1b6d45be20be426b145dd93fdfd0c2b95d863d84d557073f46053": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-reference",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
+    },
+    "f6b78f210145e9c7635837709067e2f62b261e2d4835bc87711927d824a9ba37": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "scan_loop_with_timeouts",
+      "rule": "clock-read",
+      "context_sha256": "a9ca65e38901fafb63ea4a1d854a0a7cec1a4a00d21b75bce808aac85790a5e6",
+      "category": "virtual-time",
+      "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently reviewed source 22f54b69f1e0f4641a0655bb2a6bf2265ab48f7e and exact 11-add/12-remove context refresh; unchanged ManualTime/causal completion semantics and two-second reap policy."
     }
   },
   "migration_baseline": {
