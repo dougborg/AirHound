@@ -44,6 +44,7 @@ pub struct Model {
     pub error: Option<rusb::Error>,
     pub released: usize,
     pub upload: bool,
+    pub successful_reply_advance: Duration,
 }
 impl Default for Model {
     fn default() -> Self {
@@ -72,6 +73,7 @@ impl Default for Model {
             error: None,
             released: 0,
             upload: false,
+            successful_reply_advance: Duration::ZERO,
         }
     }
 }
@@ -214,6 +216,9 @@ impl UsbIo for Endpoint {
         };
         match result.unwrap_or(Err(rusb::Error::Timeout)) {
             Ok(bytes) => {
+                if e == 0x82 {
+                    m.time.advance(m.successful_reply_advance);
+                }
                 d[..bytes.len()].copy_from_slice(&bytes);
                 Ok(bytes.len())
             }

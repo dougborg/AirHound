@@ -296,6 +296,11 @@ impl<T: UsbIo> UsbDevice<T> {
                 event == 0,
                 "MCU command {command} failed with event {event}"
             );
+            // A read may complete after the absolute response deadline.
+            // Keep protocol/I/O errors intact, but never accept a late ACK.
+            if self.clock.now() >= deadline {
+                break;
+            }
             return Ok(reply[4..n - 4].to_vec());
         }
         Err(McuTimeout {
@@ -504,6 +509,38 @@ mod tests {
         assert_eq!(endpoint.0.lock().unwrap().responses.len(), 1);
         drop(device);
         assert_eq!(endpoint.0.lock().unwrap().released, 1);
+    }
+
+    #[test]
+    fn successful_reply_must_arrive_before_absolute_deadline() {
+        // Four timed-out reads consume 1200 ms; the matching ACK then returns
+        // before, exactly at, or after the 1500 ms absolute deadline.
+        for elapsed_ms in [1499, 1500, 1501] {
+            let endpoint = crate::test_support::Endpoint::default();
+            {
+                let mut model = endpoint.0.lock().unwrap();
+                model.responses.extend(vec![Err(rusb::Error::Timeout); 4]);
+                model.successful_reply_advance = Duration::from_millis(elapsed_ms - 1200);
+            }
+            let mut device = endpoint.device();
+            let clock = device.clock();
+            let result = device.mcu_command(12, &[0; 8], true);
+            if elapsed_ms < 1500 {
+                assert!(
+                    result.is_ok(),
+                    "reply before deadline was refused: {result:?}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                let timeout = error.downcast_ref::<McuTimeout>().unwrap();
+                assert_eq!(timeout.command, 12);
+                assert_eq!(timeout.sequence, 1);
+            }
+            assert_eq!(clock.now(), Duration::from_millis(elapsed_ms));
+            assert!(endpoint.0.lock().unwrap().responses.is_empty());
+            drop(device);
+            assert_eq!(endpoint.0.lock().unwrap().released, 1);
+        }
     }
 
     #[test]

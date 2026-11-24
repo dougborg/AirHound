@@ -17,6 +17,36 @@
     "companions/flipper/scripts/build-diagnostic.py": "Imported by test-diagnostic-artifacts.py; scan artifact verification helpers exercised by tests."
   },
   "dispositions": {
+    "7fcd9bfaedb6c14f42493c527704cd6510476077c80d660f5258f72080a59515": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "successful_reply_must_arrive_before_absolute_deadline",
+      "rule": "delay-or-deadline",
+      "context_sha256": "702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775",
+      "category": "virtual-time",
+      "reason": "The owning boundary test derives its clock from the scripted Endpoint ManualTime. Four failed reads advance1200ms; the successful matching reply explicitly advances299/300/301ms. Exact logical1499/1500/1501 assertions verify exclusive acceptance and endpoint release, without wall timing.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review approved exact context 702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775 and Endpoint ManualTime ownership; timeout field assertions are lexical matches within the same controlled test."
+    },
+    "764e6a8f8467e73006e2305a7779f8dfdc6bc821de0d16df74ee22744eb09a97": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "successful_reply_must_arrive_before_absolute_deadline",
+      "rule": "delay-or-deadline",
+      "context_sha256": "702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775",
+      "category": "virtual-time",
+      "reason": "The owning boundary test derives its clock from the scripted Endpoint ManualTime. Four failed reads advance1200ms; the successful matching reply explicitly advances299/300/301ms. Exact logical1499/1500/1501 assertions verify exclusive acceptance and endpoint release, without wall timing.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review approved exact context 702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775 and Endpoint ManualTime ownership; timeout field assertions are lexical matches within the same controlled test."
+    },
+    "9a84993fd644ceb0ad5971b6e86641e7dfa576a11d93ed78a6d3f90166bd2506": {
+      "path": "drivers/mt7610u/src/transport.rs",
+      "scope": "successful_reply_must_arrive_before_absolute_deadline",
+      "rule": "clock-read",
+      "context_sha256": "702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775",
+      "category": "virtual-time",
+      "reason": "The owning boundary test derives its clock from the scripted Endpoint ManualTime. Four failed reads advance1200ms; the successful matching reply explicitly advances299/300/301ms. Exact logical1499/1500/1501 assertions verify exclusive acceptance and endpoint release, without wall timing.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review approved exact context 702a0a480b0f96dd22daafb7f44c50437545888a92943c62ceb716b98555c775 and Endpoint ManualTime ownership; timeout field assertions are lexical matches within the same controlled test."
+    },
     "766d2af74ab4fdc70c3d908a3e971b7de6a7fc8ac131a8e17e4c48308bc95101": {
       "path": "scripts/tests/test_registered_timing_helpers.py",
       "scope": "fixture-file",
