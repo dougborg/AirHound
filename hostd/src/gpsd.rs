@@ -56,6 +56,10 @@ struct Tracker {
     daemon: Option<serde_json::Value>,
     #[cfg(test)]
     clock: Option<(DateTime<Utc>, Instant)>,
+    #[cfg(test)]
+    updates: Option<Arc<tokio::sync::Notify>>,
+    #[cfg(test)]
+    retry: Option<crate::test_support::TimerWitness>,
 }
 impl Source {
     pub fn new(device: Option<String>) -> Self {
@@ -68,6 +72,10 @@ impl Source {
             daemon: None,
             #[cfg(test)]
             clock: None,
+            #[cfg(test)]
+            updates: None,
+            #[cfg(test)]
+            retry: None,
         })))
     }
     fn now(&self) -> (DateTime<Utc>, Instant) {
@@ -136,6 +144,14 @@ impl Source {
         // sources or refresh a replayed cached fix just because TCP restarted.
     }
     fn line(&self, bytes: &[u8], now: DateTime<Utc>, received: Instant) -> io::Result<()> {
+        let result = self.accept_line(bytes, now, received);
+        #[cfg(test)]
+        if let Some(updates) = &self.0.lock().unwrap_or_else(|e| e.into_inner()).updates {
+            updates.notify_one();
+        }
+        result
+    }
+    fn accept_line(&self, bytes: &[u8], now: DateTime<Utc>, received: Instant) -> io::Result<()> {
         let value: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid gpsd JSON"))?;
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -274,7 +290,8 @@ async fn consume_socket(mut socket: tokio::net::TcpStream, source: &Source) -> i
         for &byte in &chunk[..n] {
             if byte == b'\n' {
                 if !pending.is_empty() {
-                    source.line(&pending, Utc::now(), Instant::now())?;
+                    let (wall, monotonic) = source.now();
+                    source.line(&pending, wall, monotonic)?;
                 }
                 pending.clear();
             } else {
@@ -320,8 +337,23 @@ async fn run_external(
                 }
             }
         }
+        let retry = tokio::time::sleep(RETRY);
+        #[cfg(test)]
+        let retry = async {
+            let witness = source
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retry
+                .clone();
+            if let Some(witness) = witness {
+                witness.observe(retry.deadline(), retry, |_| true).await;
+            } else {
+                retry.await;
+            }
+        };
         tokio::select! {
-            _ = tokio::time::sleep(RETRY) => {},
+            _ = retry => {},
             changed = state.changed() => if changed.is_err() || state.borrow().shutdown { break },
         }
     }
@@ -339,7 +371,7 @@ pub(crate) mod tests {
             &source,
             serde_json::json!({"class":"VERSION","proto_major":16,"proto_minor":1,"release":"3.27.5"}),
         );
-        feed(&source, tpv(Utc::now()));
+        feed(&source, tpv(wall()));
         let evidence = source.evidence().unwrap();
         assert_eq!(evidence["position_of"], "receiver_rig");
         assert_eq!(evidence["association"], "host_processing_time");
@@ -350,15 +382,27 @@ pub(crate) mod tests {
         assert!(evidence["fix_time"].is_string());
         assert_eq!(source.health()["daemon"]["version"], "3.27.5");
         assert!(source.health()["daemon"]["receiver_firmware_version"].is_null());
-        source.0.lock().unwrap().fix.as_mut().unwrap().received =
-            Instant::now() - Duration::from_secs(6);
+        let (wall, mono) = source.now();
+        set_clock(&source, wall, mono + Duration::from_secs(6));
         assert!(source.evidence().is_none());
         source.disconnected("disconnected");
         assert!(source.evidence().is_none());
         assert!(source.health()["daemon"].is_null());
     }
+    fn wall() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+    fn controlled_source(device: Option<String>) -> Source {
+        let source = Source::new(device);
+        // This instant is an opaque origin; tests advance their local pair
+        // explicitly, never infer freshness from execution speed.
+        set_clock(&source, wall(), Instant::now());
+        source
+    }
     pub(crate) fn ready() -> Source {
-        let source = Source::new(None);
+        let source = controlled_source(None);
         feed(
             &source,
             serde_json::json!({"class":"VERSION","proto_major":16}),
@@ -381,8 +425,8 @@ pub(crate) mod tests {
     #[test]
     fn valid_fix_expires_by_both_clocks_and_preserves_units() {
         let source = ready();
-        let now = Utc::now();
-        let mono = Instant::now();
+        let now = wall();
+        let mono = source.now().1;
         source
             .line(&serde_json::to_vec(&tpv(now)).unwrap(), now, mono)
             .unwrap();
@@ -415,16 +459,16 @@ pub(crate) mod tests {
             ("time", serde_json::json!("bad")),
             (
                 "time",
-                serde_json::json!((Utc::now() - chrono::Duration::seconds(10)).to_rfc3339()),
+                serde_json::json!((wall() - chrono::Duration::seconds(10)).to_rfc3339()),
             ),
             (
                 "time",
-                serde_json::json!((Utc::now() + chrono::Duration::seconds(10)).to_rfc3339()),
+                serde_json::json!((wall() + chrono::Duration::seconds(10)).to_rfc3339()),
             ),
         ] {
             let source = ready();
-            feed(&source, tpv(Utc::now()));
-            let mut invalid = tpv(Utc::now());
+            feed(&source, tpv(wall()));
+            let mut invalid = tpv(wall());
             invalid[key] = value;
             feed(&source, invalid);
             assert!(source.location().is_none(), "accepted invalid {key}");
@@ -433,7 +477,7 @@ pub(crate) mod tests {
     #[test]
     fn optional_fields_are_not_invented_and_zero_is_a_real_coordinate() {
         let source = ready();
-        let mut value = tpv(Utc::now());
+        let mut value = tpv(wall());
         value["mode"] = 2.into();
         value["lat"] = 0.into();
         value["lon"] = 0.into();
@@ -469,7 +513,7 @@ pub(crate) mod tests {
     #[test]
     fn device_binding_reconnect_and_time_ordering_prevent_cached_refresh() {
         let source = ready();
-        let now = Utc::now();
+        let now = wall();
         feed(&source, tpv(now));
         let mut other = tpv(now + chrono::Duration::milliseconds(1));
         other["device"] = "other".into();
@@ -498,12 +542,12 @@ pub(crate) mod tests {
     #[test]
     fn legacy_and_current_protocol_versions_accept_fixes() {
         for version in [3, 16] {
-            let source = Source::new(None);
+            let source = controlled_source(None);
             feed(
                 &source,
                 serde_json::json!({"class":"VERSION", "proto_major":version}),
             );
-            feed(&source, tpv(Utc::now()));
+            feed(&source, tpv(wall()));
             assert!(source.location().is_some());
         }
     }
@@ -511,101 +555,112 @@ pub(crate) mod tests {
     #[test]
     fn malformed_protocol_and_partial_fixes_fail_closed() {
         let source = ready();
-        assert!(source.line(b"bad", Utc::now(), Instant::now()).is_err());
+        assert!(source.line(b"bad", wall(), source.now().1).is_err());
         assert!(source
             .line(
                 br#"{"class":"VERSION","proto_major":4}"#,
-                Utc::now(),
-                Instant::now()
+                wall(),
+                source.now().1
             )
             .is_err());
         assert!(source
-            .line(br#"{"class":"ERROR"}"#, Utc::now(), Instant::now())
+            .line(br#"{"class":"ERROR"}"#, wall(), source.now().1)
             .is_err());
         let source = ready();
-        feed(&source, tpv(Utc::now()));
+        feed(&source, tpv(wall()));
         feed(
             &source,
             serde_json::json!({"class":"TPV","device":"synthetic","mode":3,"eph":1}),
         );
         assert!(source.location().is_none());
-        let selected = Source::new(Some("wanted".into()));
+        let selected = controlled_source(Some("wanted".into()));
         feed(
             &selected,
             serde_json::json!({"class":"VERSION","proto_major":16}),
         );
-        feed(&selected, tpv(Utc::now()));
+        feed(&selected, tpv(wall()));
         assert!(selected.location().is_none());
     }
     #[tokio::test]
     async fn bounded_transport_and_orderly_shutdown() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let options = Options {
-            managed_executable: None,
-            endpoint: listener.local_addr().unwrap().to_string(),
-            device: None,
-        };
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = vec![0; 35];
-            let n = socket.read(&mut request).await.unwrap();
-            assert!(std::str::from_utf8(&request[..n])
+        crate::test_support::manual_time(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let options = Options {
+                managed_executable: None,
+                endpoint: listener.local_addr().unwrap().to_string(),
+                device: None,
+            };
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 35];
+                let n = socket.read(&mut request).await.unwrap();
+                assert!(std::str::from_utf8(&request[..n])
+                    .unwrap()
+                    .starts_with("?WATCH="));
+                socket.write_all(&vec![b'x'; MAX_LINE + 1]).await.unwrap();
+            });
+            assert_eq!(
+                session(&options, &ready()).await.unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+            server.await.unwrap();
+            let control = crate::control::ScanControl::new(true);
+            let source = ready();
+            let task = tokio::spawn(run(options, source.clone(), control.subscribe()));
+            control.shutdown();
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
                 .unwrap()
-                .starts_with("?WATCH="));
-            socket.write_all(&vec![b'x'; MAX_LINE + 1]).await.unwrap();
-        });
-        assert_eq!(
-            session(&options, &ready()).await.unwrap_err().kind(),
-            io::ErrorKind::InvalidData
-        );
-        server.await.unwrap();
-        let control = crate::control::ScanControl::new(true);
-        let source = ready();
-        let task = tokio::spawn(run(options, source.clone(), control.subscribe()));
-        control.shutdown();
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(source.health()["state"], "stopped");
+                .unwrap();
+            assert_eq!(source.health()["state"], "stopped");
+        })
+        .await;
     }
     #[tokio::test]
     async fn reconnects_after_eof_and_cancels_an_idle_connection() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let options = Options {
-            managed_executable: None,
-            endpoint: listener.local_addr().unwrap().to_string(),
-            device: None,
-        };
-        let control = crate::control::ScanControl::new(true);
-        let source = ready();
-        let task = tokio::spawn(run(options, source.clone(), control.subscribe()));
-        let (first, _) = listener.accept().await.unwrap();
-        drop(first);
-        let (mut second, _) = tokio::time::timeout(Duration::from_secs(4), listener.accept())
+        crate::test_support::manual_time(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let options = Options {
+                managed_executable: None,
+                endpoint: listener.local_addr().unwrap().to_string(),
+                device: None,
+            };
+            let control = crate::control::ScanControl::new(true);
+            let source = ready();
+            let (retry, mut retry_rx) = crate::test_support::TimerWitness::channel();
+            source.0.lock().unwrap().retry = Some(retry);
+            let updates = Arc::new(tokio::sync::Notify::new());
+            source.0.lock().unwrap().updates = Some(updates.clone());
+            let task = tokio::spawn(run(options, source.clone(), control.subscribe()));
+            let (first, _) = listener.accept().await.unwrap();
+            drop(first);
+            crate::test_support::advance_registered_timer(&mut retry_rx).await;
+            let (mut second, _) = tokio::time::timeout(Duration::from_secs(4), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut stream = b"{\"class\":\"VERSION\",\"proto_major\":16}\n".to_vec();
+            stream.extend(serde_json::to_vec(&tpv(wall())).unwrap());
+            stream.push(b'\n');
+            second.write_all(&stream).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while source.location().is_none() {
+                    updates.notified().await;
+                }
+            })
             .await
-            .unwrap()
             .unwrap();
-        let mut stream = b"{\"class\":\"VERSION\",\"proto_major\":16}\n".to_vec();
-        stream.extend(serde_json::to_vec(&tpv(Utc::now())).unwrap());
-        stream.push(b'\n');
-        second.write_all(&stream).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while source.location().is_none() {
-                tokio::task::yield_now().await;
-            }
+            assert!(control.external_location().is_none());
+            control.set_location_source(source.clone());
+            assert!(control.external_location().unwrap().is_some());
+            assert_eq!(control.health_message()["location"]["source"], "gpsd");
+            control.shutdown();
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(control.external_location().unwrap().is_none());
         })
-        .await
-        .unwrap();
-        assert!(control.external_location().is_none());
-        control.set_location_source(source.clone());
-        assert!(control.external_location().unwrap().is_some());
-        assert_eq!(control.health_message()["location"]["source"], "gpsd");
-        control.shutdown();
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(control.external_location().unwrap().is_none());
+        .await;
     }
 }
