@@ -232,8 +232,13 @@ async fn run_probe(
 
 #[cfg(target_os = "macos")]
 async fn check_owner(port: &Path) -> io::Result<()> {
+    check_owner_with_timeout(port, Duration::from_secs(1)).await
+}
+
+#[cfg(target_os = "macos")]
+async fn check_owner_with_timeout(port: &Path, duration: Duration) -> io::Result<()> {
     use std::process::Stdio;
-    use tokio::{io::AsyncReadExt, process::Command};
+    use tokio::process::Command;
     let alias = port
         .to_str()
         .and_then(|p| p.strip_prefix("/dev/cu."))
@@ -243,13 +248,19 @@ async fn check_owner(port: &Path) -> io::Result<()> {
     if let Some(alias) = alias {
         command.arg(alias);
     }
-    let mut child = command
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
-    let outcome = tokio::time::timeout(Duration::from_secs(1), async {
+    ownership_result(child, duration).await
+}
+
+#[cfg(target_os = "macos")]
+async fn ownership_result(mut child: tokio::process::Child, duration: Duration) -> io::Result<()> {
+    use tokio::io::AsyncReadExt;
+    let outcome = tokio::time::timeout(duration, async {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut stdout = child.stdout.take().expect("piped").take(4097);
@@ -796,7 +807,43 @@ mod tests {
     #[tokio::test]
     async fn existing_external_pty_owner_is_refused() {
         let pty = Pty::new();
-        let error = check_owner(&pty.path).await.unwrap_err();
+        // This integration test checks lsof's actual ownership result, not its
+        // speed under concurrent coverage instrumentation. Production still
+        // bounds the lsof result wait to one second and refuses on timeout.
+        let error = check_owner_with_timeout(&pty.path, Duration::from_secs(10))
+            .await
+            .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn ownership_timeout_refuses_and_reaps_the_owned_process() {
+        use std::process::Stdio;
+        let child = tokio::process::Command::new("/bin/sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap() as libc::pid_t;
+        let start = Instant::now();
+        let error = ownership_result(child, Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(5));
+        // Already reaped, rather than merely signalled or left as a zombie.
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
     }
 }
