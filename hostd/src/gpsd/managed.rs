@@ -513,6 +513,34 @@ c.close();signal.pause()
             .unwrap()
             .port()
     }
+    fn retain_fixture_conflict(
+        reservation: std::net::TcpListener,
+        inject_conflict: bool,
+    ) -> Option<std::net::TcpListener> {
+        if inject_conflict {
+            Some(reservation)
+        } else {
+            drop(reservation);
+            None
+        }
+    }
+
+    #[test]
+    fn injected_conflict_keeps_the_original_listener_owned() {
+        use std::os::fd::AsRawFd;
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = reservation.local_addr().unwrap();
+        let descriptor = reservation.as_raw_fd();
+        let conflict = retain_fixture_conflict(reservation, true).unwrap();
+        assert_eq!(conflict.as_raw_fd(), descriptor);
+        assert_eq!(conflict.local_addr().unwrap(), address);
+        assert_eq!(
+            std::net::TcpListener::bind(address).unwrap_err().kind(),
+            io::ErrorKind::AddrInUse
+        );
+        assert!(retain_fixture_conflict(conflict, false).is_none());
+    }
+
     struct Started {
         port: u16,
         source: Source,
@@ -537,12 +565,9 @@ c.close();signal.pause()
             let owned_source = source.clone();
             let state = control.subscribe();
             let mut task = tokio::spawn(async move {
-                drop(reservation);
-                // A real competing listener makes the race deterministic in
-                // the fixture regression; ordinary lifecycle calls pass zero.
-                let conflict = (attempt <= injected_conflicts).then(|| {
-                    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).unwrap()
-                });
+                // Retain the actual reservation for injected conflicts. Closing
+                // and rebinding it would create a second, unintended port race.
+                let conflict = retain_fixture_conflict(reservation, attempt <= injected_conflicts);
                 run_with_probe_timeout(options, owned_source, state, Duration::from_secs(10)).await;
                 drop(conflict);
             });
