@@ -109,3 +109,26 @@ pub(crate) async fn advance_registered_timer(rx: &mut mpsc::UnboundedReceiver<Ti
         }
     }
 }
+
+pub(crate) struct ReadWitness<R> {
+    pub inner: R,
+    pub consumed: Option<tokio::sync::oneshot::Sender<()>>,
+}
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ReadWitness<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(result, std::task::Poll::Ready(Ok(())))
+            && buf.filled()[before..].contains(&b'\n')
+        {
+            if let Some(witness) = self.consumed.take() {
+                let _ = witness.send(());
+            }
+        }
+        result
+    }
+}
