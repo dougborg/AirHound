@@ -2105,6 +2105,436 @@
       "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "2211d63166031829949080ad1d95c2ab280adb7817e00a041972689623b5fe76": {
+      "path": "hostd/tests/fixture_events.rs",
+      "scope": "injected_outer_guard_failure_still_kills_and_reaps_owned_child",
+      "rule": "clock-read",
+      "context_sha256": "b266ee2db80ffb03dc37199eea8478aff9b3971b4425d53386cb49cf5e464880",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Injects an already-expired absolute guard into the real owned-child wait, then asserts TimedOut plus exact child kill/reap (ECHILD). No measured elapsed interval or scheduling budget determines correctness; child is held by an unreleased input pipe."
+    },
+    "409656ec656ff0015d61cad7621c2eb8e45e25dd3f93677c43493ed705281edf": {
+      "path": "hostd/tests/fixture_events.rs",
+      "scope": "injected_outer_guard_failure_still_kills_and_reaps_owned_child",
+      "rule": "clock-reference",
+      "context_sha256": "b266ee2db80ffb03dc37199eea8478aff9b3971b4425d53386cb49cf5e464880",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Injects an already-expired absolute guard into the real owned-child wait, then asserts TimedOut plus exact child kill/reap (ECHILD). No measured elapsed interval or scheduling budget determines correctness; child is held by an unreleased input pipe."
+    },
+    "aceaf48f703180417234a51882fd8ff4df4d4547594df06469a1717b54b07740": {
+      "path": "hostd/tests/marauder_session.rs",
+      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
+      "rule": "client-deadline-seam",
+      "context_sha256": "eb16652c57ad6e91a815b4177399dac82945a2555d79b7e6166ef059b7883681",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "virtual-time",
+      "reason": "This SDK connect and later calls execute in start_paused with ManualTime held until all client operations finish. Real child readiness is post-listen diagnostic; terminal replay is a durable SQLite write predicate witnessed through OS events. Client3s policy budget is frozen; ManualTime separate120s watchdog bounds hangs. Does not claim child server production budgets are virtualized."
+    },
+    "fda7e895b28ef523c890ba86b7fbedecf30eaef344eb45cf31c1659c71916834": {
+      "path": "hostd/tests/marauder_session.rs",
+      "scope": "marauder_service_client_profile_and_durable_query_roundtrip",
+      "rule": "client-deadline-seam",
+      "context_sha256": "eb16652c57ad6e91a815b4177399dac82945a2555d79b7e6166ef059b7883681",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "virtual-time",
+      "reason": "This SDK connect and later calls execute in start_paused with ManualTime held until all client operations finish. Real child readiness is post-listen diagnostic; terminal replay is a durable SQLite write predicate witnessed through OS events. Client3s policy budget is frozen; ManualTime separate120s watchdog bounds hangs. Does not claim child server production budgets are virtualized."
+    },
+    "d62dd624466550ba4290c3f299c8d7add2e091d3e274bda4636bb8403d9f323e": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "6d1528e3300e939b1108b5310714c0036549a032f901228b23a508974d7fa178",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "0ef6b18442bac91631643b6bf9b787b6402552da99f3d01101807d7789d6a86e": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "poll_event",
+      "rule": "clock-reference",
+      "context_sha256": "ab0c17d02ce940efe0806dd3911dd34fd412a2fe408abac83a4cebbcb2f7f147",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "65743477127ed7a1033cd034c3eaca630b5179d2ad0a9d17c309d2e6317e1ed8": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "poll_event",
+      "rule": "clock-read",
+      "context_sha256": "ab0c17d02ce940efe0806dd3911dd34fd412a2fe408abac83a4cebbcb2f7f147",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "876573595397578f6b1f3c1ab61d7a493754bf452206a3557dea6f9b92b2a4f4": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "poll_event",
+      "rule": "clock-reference",
+      "context_sha256": "ab0c17d02ce940efe0806dd3911dd34fd412a2fe408abac83a4cebbcb2f7f147",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "d049dbdcf1b79e725bfe3c1d16a957de134699fb3f380381dc52222448b33dbf": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "until",
+      "rule": "clock-read",
+      "context_sha256": "714de6a29c2bdcf4c8b0b764b836c3b23db5038a70a355f5e34d92a2432f2451",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "2d9047ecbb905c1ee0878b12ae18cb53253b50441cd2776542b0d109454528f7": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "until",
+      "rule": "clock-reference",
+      "context_sha256": "714de6a29c2bdcf4c8b0b764b836c3b23db5038a70a355f5e34d92a2432f2451",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "6f307bd470b68b2c6e6b2203e842befd90de447b7f7be00f38d9e7da13f8c5ce": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_child",
+      "rule": "clock-read",
+      "context_sha256": "5c49244a7786934eb3577f66a0b7a80de263f77ae38df56a189ffbedbd1b97be",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "9ab81f2201061cbe9cd769116c72af9e503d72a44490f2bd60a46b03cf607e99": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_child",
+      "rule": "clock-reference",
+      "context_sha256": "5c49244a7786934eb3577f66a0b7a80de263f77ae38df56a189ffbedbd1b97be",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "4e3c199a3331fa9fb632f1ae81c24d18d9a15a4f211952dd7422bdeea4ece9d9": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "wait_child_until",
+      "rule": "clock-reference",
+      "context_sha256": "9491e8b1a393e1012fb81bdf0b641fb1be85125fe6d56c8c1b3d2b6cd5bb55c2",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "5a57193adc582cca30f7b310eecae922adbfdac2a1ca98d1e20760fc781ff1ea": {
+      "path": "hostd/tests/support/mod.rs",
+      "scope": "spawn",
+      "rule": "delay-or-deadline",
+      "context_sha256": "ee74e2eda917e59e49d6f6812eab357af715619f6a933f6b9e5b049fa3ca5113",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact840 source/caller review; receipt airhound-integration-classifications-root-review. Underlying child-server production budgets remain separately scoped.",
+      "category": "outer-hang-guard",
+      "reason": "Test-only120s absolute wall safeguard for file/process/causal service-readiness events. Success requires observed event plus durable predicate, child wait/reap, or complete post-listen line; elapsed time can only fail the fixture. No sleep interval guesses readiness; cleanup preserves exact child ownership. Underlying real-service integration production budgets remain separate and are not classified by this entry."
+    },
+    "e9835270807b5ebf93aed07dc0fe3a1311f1cb4e050f18cc1d55189f1e4f95d6": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-reference",
+      "context_sha256": "4bc80ca072bf49450bf834c337c796f62140621ff0869103eb33ccc3523f21ae",
+      "category": "fixed-input",
+      "reason": "cfg(test) storage for an explicitly injected wall/monotonic pair; declaration has no clock read or delay.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "20c54d77c43eea1655274634470671315749089466469ec6edc0148f8110ad32": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "line",
+      "rule": "clock-reference",
+      "context_sha256": "6bbd171a5a5afeaaba78215529dee0e09291da2b8115ab23c05306ecd5133170",
+      "category": "production-scope",
+      "reason": "Parser receives wall and monotonic instants as explicit caller parameters. Controlled tests pass the injected pair; these signatures neither read the clock nor wait.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "94e34081861341ad83fd98f1ff7a07127f88d71ac6ebb6dbe81f42490bb02337": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "accept_line",
+      "rule": "clock-reference",
+      "context_sha256": "503bd7dcf5e2cf208ece17be4314ef6ce16a294d0c1ac26718900894c0730fe4",
+      "category": "production-scope",
+      "reason": "Parser receives wall and monotonic instants as explicit caller parameters. Controlled tests pass the injected pair; these signatures neither read the clock nor wait.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "027108d762ea542deb04fac6abd12ac34a68dac599fd5269c4bd10183fd0c9f6": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "evidence_identifies_rig_processing_time_and_expires_with_the_fix",
+      "rule": "clock-read",
+      "context_sha256": "7114f9022815fc046f37b88ceae16e852d16208dc7f673cd839eff8491c9f7e0",
+      "category": "fixed-input",
+      "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "0e86ce41126df5b96680fd843178fe92e0893208607938a00ee4ae0796bab4a1": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "controlled_source",
+      "rule": "clock-read",
+      "context_sha256": "eff8a493f23bcf3e0f8385bd8a28e7d348dffe122ff5baf51f1bacbaee14ea45",
+      "category": "fixed-input",
+      "reason": "One Instant::now seeds an opaque monotonic origin paired with fixed2026-01-01 UTC. All freshness/expiry assertions advance or compare explicit offsets from that stored origin; test execution speed cannot age the pair.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "866126f1ac272ae0f85df078a9f2f7e5c5d9243398defe04035de1d54811f5e8": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "controlled_source",
+      "rule": "clock-reference",
+      "context_sha256": "eff8a493f23bcf3e0f8385bd8a28e7d348dffe122ff5baf51f1bacbaee14ea45",
+      "category": "fixed-input",
+      "reason": "One Instant::now seeds an opaque monotonic origin paired with fixed2026-01-01 UTC. All freshness/expiry assertions advance or compare explicit offsets from that stored origin; test execution speed cannot age the pair.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "b419a1ecd85cfde1c2736629a6c41d2a0ad9bb0db94f2c1ca6ba74bd3822e068": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "valid_fix_expires_by_both_clocks_and_preserves_units",
+      "rule": "clock-read",
+      "context_sha256": "e72950241a0d0b6905c1101ab10f549d7105d44871365191c12b12f0114c8711",
+      "category": "fixed-input",
+      "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "b04724b5dd1f906a1e97fdc801de8a776635938853e9a8bf2c117e8642ed3d9f": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "malformed_protocol_and_partial_fixes_fail_closed",
+      "rule": "clock-read",
+      "context_sha256": "f66d3099ebf4b26cefb7a0ae91efea2686e7c15ae25e146af6b1670d2d12af21",
+      "category": "fixed-input",
+      "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "32555115be46f550ad08ea3506ed39c455e3a6c6c2469f5f43682eac56539be9": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "malformed_protocol_and_partial_fixes_fail_closed",
+      "rule": "clock-read",
+      "context_sha256": "f66d3099ebf4b26cefb7a0ae91efea2686e7c15ae25e146af6b1670d2d12af21",
+      "category": "fixed-input",
+      "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "2e561b24ddb7efa1dc627004361c5b044222f6c7b1f944069ccf2c027bcef20f": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "malformed_protocol_and_partial_fixes_fail_closed",
+      "rule": "clock-read",
+      "context_sha256": "f66d3099ebf4b26cefb7a0ae91efea2686e7c15ae25e146af6b1670d2d12af21",
+      "category": "fixed-input",
+      "reason": "This test uses controlled_source, so source.now returns the stored fixed wall/monotonic pair. Expiry advances that pair explicitly; malformed protocol checks use the same injected timestamp and no elapsed-time assertion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "2b3787f1a3b572e57dc989fc55d403a8b5b0019feaeeaf6b1b320f712ad6c5a6": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "4f539e1ee7def06e57fd8ff00a62819364ec7f78fda4a7410d3bf8576e77c82c",
+      "category": "virtual-time",
+      "reason": "Shared production ownership probe timeout. Focused timeout fixture runs under manual_time, observes actual TimerWitness registration and stdout consumption, then advances the registered virtual deadline; successful helper paths complete by real child output/reap events, not elapsed time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "ac152cf4ab4f34d5cc1a47efba91c266632b11517d9c38bbd81a0ae2cff194da": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-reference",
+      "context_sha256": "4f539e1ee7def06e57fd8ff00a62819364ec7f78fda4a7410d3bf8576e77c82c",
+      "category": "virtual-time",
+      "reason": "Shared production ownership probe timeout. Focused timeout fixture runs under manual_time, observes actual TimerWitness registration and stdout consumption, then advances the registered virtual deadline; successful helper paths complete by real child output/reap events, not elapsed time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "bb50f8362cd47dcb6766bb0cfe0d57f7f8c4922644a54ec0d209a951b53c6782": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "4f539e1ee7def06e57fd8ff00a62819364ec7f78fda4a7410d3bf8576e77c82c",
+      "category": "virtual-time",
+      "reason": "Shared production ownership probe timeout. Focused timeout fixture runs under manual_time, observes actual TimerWitness registration and stdout consumption, then advances the registered virtual deadline; successful helper paths complete by real child output/reap events, not elapsed time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "a94db01c464924bbdb8df79266fe0f73e1d032f4934d36094773a73a325ff254": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "2b4215de2964ad0bee7622a3b0d428c7faf26e9135ca7e371da1e4bcff096243",
+      "category": "production-scope",
+      "reason": "Managed gpsd startup ownership polling policy, unchanged production100ms retry. Fixture readiness is an actual child control handshake after bind; successful ownership is then inspected immediately. manual_time inhibits clock advance, so tests do not wait this interval to succeed. Production event-driven replacement remains a separate audit item.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "210584efaca0d6a197b67a3bc3606e983b25011271be7020b108489b3c53d8d2": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-read",
+      "context_sha256": "33d7852af6912ffb4a3b8391f0a39c4e12eda586d17d48c517562faeac5e0436",
+      "category": "fixed-input",
+      "reason": "Lifecycle fixture reads its injected Source wall/monotonic pair and explicitly advances the pair by one second per restarted helper generation. This models distinct TPV timestamps without reading elapsed runtime; repeated cached source timestamps remain rejected.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "552d0669c2bda658ecb536af963c0bbeda4a8ef18e4189b6719849ef3e87deab": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-reference",
+      "context_sha256": "33d7852af6912ffb4a3b8391f0a39c4e12eda586d17d48c517562faeac5e0436",
+      "category": "fixed-input",
+      "reason": "Lifecycle fixture reads its injected Source wall/monotonic pair and explicitly advances the pair by one second per restarted helper generation. This models distinct TPV timestamps without reading elapsed runtime; repeated cached source timestamps remain rejected.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "a11633e600554d622025728b0637bb39d28c5f4aff8f11e8d2acf7f7fda5d610": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "owned_helper_lifecycle_refuses_conflicts_and_clears_fixes",
+      "rule": "clock-reference",
+      "context_sha256": "33d7852af6912ffb4a3b8391f0a39c4e12eda586d17d48c517562faeac5e0436",
+      "category": "fixed-input",
+      "reason": "Lifecycle fixture reads its injected Source wall/monotonic pair and explicitly advances the pair by one second per restarted helper generation. This models distinct TPV timestamps without reading elapsed runtime; repeated cached source timestamps remain rejected.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact335/840 source inspection approved injected clock, virtual probe/reap and lifecycle offsets; production100ms polling remains unchanged and separately tracked."
+    },
+    "bc6ff7cfb6a4bc1015da2a2e5a53592fdd3fc6deccf103f3d1691554341ae7ee": {
+      "path": "apps/macos/Tests/AirHoundAppTests/SessionTests.swift",
+      "scope": "testServiceOwnedLifetimeAcrossPresentationDisconnect",
+      "rule": "shell-delay",
+      "context_sha256": "3c694553f55259abf6632bf013246a1f7f9cc8d37e36a30e0321456bee11ac63",
+      "category": "unresolved",
+      "reason": "Current840 fixture still polls a shell release marker with 50ms sleep and attempt count. Causal FIFO replacement is reviewed in pending338; do not approve the current site as an exception.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": ""
+    },
+    "e17835940de7756bd324567cca6b2cdc2d682106ee4d51c2a4aca6ef966c01d6": {
+      "path": "apps/macos/Tests/AirHoundAppTests/SessionTests.swift",
+      "scope": "testServiceOwnedLifetimeAcrossPresentationDisconnect",
+      "rule": "delay-or-deadline",
+      "context_sha256": "3c694553f55259abf6632bf013246a1f7f9cc8d37e36a30e0321456bee11ac63",
+      "category": "unresolved",
+      "reason": "Current840 fixture still polls a shell release marker with 50ms sleep and attempt count. Causal FIFO replacement is reviewed in pending338; do not approve the current site as an exception.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": ""
+    },
+    "a85875536b21fc6168f3340d47b532a827e975d930cfac6aaacfe2a54a47da0c": {
+      "path": "apps/macos/Tests/AirHoundCoreTests/CoreTests.swift",
+      "scope": "testTimeoutKillsAndReapsUncooperativeChild",
+      "rule": "clock-read",
+      "context_sha256": "ceaaa6dd0a745ff3b75d28ebdcaa9faf5accf71e478d891fe40e36f7339d8625",
+      "category": "virtual-time",
+      "reason": "ControlledProcessTime.now is injected; explicit child readiness precedes virtual deadline/cancellation. This is not a wall-clock read. Source and exact tests independently reviewed with330.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "9b3609363cbb08a270c7721815f16489dbfe8e71d4afd528f27375c5cfb28dc7": {
+      "path": "apps/macos/Tests/AirHoundCoreTests/CoreTests.swift",
+      "scope": "testCancellationWaitsForOwnedProcess",
+      "rule": "clock-read",
+      "context_sha256": "e6bd852e2449dac64a07b691f147c6476e638998311e6841c6b4662e0e910362",
+      "category": "virtual-time",
+      "reason": "ControlledProcessTime.now is injected; explicit child readiness precedes virtual deadline/cancellation. This is not a wall-clock read. Source and exact tests independently reviewed with330.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "af2be40a41edef40644b4209fe45383f81d5ddbe4cb5c93f6743fa2bafc83960": {
+      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "5ff4e966a24533eb4fa8709e3611312f8502888384af0ebd5e2c2757660e335a",
+      "category": "virtual-time",
+      "reason": "Asserts the unchanged timeout argument then injects TimeoutExpired only after exact child ReadyPipe readiness; cleanup grace is injected/event-driven. The15 value is a contract input, not elapsed wall time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "2dc69cfda13de00f19550e74a1d269dd69811681437377cc770522f090f9d88c": {
+      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "5ff4e966a24533eb4fa8709e3611312f8502888384af0ebd5e2c2757660e335a",
+      "category": "causal-event",
+      "reason": "The embedded child performs no clock read or sleep: it publishes a ReadyPipe record, waits on signal.pause and EOF/child.wait, then sends an explicit reap acknowledgement. The delay-import lexical finding does not represent a timing-based success predicate; timeout outcomes are injected by the parent after readiness.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "f995cbaa02dea41a8e4c9737a5eafd2982c3df36ed05fada2990710de5dca32b": {
+      "path": "apps/macos/Tests/BuildMetadataTests/test_test_runner.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "5ff4e966a24533eb4fa8709e3611312f8502888384af0ebd5e2c2757660e335a",
+      "category": "virtual-time",
+      "reason": "Asserts the unchanged timeout argument then injects TimeoutExpired only after exact child ReadyPipe readiness; cleanup grace is injected/event-driven. The15 value is a contract input, not elapsed wall time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "5fd2c1d06c1da672e89aa920c69fd494b35e4068c3f5d133a61e88972ec4ef51": {
+      "path": "apps/macos/run-tests.py",
+      "scope": "fixture-file",
+      "rule": "delay-or-deadline",
+      "context_sha256": "28cbb9d2f188acf0b8fc76e203835134aa40a4f33e795be44bf63fed251cbeab",
+      "category": "unresolved",
+      "reason": "Operational native-test subprocess runner retains real outer test deadline,2s TERM grace and bounded reap. Tests inject deadline/grace hooks, but runner operational-delay audit remains open; keep current full-file fingerprints unresolved rather than blanket-exempting them.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": ""
+    },
+    "6373b4358c51e08e24e8e27846a84780a1b78178af6fa381ce8cd521c9af83ef": {
+      "path": "apps/macos/run-tests.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "28cbb9d2f188acf0b8fc76e203835134aa40a4f33e795be44bf63fed251cbeab",
+      "category": "unresolved",
+      "reason": "Operational native-test subprocess runner retains real outer test deadline,2s TERM grace and bounded reap. Tests inject deadline/grace hooks, but runner operational-delay audit remains open; keep current full-file fingerprints unresolved rather than blanket-exempting them.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": ""
+    },
+    "b61e444d24a71f7730db9e85219333d262073fa99a7f2a1b318d94df9a0618f8": {
+      "path": "apps/macos/run-tests.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "28cbb9d2f188acf0b8fc76e203835134aa40a4f33e795be44bf63fed251cbeab",
+      "category": "unresolved",
+      "reason": "Operational native-test subprocess runner retains real outer test deadline,2s TERM grace and bounded reap. Tests inject deadline/grace hooks, but runner operational-delay audit remains open; keep current full-file fingerprints unresolved rather than blanket-exempting them.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": ""
+    },
+    "60a528195f7898491707bf8a09b12c1b2b89f8b3c57716c7436a5b45e36ab67c": {
+      "path": "scripts/test-process-support.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "5d6f795963c451b82ab39694fc184fe361b4f444c8349e87ed42e614b17d715d",
+      "category": "outer-hang-guard",
+      "reason": "One30s outer watchdog bounds reading a complete newline-terminated ReadyPipe message; readiness is established solely by actual framed data. Clock expiration fails infrastructure, never proves behavior under test.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
+    },
+    "504847ac68187f9e739d11d36eb73878303bdad615ea5c0cb4138aba9c406865": {
+      "path": "scripts/test-process-support.py",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "5d6f795963c451b82ab39694fc184fe361b4f444c8349e87ed42e614b17d715d",
+      "category": "outer-hang-guard",
+      "reason": "One30s outer watchdog bounds reading a complete newline-terminated ReadyPipe message; readiness is established solely by actual framed data. Clock expiration fails infrastructure, never proves behavior under test.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact840 contexts approved after literal embedded-child import rationale correction; seven classified sites, five separately unresolved."
     }
   },
   "migration_baseline": {
