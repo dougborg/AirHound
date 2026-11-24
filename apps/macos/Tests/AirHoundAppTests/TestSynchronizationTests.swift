@@ -124,17 +124,22 @@ final class TestSynchronizationTests: XCTestCase {
       printf 'socket created, not listening yet\n' >&2
       : > "$3"
       IFS= read -r released <&3 || exit 2
-      printf 'DEBUG AirHound control socket listening\n' >&2
+      printf 'DEBUG AirHound control socket listening' >&2
+      IFS= read -r newline <&3 || exit 3
+      printf '\n' >&2
       IFS= read -r cleanup <&3
       """, "fixture", release.path, socket.path, started.path,
     ]
-    let log = try FixtureServiceLog(process: process, path: root.appendingPathComponent("stderr"))
+    let logPath = root.appendingPathComponent("stderr")
+    let log = try FixtureServiceLog(process: process, path: logPath)
     try process.run()
     defer { XCTAssertTrue(stopOwnedProcess(process)) }
     try await awaitFixtureFile(started)
     XCTAssertTrue(FileManager.default.fileExists(atPath: socket.path))
     let notReady = expectation(description: "Socket creation does not satisfy listen witness")
+    let partial = expectation(description: "Unterminated diagnostic does not satisfy witness")
     var checked = false
+    var checkedPartial = false
     var completed = false
     let task = Task {
       try await log.wait(for: process) { ready in
@@ -143,14 +148,79 @@ final class TestSynchronizationTests: XCTestCase {
           XCTAssertFalse(ready)
           notReady.fulfill()
         }
+        if !checkedPartial,
+          (try? String(contentsOf: logPath, encoding: .utf8))?.hasSuffix(
+            "AirHound control socket listening") == true
+        {
+          checkedPartial = true
+          XCTAssertFalse(ready)
+          partial.fulfill()
+        }
       }
       completed = true
     }
     await fulfillment(of: [notReady], timeout: 30)
     XCTAssertFalse(completed)
     try barrier.release()
+    await fulfillment(of: [partial], timeout: 30)
+    XCTAssertFalse(completed)
+    try barrier.release()
     try await task.value
     XCTAssertTrue(completed)
+  }
+
+  func testServiceExitWithoutAnotherLogWriteWakesAndFailsReadiness() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let release = root.appendingPathComponent("release")
+    let barrier = try FixtureReleasePipe(release)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [
+      "-c", "exec 3<>\"$1\"; IFS= read -r release <&3; exit 7", "fixture", release.path,
+    ]
+    let log = try FixtureServiceLog(process: process, path: root.appendingPathComponent("stderr"))
+    try process.run()
+    defer { XCTAssertTrue(stopOwnedProcess(process)) }
+    let observing = expectation(description: "Readiness is observing a still-running child")
+    var first = true
+    let task = Task {
+      try await log.wait(for: process) { ready in
+        if first {
+          first = false
+          XCTAssertFalse(ready)
+          observing.fulfill()
+        }
+      }
+    }
+    await fulfillment(of: [observing], timeout: 30)
+    try barrier.release()
+    do {
+      try await task.value
+      XCTFail("A child that exits before listen must not be ready")
+    } catch {
+      XCTAssertEqual((error as NSError).code, 4)
+    }
+    XCTAssertNil(process.terminationHandler, "Readiness must release its exit observer")
+    XCTAssertEqual(process.terminationStatus, 7)
+  }
+
+  func testStorageWitnessRefusesCompetingExitObserverWithoutReplacingIt() async throws {
+    let process = Process()
+    let original = expectation(description: "Original exit observer retained")
+    process.terminationHandler = { _ in original.fulfill() }
+    do {
+      try await waitForFixtureStorage([], ownedProcess: process) {
+        XCTFail("Competing exit ownership must reject before querying")
+        return true
+      }
+      XCTFail("Competing exit ownership must be rejected")
+    } catch {
+      XCTAssertEqual((error as NSError).code, 5)
+    }
+    process.terminationHandler?(process)
+    await fulfillment(of: [original], timeout: 30)
   }
 
   func testStorageWitnessCancellationJoinsItsPendingQueryWithoutAnotherWrite() async throws {

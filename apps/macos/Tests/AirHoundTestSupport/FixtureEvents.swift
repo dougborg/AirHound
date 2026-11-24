@@ -45,7 +45,7 @@ public final class FixtureServiceLog {
   public func wait(
     for process: Process, onCheck: @escaping @MainActor (Bool) -> Void = { _ in }
   ) async throws {
-    try await waitForFixtureStorage([path]) { [path] in
+    try await waitForFixtureStorage([path], ownedProcess: process) { [path] in
       let reader = try FileHandle(forReadingFrom: path)
       defer { try? reader.close() }
       let data = try reader.read(upToCount: 256 * 1024 + 1) ?? Data()
@@ -54,7 +54,8 @@ public final class FixtureServiceLog {
           domain: "AirHoundTestSupport", code: 3,
           userInfo: [NSLocalizedDescriptionKey: "Service readiness log exceeded its bound"])
       }
-      let ready = String(decoding: data, as: UTF8.self).split(separator: "\n").contains(where: {
+      let complete = data.lastIndex(of: 0x0a).map { data.prefix(through: $0) } ?? Data()
+      let ready = String(decoding: complete, as: UTF8.self).split(separator: "\n").contains(where: {
         $0.hasSuffix("AirHound control socket listening")
       })
       onCheck(ready)
@@ -133,9 +134,21 @@ public func waitForFixtureFile(_ path: URL, onWatching: @escaping () -> Void = {
 @MainActor
 public func waitForFixtureStorage(
   _ files: [URL], onWatching: @escaping (URL) -> Void = { _ in },
+  ownedProcess: Process? = nil,
   condition: @escaping @MainActor () async throws -> Bool
 ) async throws {
   let events = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+  // This optional witness owns the handler only while awaiting readiness. It
+  // must finish (including cancellation) before the caller starts exit cleanup.
+  if let ownedProcess {
+    guard ownedProcess.terminationHandler == nil else {
+      throw NSError(
+        domain: "AirHoundTestSupport", code: 5,
+        userInfo: [NSLocalizedDescriptionKey: "Fixture already has an exit observer"])
+    }
+    ownedProcess.terminationHandler = { _ in events.continuation.yield(()) }
+  }
+  defer { ownedProcess?.terminationHandler = nil }
   var sources: [String: DispatchSourceFileSystemObject] = [:]
   let completion = XCTestExpectation(description: "Fixture durable state completed")
   var failure: Error?
