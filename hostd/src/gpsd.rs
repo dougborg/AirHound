@@ -54,6 +54,8 @@ struct Tracker {
     reason: &'static str,
     protocol_ok: bool,
     daemon: Option<serde_json::Value>,
+    #[cfg(test)]
+    clock: Option<(DateTime<Utc>, Instant)>,
 }
 impl Source {
     pub fn new(device: Option<String>) -> Self {
@@ -64,10 +66,20 @@ impl Source {
             reason: "connecting",
             protocol_ok: false,
             daemon: None,
+            #[cfg(test)]
+            clock: None,
         })))
     }
+    fn now(&self) -> (DateTime<Utc>, Instant) {
+        #[cfg(test)]
+        if let Some(now) = self.0.lock().unwrap_or_else(|e| e.into_inner()).clock {
+            return now;
+        }
+        (Utc::now(), Instant::now())
+    }
     pub fn location(&self) -> Option<crate::wigle::Location> {
-        self.location_at(Utc::now(), Instant::now())
+        let (wall, monotonic) = self.now();
+        self.location_at(wall, monotonic)
     }
     fn location_at(
         &self,
@@ -82,9 +94,10 @@ impl Source {
             .map(|fix| fix.location)
     }
     pub fn health(&self) -> serde_json::Value {
+        let (wall, monotonic) = self.now();
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let reason = match &state.fix {
-            Some(fix) if !fresh(fix, Utc::now(), Instant::now()) => "stale",
+            Some(fix) if !fresh(fix, wall, monotonic) => "stale",
             _ => state.reason,
         };
         serde_json::json!({"source":"gpsd", "state":reason, "device":state.device,
@@ -97,8 +110,7 @@ impl Source {
     /// One fresh snapshot, associated when the host processes the observation.
     /// Serial buffering and unsynchronized producer clocks prevent a capture-time claim.
     pub fn evidence(&self) -> Option<serde_json::Value> {
-        let now = Utc::now();
-        let received = Instant::now();
+        let (now, received) = self.now();
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let fix = state.fix.as_ref().filter(|fix| fresh(fix, now, received))?;
         Some(serde_json::json!({
@@ -353,13 +365,13 @@ pub(crate) mod tests {
         );
         source
     }
+    pub(crate) fn set_clock(source: &Source, wall: DateTime<Utc>, monotonic: Instant) {
+        source.0.lock().unwrap().clock = Some((wall, monotonic));
+    }
     pub(crate) fn feed(source: &Source, value: serde_json::Value) {
+        let (wall, monotonic) = source.now();
         source
-            .line(
-                &serde_json::to_vec(&value).unwrap(),
-                Utc::now(),
-                Instant::now(),
-            )
+            .line(&serde_json::to_vec(&value).unwrap(), wall, monotonic)
             .unwrap();
     }
     pub(crate) fn tpv(time: DateTime<Utc>) -> serde_json::Value {

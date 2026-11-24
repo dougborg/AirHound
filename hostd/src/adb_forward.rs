@@ -271,23 +271,18 @@ mod tests {
     }
     impl Fixture {
         fn new(mode: &str) -> Self {
-            let nonce = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
             let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "airhound-adb-{}-{nonce}-{sequence}",
-                std::process::id()
-            ));
+            // A macOS TMPDIR may exceed the Unix-domain socket path limit.
+            let root = PathBuf::from("/tmp")
+                .join(format!("airhound-adb-{}-{sequence}", std::process::id()));
             std::fs::create_dir(&root).unwrap();
             let executable = root.join("fake-adb");
-            let serial = format!("fixture-{}-{nonce}-{sequence}", std::process::id());
+            let serial = format!("fixture-{}-{sequence}", std::process::id());
             std::fs::write(root.join("mode"), mode).unwrap();
             std::fs::write(
                 &executable,
                 r#"#!/usr/bin/env python3
-import sys,pathlib,json,os,time
+import sys,pathlib,json,os,signal,socket
 p=pathlib.Path(__file__).parent
 assert sys.argv[1:6]==['-H','127.0.0.1','-P','5037','-s']
 serial=sys.argv[6];args=sys.argv[7:]
@@ -298,11 +293,15 @@ elif args==['get-serialno']:print('wrong' if mode=='wrongserial' else serial)
 elif args==['get-devpath']:print('network:host' if mode=='network' else 'usb:fixture')
 elif args==['forward','tcp:0','tcp:8082']:
  (p/'forward').write_text(serial+' tcp:49123 tcp:8082\n')
+ if mode=='delayed':
+  gate=socket.socket(socket.AF_UNIX);gate.bind(str(p/'release'));gate.listen(1)
  (p/'allocated').write_text(str(os.getpid()))
  if mode=='lost':sys.exit(0)
- if mode=='delayed':time.sleep(.2)
+ if mode=='delayed':
+  peer,_=gate.accept();assert peer.recv(1)==b'!';peer.close();gate.close()
  print('49123',flush=True)
- if mode=='hang':time.sleep(30)
+ (p/'emitted').write_text('ready')
+ if mode=='hang':signal.pause()
 elif args==['forward','--list']:
  if (p/'forward').exists():print((p/'forward').read_text(),end='')
 elif args==['forward','--remove','tcp:49123']:
@@ -334,7 +333,7 @@ else:raise AssertionError(args)
         async fn wait_allocated(&self) {
             timeout(Duration::from_secs(3), async {
                 while !self.root.join("allocated").exists() {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    tokio::task::yield_now().await;
                 }
             })
             .await
@@ -343,7 +342,7 @@ else:raise AssertionError(args)
         async fn wait_removed(&self) {
             timeout(Duration::from_secs(3), async {
                 while self.root.join("forward").exists() {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    tokio::task::yield_now().await;
                 }
             })
             .await
@@ -388,6 +387,12 @@ else:raise AssertionError(args)
         f.wait_allocated().await;
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
+        // The ownership task remains blocked until this explicit response gate.
+        use std::io::Write;
+        std::os::unix::net::UnixStream::connect(f.root.join("release"))
+            .unwrap()
+            .write_all(b"!")
+            .unwrap();
         f.wait_removed().await;
         // Wait for final inventory and lease release, not merely unlink.
         timeout(Duration::from_secs(2), async {
@@ -395,7 +400,7 @@ else:raise AssertionError(args)
                 if airhound_hostd::serial_lease::acquire_adb(&f.config.serial).is_ok() {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                tokio::task::yield_now().await;
             }
         })
         .await
@@ -419,7 +424,22 @@ else:raise AssertionError(args)
     #[tokio::test]
     async fn complete_response_survives_command_timeout_and_child_is_reaped() {
         let f = Fixture::new("hang");
-        assert!(Forward::open(f.config.clone(), f.hash()).await.is_err());
+        let config = f.config.clone();
+        let hash = f.hash();
+        let task = tokio::spawn(async move { Forward::open(config, hash).await });
+        timeout(Duration::from_secs(3), async {
+            while !f.root.join("emitted").exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // stdout was flushed before the marker. Expire the real command
+        // timeout with virtual time, then resume before subprocess cleanup.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(3)).await;
+        tokio::time::resume();
+        assert!(task.await.unwrap().is_err());
         assert!(!f.root.join("forward").exists());
         let pid = std::fs::read_to_string(f.root.join("allocated"))
             .unwrap()
@@ -511,14 +531,14 @@ else:raise AssertionError(args)
         let f = Fixture::new("normal");
         let decoder = f.root.join("decoder");
         std::fs::write(&decoder, r#"#!/usr/bin/env python3
-import json,os,time,sys,pathlib
+import json,os,signal,sys,pathlib
 assert sys.argv[1:]==['--endpoint','ws://127.0.0.1:49123/raw-diag']
 p=pathlib.Path(__file__).parent
 n=int((p/'connections').read_text())+1 if (p/'connections').exists() else 1
 (p/'connections').write_text(str(n))
 print(json.dumps({'ipc_version':1,'kind':'hello','stream':{'version':1,'replay':False,'format':'u32le_json_length+json+exact_device_read','stream_epoch':'fixture','next_sequence':0}}),flush=True)
 print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid()}),flush=True)
-if n>1:time.sleep(30)
+if n>1:signal.pause()
 "#).unwrap();
         std::fs::set_permissions(&decoder, std::fs::Permissions::from_mode(0o700)).unwrap();
         let control = crate::control::ScanControl::new(true);
@@ -530,6 +550,22 @@ if n>1:time.sleep(30)
             control.clone(),
         ));
         let (first, _) = decoder_event(&mut rx).await;
+        timeout(Duration::from_secs(4), async {
+            loop {
+                if let Some(crate::observation::ScanEvent::Cellular { record, .. }) =
+                    rx.recv().await
+                {
+                    if record["reason"] == "transport_disconnect" {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::time::resume();
         let (second, _) = decoder_event(&mut rx).await;
         assert_ne!(first, second);
         control.shutdown();
@@ -567,25 +603,32 @@ if n>1:time.sleep(30)
             let f = Fixture::new("normal");
             let decoder = f.root.join("decoder");
             std::fs::write(&decoder,r#"#!/usr/bin/env python3
-import json,os,time,sys
+import json,os,signal,sys
 assert sys.argv[1:]==['--endpoint','ws://127.0.0.1:49123/raw-diag']
 print(json.dumps({'ipc_version':1,'kind':'hello','stream':{'version':1,'replay':False,'format':'u32le_json_length+json+exact_device_read','stream_epoch':'fixture','next_sequence':0}}),flush=True)
-while True:
- print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid()}),flush=True)
- time.sleep(.02)
+for tick in range(4):
+ print(json.dumps({'ipc_version':1,'kind':'status','pid':os.getpid(),'tick':tick}),flush=True)
+signal.pause()
 "#).unwrap();
             std::fs::set_permissions(&decoder, std::fs::Permissions::from_mode(0o700)).unwrap();
             let control = crate::control::ScanControl::new(true);
             let (tx, mut rx) = tokio::sync::mpsc::channel(2);
-            let task = tokio::spawn(crate::rayhunter_source::scan_adb(
+            let (witness_tx, mut witness_rx) = tokio::sync::mpsc::channel(8);
+            let task = tokio::spawn(crate::rayhunter_source::scan_adb_test(
                 f.config.clone(),
                 decoder,
                 tx,
                 control.clone(),
+                witness_tx,
             ));
             let (first, generation) = decoder_event(&mut rx).await;
             let last = if cancel {
-                tokio::time::sleep(Duration::from_millis(60)).await; // block real source queue
+                timeout(Duration::from_secs(4), async {
+                    while witness_rx.recv().await.unwrap() != 3 {}
+                })
+                .await
+                .unwrap();
+                assert_eq!(rx.len(), 2, "tick 3 faces the full source queue");
                 task.abort();
                 assert!(task.await.unwrap_err().is_cancelled());
                 first
@@ -609,7 +652,7 @@ while True:
             f.wait_removed().await;
             timeout(Duration::from_secs(3), async {
                 while unsafe { libc::kill(last, 0) } == 0 {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::task::yield_now().await;
                 }
             })
             .await
