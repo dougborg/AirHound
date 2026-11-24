@@ -112,7 +112,8 @@ class TimingGuardTests(unittest.TestCase):
                 self.assertEqual(guard.external_test_modules('src/lib.rs', source, root, helper=False), ({'src/tests/helper.rs'}, []))
 
     def test_duration_inputs_alone_are_not_clock_evidence_but_client_seams_are(self):
-        self.assertEqual(guard.scan('tests/data.rs', 'fn data(){ Duration::from_secs(5); }'), [])
+        for value in ['Duration::from_secs(5)', 'std::time::Duration::from_millis(12)', 'core::time::Duration::ZERO']:
+            self.assertEqual(guard.scan('tests/data.rs', 'fn data(){ ' + value + '; }'), [])
         self.found('#[test] fn f(){ Client::connect(path, duration); }')
         self.found('#[test] fn f(){ Client::handshake(stream, duration); }')
 

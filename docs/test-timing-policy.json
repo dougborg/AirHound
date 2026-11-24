@@ -14,985 +14,1269 @@
     "scripts/check-release-assets.py": "Imported by test_release_assets.py; explicit helper coverage."
   },
   "dispositions": {
-    "30fde02d114e7cf3ef985eac05e5531f12d5fb111712a5be65a06a53c0419884": {
+    "2fe988516e1bd28cada91f9ce3288d5561da176e769717a362ee44738c1ac7e4": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "399a0eb19f1bad80976a4aefcb77d4c5f06d27a49f5994bbef6e2bcc316885b0": {
+    "36102d8d838fce84d0ee1aee2528af0c4afcb3ca809ece34d954064a732d5962": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "41f4d5fea35730d1b2aa2ba56eed6c76d47bf00f7777c11c2cf2a1018ad39575": {
+    "36db53c2afa6b892b3bcd29e52bf1caba470c6331d61363d6daffc11fd7acfda": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "613214f1aa3bfb6afcc3ac5d36c49adc495f76ec253039c4f0d6323cc6482e7e": {
+    "57de36585821d4e4f3655084c8bb533282b9fa0300ebcd0597f808321f627f57": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a6f1a1177cfa7f033e04b7b7a17f7522731a5c436b522737aa777cb56a44b800": {
+    "6ca7fedee06b78f814d3c9aa036cbacab48bd816b86751f3406ac17ecc2ebe43": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "b532e9c500f203a6739e288d9f0b186cd7f17c8c63d913dd32c02b5e4645f051": {
+    "a00dd092679e0898b30a3643fcc68bf7f9d56b42e1215062d0eec16a3f3f02d8": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "c5bea43d0fd9f00b47252c8570cb44e4024be2388ef957a12d177bcc43937eca": {
+    "a36546d58ddaf8aaac491d0732bfa8ef0fa4bd4fb55b03abce3ca301834760a4": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "cefb726f4849357af4eebb20e09c94253ed643c0d92622430c02a31fc66147ab": {
+    "a6638ad6308e4b0cbb6aaff1c3f8d0e51e9f6e9232fdd87009fe39673d161b7b": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "d02b85ea72f840a93e1bda466c6ccfb1d664a37768c935afaae8333d7c8dc839": {
+    "df28e76f8ba1234e0874201b797677e3fadb1cabc15c67d7bbf31fbf24650143": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "d626156315e72c23b78ddb9331d404cb8f637757fad4592e97e7c3bda29b90dd": {
+    "e8c472fbfd5ad50731ab0ff8f4d72f6e4d7bffc3cfd1b5184b3136e7e9499963": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "e4e325771d49d77bf7634a74e57052f630dfaa090f90a280812baed4d6820a61": {
+    "f55508065aec86769970b5b182a7462ff3b5c438ce0478ebdc92d2a5c9342aee": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "f8e64a67e2d11a75d81f61ebbbf70d7a80f3d84db92c35f19ea36c4f6952c115": {
+    "fbbe375891e56cc33bc694b810233b5cf7e6b7d4760823f61f4ab769bac04d42": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "fb675db22e901b7cac17d0d9f411b82a6e4f9b9248eed2d74ca67b3aa1874480": {
+    "fe61063303fa860d20094608c347e552a777aa3d60cae6c2d890435ef5208664": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "0ee7391fb56788dfc349d26a414fac1e85034b9e112862dabc02229b1b0988f6": {
+    "0f0534634c7ea797d909330a1262b0fce3aaabedafbcbcaca7c0d739889637a9": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "46746dc437d9b3415935d538e106c9f78e980b9cf0c17499136f5bc8282099a5": {
+    "379decd0eb214271568bc30dcb59f0cc1a5ca9dc3105f496ea1ef5208f827c0c": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "562686d405bff99d91b421486522b9137da5d6b3d8c1b9649722f9351f25e82a": {
+    "3a1f6f66013c1669276814183da52c42ecf98a9d5bbb897e8952c55c00e237e3": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "66ed946b7001b50e94ff061013c747585e7e8e1a111b4d7f1d859ba15b00a922": {
+    "6241e0e22ed72ff82a16f8e71ce1eda2597b26a619f829428f71826b8e5aac71": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8dd0f39b9c049603f427b4b0bcfee1765736b9842d80a0ba94a81fe0e20d63e7": {
+    "773bfe01be6fec5c070b88acf496c33b07b356ca28b3f9136e69ed301203c08b": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "98573c08aaa96f0f200731a2d42bedae578cbc80c803eae8c9ffc7c3a4071c0d": {
+    "81f0fe94232211ce8248dfadad45f0a66c115658c6f7d2c77d3a808ad7505cb5": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9dc648b9d9683c865870b2b98692397b26c253047724fb09ac8dbf135b7b87c0": {
+    "966cfc3ff7c613631127dd7d82469723b2c9bdb4574d85a8e3868c3dd953e3b9": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "cd43ca93f9f4e59cc12701431ae7202618dd18c12b844993eb60f00a90b23c71": {
+    "ca95e1ef7c2c88186473629e01118213fc145db26060da6fa17a6d114ef95f89": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "d071677af0f2542c0d0ad85539049971cc64e4e072a0f18ad218ed3d74bf60fb": {
+    "da4b8a55cf4d374fad83e3bff203514146339c40e7a6e54086f21f14d24de24e": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "f3beef4bffbd42b109e9a48038378f61526cc0ff8707cfc9544de53d5a41cdf4": {
+    "e5946bb5f5fb1ca9da1dc3be92b9b990417d319953b85d5884891de3e883792d": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "0a217277edb64d8b775f6c457edb76194807755afe87de21208d972a41693b86": {
+    "52ebceee5c8c36091bd5bd78b3b13633dcaab8ec32b4a5cd6c3e45f9e557a794": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "6a923fa7fd0d53d0f91385535e2c4c81817b3d8c6c5843389edf9301cc90aead": {
+    "a5cee49b3f0d022609ff8e160627ef0387fe36ba1392f5b11c85051677a9dd6b": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9619a7c3ce038e4200c2e5515e5127ae6040ce47c414fd8dc6fe10460881acd6": {
+    "b3ad9dfd231b82de9cf7312158e0e76af21f43314603a83181505d46cd02c1ca": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "4393727fc1377a4929c01d1adeed2564217bf174c3ba457341eeac501af716db": {
+    "62dc55a80b110eaab31107291c51687b82a83733c8eaebacbe775f3531305a5a": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "590dab85003bcb8e0c294a78879870dce6d0e8572656049a221b171f05faa1b0": {
+    "dab45b89c29267b7b3320ad7ec93388faeab44b2e59043d39fc31bda5e24106f": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "6b1757050bb44d71dea426ddb25da4cfeaf0525d71dfa8c0855152dd6f24d5ca": {
+    "0c79d6dbb2ac7b5bbc44bbbade4231ec9ea330c05c5ddb0c13d4be86dbf5fa94": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "6e16af05764be9b29b74c09a7fdab744bb65d3f27919aa9944ae84932b36a402": {
+    "b2c19bffe761bdc01b8a3947916909a0523962eaf9ccfe9ae8bb354acc64a7fc": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8518bcbc876c1ec9664e5d64b1e64700deb5523e4f5c293600339e7d80408ece": {
+    "c10797b8e85ef57e6fc5f0bc3985e1104c2425bead0d27942ed89a69e0edd877": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "0ac13e40be0086fb6cb1eeb79d5f056fe35eb8d88c689c3e4301a49dbb4da6b5": {
+    "5f9db0daff1fd876e5be3a24326b18ab101110e58016b839b544c60b8a41a67c": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a679b328dcecf54ef94f2bc4ca722406bda7b4d8082e2b8ed5cacf741453a2d6": {
+    "af2b25c4945eaec285aae2a3172e6bd74269ab559217d3c9e8f4c19c57af3884": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "5aa907377ac6a07c75f65df09d6ccc4e4ea706325985e4a7e690230091ee1071": {
+    "054a6ac9d05437d5ecba86ad4a79573f9469d3406cc029d6f203d7c20aa78205": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "f2da66a1e0e02bdc7a1d27cd9023bd14a82e1bb3b9cdb1203f69a93b0b5b5f04": {
+    "5e77bdcfc257b508673f7c4648623a5dbbf7893de444489c0f639060a792a952": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "3ec54102071cc068cf96b633a15f2dd69097fafd7577f97fcf43f73f2ec80543": {
+    "6ad4ddc60d2f59b0b6d7f5bd63ad72029ef09fcf47c7ae30284b399b139e4a89": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8fa9fae5cc14feffc10177ae7af40eeebf4bcf059f46cbf3f264780120944f70": {
+    "e74d4df233fdc3a835b9b0c1858b04da0255f05b453c02bc11a286503be732a8": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9372ad09e98ea59dc0bbcf070ff438a96f34572bdefc13ffc8b1eab5d7b9610d": {
+    "f32e52c8e97a19a30e4fa4d5d7c3e67d716a378a5b66bcd39ea56b991472caad": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "cf443cf81ff228939f0b99c6b7e52f357742526ebed98de5b701763ab64f22ce": {
+    "7129737846670f6aa9618830e066160937b2ad93c6eb6610f36a7c7124c4544f": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "e827dcd155a0f215ff9007c473b38b24ee9f2411897defaec949bb7b2bd71c85": {
+    "ad9e6ee0f84a09093352258ae684f1975afd718cd1d24304fe85b01dfd3180ad": {
       "path": "scripts/check-test-timing.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "97090e0d0e1b09948af34e82f0e282bb61af9de2aae0a4152bb8808c1813f34a",
+      "context_sha256": "847de5465afa1d02c97eb46a417289994e0b0077e9b313431c46fe971c22550c",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "e61e0f5cec50be8d242a8bfb5cf793ec34b201afc1da2dd0d923ae926237fe01": {
+    "099929f35c725fc78bcf40c383b2635fddcfbee2b3b54282ab660d6c7c3b4739": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "b38aadc4648004afac4f8af139db9e5715114542a723a2c3054589f64ed17269": {
+    "35c3bee873ea1b9b4c4eefe10801213c233d84a2b15ddb718b075e141cb2ce0d": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a83cb5b7c5cf7914d7ad91a6f6240fda10c622273c4e85eaacdbb86305138a70": {
+    "4feac81812cb3d620cdea0328978c34b526dbeec5e187096676f792cd87bd4f5": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "7d4144d116ebc5447eb05b0fb966e060fe731e5afb078d55efe7d8662573f401": {
-      "path": "scripts/tests/test_test_timing_guard.py",
-      "scope": "fixture-file",
-      "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
-      "category": "detector-input",
-      "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
-    },
-    "8d06d8f1dbdc87ff2569847bb1bb3c1f67c50aa86c8c633f76cbee84b70a597c": {
+    "8a00373bfb9adf43daacac47043e968c8a6d8dd1a206b4fe2273dc7e198d73cb": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "19b8cf3cbb139376af0a6b93e7a1540548592e6a5a85fb4aea7684a583cd9b2a": {
+    "9a067a1b4360e81800b7460861820fcead6fd5ca304f4fd8de197504d886a13b": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9a04821eab8f9620077daa6fd7f1db47f5e43e848b7f2144c3a437a061580a7d": {
-      "path": "scripts/tests/test_test_timing_guard.py",
-      "scope": "fixture-file",
-      "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
-      "category": "detector-input",
-      "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
-    },
-    "f71819e5ee036fd5ffc973e523ba32a1a424d06d7078cdd42d9b688f59457b3d": {
+    "ad778f574965e6c744341a9aceb7426ecd595b49c83ec57f2630a4854286d29d": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "3bbda34a55b8daff455a34de1550936c20695368fdad313bcf9993349e20e708": {
+    "ebc2004bc5b911a33c45e5acd25e6c6ef8540315db0efd1a8877c70b0af007cf": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "118eab5cae376ce249b650e8315b41fa096c35e6f644259b618a5cfe67da6c4f": {
+    "dec1dce1b7fe0593531ed42de7e8e0420b9795adfccccd369435be163caf2b54": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "507616ddeb0dd8399e0c9f1434a26fd85a9e57e459769550f021f667eb7ec386": {
-      "path": "scripts/tests/test_test_timing_guard.py",
-      "scope": "fixture-file",
-      "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
-      "category": "detector-input",
-      "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
-    },
-    "ce0b48a7e694110b970e57c4a10b3da7af7c06d3d4a6c6fc97cfa034a432357f": {
+    "7442d4ae84c6fba5d1d37d816e17fcfb68d22e69a7e7d2a55854f0d4c2254c0b": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "30f3b526f0a47487c076ce43a4e9011313a171af31e8c0e54e7fb107c7c7b8bd": {
+    "ecbfae66d4b768dd6a4991eb9eaca0814b2c98af4c5845b8fa1a0ae1cfda89ee": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a0261ea2b957a62c384764ebf38307959f0d72de3224462945f287af4fc5f7f4": {
+    "29e3e54202be00f29c1205c505aac3c55d89138b8ccf7910657d4ed6f3583906": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "43c88afc6ea1de8f8002cb3d5ede4dbebd8f3cfdeff2577683b5fdbf574b6d1c": {
+    "9fc1e20b0cf55c586b9f1acb1dacbf676b6a49d2c4ecc3201432a37f4aa6a03c": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "1e1581f6287f423f5b9951af1efaf60c08a647094423c98c82fab8b32c0b2481": {
+    "fa23e7da29382b1c00063d83a7de1a03436ddd5bf87c20c8fd2352706161c99e": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "shell-delay",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "b5ec8c8f810b93b74a045a84ac083b6f090eea0b0235eda9ce0a6096f19a32f3": {
+    "6e5c78d7475c0a7a43e583978ff718ce268bf449fd844428a1e83bf58fde07ab": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "7debc199caf9d0f0795ab9c219b9d1357d82091f92ef36a1bb83b8bf2b1ee4e2": {
-      "path": "scripts/tests/test_test_timing_guard.py",
-      "scope": "fixture-file",
-      "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
-      "category": "detector-input",
-      "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
-    },
-    "422542956e5a012b0a6ede7e2e6c5db4c3cdc5e1e43cc9441521aeb61619419f": {
+    "640014c8a0f9ac91a93b289295bf36e555a7e0888aad255ac8d6d61eb0177215": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "4d63aa2321f12d02cfea6d694b0c8be8d9c755bc69dfd0f1b56621f0885461a0": {
+    "3ab461b8d124942fb3a2e1b074091c74c8387c1051f8872b914a90cbe6eb072d": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "6ca2b42361d6e6b02d81c874028f4dc4126af56be0d6b3df7368d09de2b2073d": {
+    "9f93c0880d2e744b09471ce5f696e1c2bf01079cc1e7aeb49b772265d04c54c7": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8ed749e068947ce759a98241c164637d35d4961a72801918b8f390b0ead57489": {
+    "03b8107395fc6f47e96190558b0d70b137304ea4f2d843841dcbdd7ce91c8ca3": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "indirect-delay",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "d469aa7efc06f75eda4057a599101bd22990a84180de93193c6c9885372ba9a8": {
+    "3b665333bd601f4fbb4e65ffa0fdc6dc984fe118bab29dfeb4c9e31db660771d": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-reference",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "1dea6ada2af92518db4aa322208855b957970273243ca3b93ee775d495e21fda": {
+    "19e317962de5207eff4bdee7e6a684ca8aab3d7d4d4c7b32e250892b3dd1fee0": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "c038956ca68c4fa506d99fe941d5c7851b84f178575f5fa026ca6c2220ac4c37": {
+    "ef786ba4bf328893935dc91116df1aa2f8c5fe208509e4919c6d9d9c4fbc74a2": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "09f09b780fdd194abd0034a278f1a06b214ad25500bfa1a675b087f0ee1eb6b1": {
+    "2fb5d3c589d9d8fd07a2d6f7d97c4c277da3895e6ab251df7bc173e8c40ddde5": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "13a0ab6f5c0d997f2b5c64e3fc5e6f522a54ee8a716997c2e88be9f7dc253262": {
+    "4d0dc751de3fa160066f6b841f0ca3d5dc77fa8a912329d1b6b81116db6a467a": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "d015391f97df628063e87c0d55d60ba6a2a1bba3e538e21f5067751c16e37910": {
+    "53afaedb2a8d5a8f30d3462432b98347d654a98515b394abdd1c603668b583d4": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "51bf5b5507f853987b0a07d795077e0fceee7c2bf44a7466b3124703b217047d": {
+    "55c794cce3b4db3d7ab85daa4363e2fcfd25306920dc977071c53b1249202b75": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8ded4d30c78c0cb3054313012e121869ef42dcc17e7f44c402a1eb0217d7aeef": {
+    "52c0d0589d64617fd1e3f6e64dcf560281c2c4edc6a6f2540d9ffd2e2a09723c": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a838f851ad34f8c7b9d77f5074c1b906e02ef8dbdbeb11b3ae9fc5cb1ec446a3": {
+    "9aae11973ac9007fc0152a7f55662e729f1708f0a1047469c9f2b6d784bcce26": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "c0388d336a1e2e6943387ed9b81fce7e263711e80ff01c5584b85c765686739a": {
+    "582698ede0fd9ae147ae7d65ffaacf092eec9dc4ab59f4184b9e988429f7399b": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "ecaf33d4d16273baabf52a109f21d04041485c04c34447c9461d8fadccd59c89": {
+    "9359eab5329b0c31230d8b7a0aac34a4d5c8d7b38ecc26ac80c1f75a8064bca9": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "3dd6ee6d61a8bde1b61e42c0476abc40139c23d8a82a206592fb109c5f34846a": {
+    "5c67f1a477efb0e360d17652bb69948d92797ed14821074aebafc99734dde7c9": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "4d010d0cbdf0d754ce85998918e1c1cb95d34ae1e95e36f88503e1b362677222": {
+    "dc63610400acff606ff85886d7b4f921b7273ab27521f2a737c0e4c14e052eb7": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "78ffe69aac3aa54780f6cee6ebece8fab39352461fc4148972c2f843b45f3540": {
+    "1babbceb44bb63c7183f7855b05f5e088970c6b2a8eb84177bb8d780b2f9ae70": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8b7ea9e6c5a5d2330ae610c42f349ad76f8418505680cd11196190fa93e2e5b2": {
+    "1ada5e6b9b3c9a35352a6278f44a2a779005157bc011b572d4f0c53bf0400aa0": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "ffcfffd9a679c671e30f159e973d42d1b21a6e53a537e8316deb6800d61b93f5": {
+    "c83935a4d6c1d45813bb85f10d60cf5195c271f5f103b6cbf42db9186f4f5b86": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "057437f9d546538f3c16d62ec52977dfc8468f231b81062f314168ef6a78519e": {
+    "6853f0932f28924773573d4a04a73ce0db075b01471ca6932ff8b165266f9cfe": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-import",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "1e65e36f2d342545fa307abf847e02365fb78da2b3509e57b69990fba1689779": {
+    "cf73cef1904057444651b2f2053be4075328673e3776d7b6963deab8fe137cdd": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "indirect-delay",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "f73eda1424c66911279dfe6d9e5c135c9d743f459e19f1988839f8e0f104b400": {
+    "6d8b3106eb01e931cd627da470ef0ee15b948480f74abe5a81b4d27488352cc4": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "0326fdf7b89e310968b0c02db901839cc5f4e812036000eb11fe95215aeb54a7": {
+    "19dd49383cedd2bf9ed8f758ce8d9ceeb536f02a3c70b603b041fc888f54b035": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "c81a2e2ea2945ef8a24671de107dca965b8393a2f9abddb699dc9bd84fd35a7f": {
+    "85201ec655c35e479ba51bcd9f62e6199f73fa43f39bb5724c0d936a4785d6bb": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "f522184a9e49491788c2b4c57c817566bc9da948dd7608c95115b35f2a2b48e5": {
+    "f0f0c04568538afd1dd639464b78f652d99b8e4fb9d42636c794cd54927202bb": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "684b4074ec583c354add4e0f53853ba288b91a61658d96926100f9553627be90": {
+    "f3bebc57a6280d64e6582667b9bc5c8468d08875f60aff400de79d94673da4ef": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9f8fc6212e529fd9b3184f00cff2b1e32aa8c237f440586bceaf65a693c59593": {
+    "c9b20768e3ee45a8d1f3f0dfb5222a18614383a5bcc39db4121cfaa45e2fa2e5": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "03cfb3870e77cd87dd39fd3df99c20cd8d43065f00a74e366235186fbf6a18b0": {
+    "20e36f1353ddd648b97c8ac01d9a1bb745de097f573047ad9fe66043563dddd3": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "c2029bce128d23a445006901defd4336f4dc45d44d23ee922789cb58b2827729": {
+    "dd382153e8862f5c24acde81fd5c7854b87b017337e4fe90f438eca92eef8877": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "4028d9252ed314e3a15bca24d231cf14733c122f15aadec764c5f907e8038d07": {
+    "443d9c23e3e8e9a1e37750f61ae8178b34d4e6bb617bbf3fdb562ef0b66c3b6f": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "6eb52430f669bf996afdb3731982b7ddf0cb7bbd9ea2e815b35a04f2aa233c0a": {
+    "a20ca73d04c2125ddaed3ea9887cea7ad818e42b23b135214860b850389abce6": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a82b6d524f369b9400a4cd98edf311ab561f8d851e81cb8c851354b92afcc5f4": {
+    "1875c7f75fbec11d563a09055c6738e9f57e0a80ac14841be41a44687cc9f7ef": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "de344b138ecf7ff6ed7acfbf87b0a94ec9b7aa48380bb5ede922603e6693ce8e": {
+    "dfd185c91e289ba3c244016d75264a0437971caae787596b60aa5d97e2da1932": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "client-deadline-seam",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "4b6cca4f6a312abe95e8ea75236488ed112e13df5c9548e53082b05a3f334f5b": {
+    "679273fade8af8713336b36672d0a9f215a57f4d69c5d556645cd3b12713ffef": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "client-deadline-seam",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "a5b759816c28f8f425915e7a684104d63d4698338a77edfc5011069d2453e51f": {
+    "d25d88558b783b671a780a66c5828464f1533dfa538c281cb1f5bc0fcbb50523": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "8155a03ee88daea3849602854c8c53326b583ce909c80869bec2add48e13d895": {
+    "45995f733f5d4b7989f8ea793fce557387a6facec013f149ba7bdedde6487cb4": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "b1fb90ad830932f4674a6a0315b9b7b51511c5156f268ce6489a33e3abf613cf": {
+    "41299ee8d413b806726cf61b0343711f4b0b2b61fd52e0328de1c3628f930b2c": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-read",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "71384152186a1e7021c2b6efc639a563600a4b511a8816cb884c1281807a003d": {
+    "9aee1e183986d79d7a23f4465dd921405c6ecb2fb5f10e8c5457b64bee11235c": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "clock-function",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "9a78a350bb964ae06d0303baddd844587dec5ac0bfb60523fb01a343dd372f0f": {
+    "926dd4ff65d8f97e71f53a7aff1f039ade5364621cc3de1b3d2307958c55adfa": {
       "path": "scripts/tests/test_test_timing_guard.py",
       "scope": "fixture-file",
       "rule": "delay-or-deadline",
-      "context_sha256": "17fde7670f183467aed4750e83ea49037a72b84afa05215857bcfafd32df84e5",
+      "context_sha256": "a28d5671d34671617e5bdb5af60da88f767f9123a3760d89f148aece9440aff9",
       "category": "detector-input",
       "reason": "Clock API spellings and adversarial fixture strings are parsed as data by the timing detector; none of these snippets is executed. Guard subprocesses execute only the scanner and Git fixture setup.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
+    },
+    "7aa7ce9db33be2e62c6a658f6dc78f5dcc9baad328bfe96a473ba5a846e63fc2": {
+      "path": "drivers/mt7610u/src/firmware.rs",
+      "scope": "register_poll_deadline_and_delay_use_scripted_time",
+      "rule": "clock-read",
+      "context_sha256": "f0b236c2182978bb0a41cf0302b5cb23b4614fd5710d6448f4f61a5149d132d6",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "0d8eecafd5b8b86aa41456a59cb0f04a27978914f8304128c7489be817de3397": {
+      "path": "drivers/mt7610u/src/stream.rs",
+      "scope": "unplug_recovers_with_new_session_and_bounded_attempts",
+      "rule": "clock-read",
+      "context_sha256": "bef8ebc1273e5e6d8a508ec3e7d3e551ae7a9d78f1e1a2e64e0a25190b92860e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "3dab9e7a184aec81fb6b6981125ab0ac5039fe90dc847da8b3a7ebf774f274ad": {
+      "path": "drivers/mt7610u/src/stream.rs",
+      "scope": "unplug_recovers_with_new_session_and_bounded_attempts",
+      "rule": "clock-read",
+      "context_sha256": "bef8ebc1273e5e6d8a508ec3e7d3e551ae7a9d78f1e1a2e64e0a25190b92860e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "6c48b810a38939032a7641f7a978ebd11386e921014d64c87edeacda6d05d59d": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "c40e1f64cd084e11d336f99260dbecb65020059134b7dd4b9068b1574faee4fa": {
+      "path": "drivers/mt7610u/src/stream/hardware.rs",
+      "scope": "stream_loop_keeps_transport_clock_through_initialization_and_reopen",
+      "rule": "clock-read",
+      "context_sha256": "88b2ca5ccd1e457609ff0b381743b3fb9b6ee863ff05f21f49642429124d922f",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "a54c49f650c99fcd614a60ba8fd612c85756ee672462c114e752a0a41231305e": {
+      "path": "hostd/src/ble_source.rs",
+      "scope": "ordinary_outage_pause_and_finish_preserve_one_endpoint_owner",
+      "rule": "clock-read",
+      "context_sha256": "74ec9b7b8f7d2918c601526f4d8f6e65ab66792991eb0ee207190a3c4b0bb764",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "d481c4aba15323a01abe402fdcf53aedc6fe823ff991c1b545d638f3bedbad30": {
+      "path": "hostd/src/ble_source.rs",
+      "scope": "outage_budget_tolerates_ordinary_reenumeration_but_not_headers_alone",
+      "rule": "clock-read",
+      "context_sha256": "fff899fc716b5158c7e7cfdbcaaf2ea1271d2216558d5617efc6b58aab284554",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "86fc42f43ebbf103c816d406c1d127deddb70289359735a18e33718198cd3af0": {
+      "path": "hostd/src/discovery/tests.rs",
+      "scope": "prerequisite_files_never_become_verified_firmware",
+      "rule": "clock-read",
+      "context_sha256": "e50128bc97eb5d67df6695ccf42f82daab36e7692effb02ff6950e309f233b17",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "9687c45e4f41b08fa7345df76d1c449ac47bf5c6046b2a40435f7bfc371f9f39": {
+      "path": "hostd/src/external_scanner.rs",
+      "scope": "new",
+      "rule": "clock-read",
+      "context_sha256": "9ba8922107e2d2e7d922739505b12caecea70c5f80250c5012f15db3352a124b",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "1f243032ec463cfc39c60e08ea3fce9461d7d61729870e4306e0d52357ef2941": {
+      "path": "hostd/src/flipper_source.rs",
+      "scope": "read",
+      "rule": "clock-read",
+      "context_sha256": "5f8f2ff38664519680a4623a348d5e4ddab5b78f3cd9317f08e1bcb4a45cd417",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "3f67393a1de82a45f1e0bf9d9e1a77cca3d69bb00698f571ebb14ec191665f34": {
+      "path": "hostd/src/gpsd.rs",
+      "scope": "reconnects_after_eof_and_cancels_an_idle_connection",
+      "rule": "clock-read",
+      "context_sha256": "0b23b8a2de26985c1037568dc135c3e312cf4d3cc3cde07e1f236c1e5ec56db7",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "6b78646d6a0502316a9b6eed9eeec86a2a9f3cde84d832f99080bc0413d63a0a": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "new",
+      "rule": "clock-read",
+      "context_sha256": "de64cf6701ce0ebc6b5eb392430fea835890f406ac84db000f9cc6f235b0c95e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "ffb24d3515a3e8838fe5fa1ca7d54879f07852ed328a1249d9a9adaa65298131": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "new",
+      "rule": "clock-read",
+      "context_sha256": "de64cf6701ce0ebc6b5eb392430fea835890f406ac84db000f9cc6f235b0c95e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "d59e8459d4f23bfa1155952648c1b32c1153a11f66c1f6bf8b24305397347d5e": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "new",
+      "rule": "clock-read",
+      "context_sha256": "de64cf6701ce0ebc6b5eb392430fea835890f406ac84db000f9cc6f235b0c95e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "562f70bb76936dc220368a44c15d73c5a247b3123f4de230a2f9e9947854fd55": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "ownership_probe_timeout_refuses_and_reaps_its_child",
+      "rule": "clock-read",
+      "context_sha256": "4a0f1d0285b981eeac95e47eb0ef30e8f947e819e74852d0b89b121d392fded4",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "f07046564719e207077a3bddb274ba89c0da8513a95146909f9463600c8e94dd": {
+      "path": "hostd/src/gpsd/managed.rs",
+      "scope": "ownership_probe_timeout_refuses_and_reaps_its_child",
+      "rule": "clock-read",
+      "context_sha256": "4a0f1d0285b981eeac95e47eb0ef30e8f947e819e74852d0b89b121d392fded4",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "42d4e13de0708f19099e77e3a26ef873c48f1130e773d9ff29c5f94b2953863d": {
+      "path": "hostd/src/main.rs",
+      "scope": "existing_output_requires_explicit_overwrite",
+      "rule": "clock-read",
+      "context_sha256": "06302da33d2a7d508d97edd7e8d5068b5a15295bbb00a31d672523538b4c5005",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "ffe93d3d87ba7d74209db90c18203bebe369537d8069d1f03cdf767eee980a7f": {
+      "path": "hostd/src/main.rs",
+      "scope": "csv_failure_terminates_output_and_closes_scan_channel",
+      "rule": "clock-read",
+      "context_sha256": "ac4627e1e0115cc23d56a34c6b47e0d0295b19c32af022852148721e75c85fb5",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "7b218bcf2a9c19893702928505e069be53b0e712b4d63afd3a13848489bcd361": {
+      "path": "hostd/src/owned_child.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "7f6368ab6a4be140c6aa71c27f99f79c51458ca100da09ef301ca345842ea801",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "cd142811c8c5d048f490dc0f5cffbeea10bc5aacc07e790de6e256b34023049e": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-read",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "1eded6d2bf8cbb2e6235590743b66d834ff0a955fbb97cadf05b352647088825": {
+      "path": "hostd/src/receiver.rs",
+      "scope": "receive_phy",
+      "rule": "clock-read",
+      "context_sha256": "afc635bfdc31a6a41a914a26c4a8080f792f84669a0b9aeb6d9fb3a365d42812",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "3059c38122ca8ef66fcf5fe9396d263f375ad3ab55cdf9790410fe6e44235277": {
+      "path": "hostd/src/receiver.rs",
+      "scope": "receive_phy",
+      "rule": "clock-read",
+      "context_sha256": "afc635bfdc31a6a41a914a26c4a8080f792f84669a0b9aeb6d9fb3a365d42812",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "c1495a7d53bab5537fd29645b842002e4842f4671a5ced745781543877e34599": {
+      "path": "hostd/src/serial_lease.rs",
+      "scope": "unsafe_lock_nodes_are_rejected_without_device_open",
+      "rule": "clock-read",
+      "context_sha256": "ad60069f171f2ed1f84a66b065ab3d26c14468d7ed41b683cb791c90307e4eaa",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "e40167a803e1d741f1c8872d0a1ad5649d2454b9424e6136e1b5f76c8238d20c": {
+      "path": "hostd/src/service_cli.rs",
+      "scope": "profile_load_returns_editable_configuration_after_serial_alias_collision",
+      "rule": "clock-read",
+      "context_sha256": "140b0b28854d10aa80ca62998ddef31027a4b987d3d15df7a52399137ba36393",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "fc54a3bd85684ddc976cd1b0af02a590aa01f7556a77aebf4cc935db798d7c24": {
+      "path": "hostd/src/session.rs",
+      "scope": "serial_symlink_aliases_cannot_open_the_same_resource_twice",
+      "rule": "clock-read",
+      "context_sha256": "318ed4546a84217107533eb71fcacc54358aa595787627daa24d8b257a2b6efa",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "3c892d7e520c1f54c2522dc088e80a1b36fd5d5f1f04b40139da53ace2289a3f": {
+      "path": "hostd/src/session_resources.rs",
+      "scope": "physical_radio_identity_rejects_multiple_interfaces_on_one_phy",
+      "rule": "clock-read",
+      "context_sha256": "8125700c706aee8844d0f64668e52a3366fc07f17db630f0656c626b1a52b913",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "132197294d88f4a3d5338867e85ba95b1353c3cf837693ff93a0acb12dc84745": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-read",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "9e4a21f879231a558fde928272e7c6837bc9f3e0182a7d9dce5b604f723437b9": {
+      "path": "hostd/tests/capture_check.rs",
+      "scope": "new",
+      "rule": "clock-read",
+      "context_sha256": "65cb1426eb7cb85345dc8f2572886720bd65078bf59b227e724d123b39543ab9",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "d6ea7a63bd1e98bf2dc60191942aacde4a07c1c919c7ef9a467bf2e240a27b7b": {
+      "path": "hostd/tests/control_service.rs",
+      "scope": "service_owns_replay_and_commits_before_finish_reply",
+      "rule": "clock-read",
+      "context_sha256": "c4679f824e362bbcbfc504e90891bd168dbf21565688b7009fbc21f1c84ae52e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "798919292a8110b3debbc25e9ff6790eeb682e328c9f6c51a4f708a3ec1ef9ae": {
+      "path": "hostd/tests/control_service.rs",
+      "scope": "service_owns_replay_and_commits_before_finish_reply",
+      "rule": "clock-read",
+      "context_sha256": "c4679f824e362bbcbfc504e90891bd168dbf21565688b7009fbc21f1c84ae52e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "0027a38fd4015db6e083328dd97b969fa84b31d0c5dd7c146f7c4289feaaf17d": {
+      "path": "hostd/tests/control_service.rs",
+      "scope": "service_owns_replay_and_commits_before_finish_reply",
+      "rule": "clock-read",
+      "context_sha256": "c4679f824e362bbcbfc504e90891bd168dbf21565688b7009fbc21f1c84ae52e",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "9d685cf7341e3cf05f20006f98969503c6e768f80e1486ccba0efc17913c6878": {
+      "path": "hostd/tests/marauder_import.rs",
+      "scope": "offline_cli_imports_binary_serial_capture",
+      "rule": "clock-read",
+      "context_sha256": "3bbc5c9f58936e6ec1e5def879001526af46807a648d67928e2b47649af416de",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "bd65c68a4a2d9e9b2a734355723c7a2f0b8c5acbe2eaa0ac09161a839ef8f148": {
+      "path": "hostd/tests/session_preview.rs",
+      "scope": "fifo_configuration_is_rejected_without_waiting_for_a_writer",
+      "rule": "clock-read",
+      "context_sha256": "8b861124c874e66d5361c621cac73d32c22e1b7c08e7f3233ecac97b1d251033",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "6a440cfb1b3d58e9e10b600fed535b890a23f08d9a52b041ef07381fde576935": {
+      "path": "hostd/tests/wifi_replay.rs",
+      "scope": "run",
+      "rule": "clock-read",
+      "context_sha256": "37410f75969feefbff2c2bbebee282b8115d3ba2f1d84a23ab8e25f8dcff6967",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "9d7e1ff0e5a4e259e213ee9f1225547d47fac39b054271893f778800eabe030d": {
+      "path": "hostd/tests/wifi_replay.rs",
+      "scope": "run",
+      "rule": "clock-read",
+      "context_sha256": "37410f75969feefbff2c2bbebee282b8115d3ba2f1d84a23ab8e25f8dcff6967",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+    },
+    "91a7c2b4c65153dfdea036bddeba674c5387abccf59394f8873a6562d63208e1": {
+      "path": "scripts/tests/test_profile_macos.py",
+      "scope": "fixture-file",
+      "rule": "clock-read",
+      "context_sha256": "6195f3e254a81629de4f4465cfe5c6ea1d64ef5ad3f913698d4399a100a9221f",
+      "category": "unresolved",
+      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329"
     }
   },
   "migration_baseline": {
