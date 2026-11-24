@@ -1126,9 +1126,10 @@
       "scope": "rust-test-item",
       "rule": "clock-read",
       "context_sha256": "7f6368ab6a4be140c6aa71c27f99f79c51458ca100da09ef301ca345842ea801",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "All five owning tests enter manual_time. Real child exit/reap is witnessed causally; the pending-reap test observes the registered3s deadline and advances it explicitly. The4s witness wrapper remains frozen while OS reaping completes; the separate manual_time watchdog bounds fixture failure. Merged wait() retains supervisor ownership until result, and finish() requests stop then calls wait(); neither adds a clock or timeout.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
     },
     "cd142811c8c5d048f490dc0f5cffbeea10bc5aacc07e790de6e256b34023049e": {
       "path": "hostd/src/rayhunter_source.rs",
@@ -1199,9 +1200,10 @@
       "scope": "advance_registered_timer",
       "rule": "clock-read",
       "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
     },
     "9e4a21f879231a558fde928272e7c6837bc9f3e0182a7d9dce5b604f723437b9": {
       "path": "hostd/tests/capture_check.rs",
@@ -1813,6 +1815,296 @@
       "reason": "Explicitly ignored release-only production-pipeline benchmark measures elapsed throughput and prints it. Correctness assertions verify output identities/counts after timing; there is no elapsed-time pass threshold. Real measurement is intentional, separate from deterministic correctness tests.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "8d03868394fdde3d92739aa69c2bf294e41d072952bd7557d917e3c3f013983d": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "clock-reference",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "38465ddf1d30944288c65bb6bb192e25cd0db4d8ce89c9944c03c5076532ae6f": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "clock-read",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "cb6072dd9def6170af914843e6268cf2fef912a3633c5a3fb9fa9508e7143e42": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "clock-reference",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "e10edbbbd34788bf7266e3dbeffce1044967b7a3adeceef81250a67b6e2646b6": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "clock-read",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "bd55924a3b29de4363802c8e5e5f1239252f7b78aee1b8633329c14c65f57c2e": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "clock-reference",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "1dd6560ec1b63696b11f99352e1078b72176fbb1a3a5ae980aba23cbee875925": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "delay-or-deadline",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "6b0d7c138381cc9231efe02233b705de063f76fabac8d45095732043d0a84237": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "command_inner",
+      "rule": "delay-or-deadline",
+      "context_sha256": "0eac22fd935a10b82ffc6c636db6567838316fe99440585cf6b48c959433da7b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "30db4e97de66948da576afe825f291808b8dd54ca10f0bfd43edab07b762d59e": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "3b9d8d4bdc322c01f2c74c35fb256267dd2008b456c97614e9148e51b0dea083",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "7a62e76eebf1e3927faa710db2191acf0d2161c1ab61e3685e46af5d31f17479": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-reference",
+      "context_sha256": "3b9d8d4bdc322c01f2c74c35fb256267dd2008b456c97614e9148e51b0dea083",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "6a13ffc778ce033ae287ed609c893334bec22a1895b8f5358800d052e36f4721": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "decoder_event",
+      "rule": "delay-or-deadline",
+      "context_sha256": "d1b94ba531d19114fb91f156e962933b94b21532cc9195ee0a315d435aa7b014",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "ecac2f045be062cfc14c58afdbe80694c45a72cc121eafd44c7ae5170b6b0b5d": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "actual_transport_eof_releases_forward_before_bounded_reconnect",
+      "rule": "delay-or-deadline",
+      "context_sha256": "2c983a2d49f4729661f63eeb98d685a159a0bd1e810851c3dee924c8da13eb0b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "6e04b0a3b2067869c538f09e666132a19dbdaaccef5c7212033fbcee144454e5": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "actual_transport_eof_releases_forward_before_bounded_reconnect",
+      "rule": "delay-or-deadline",
+      "context_sha256": "2c983a2d49f4729661f63eeb98d685a159a0bd1e810851c3dee924c8da13eb0b",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "952d4bc7d8eeb4733d35e05d56b4478fd444581cb39c77f988bbbd39911a5a6b": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "actual_source_pause_resume_finish_and_cancel_release_forward_and_decoder",
+      "rule": "delay-or-deadline",
+      "context_sha256": "25e23206454579b7b2d4c66644b6ab90ef653abbc055e5aece7a53301c090267",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "f002b9897b4a6b0aa42d2a2ba3b140b3278493a84c6f40bb526367ee7f381f55": {
+      "path": "hostd/src/adb_forward.rs",
+      "scope": "actual_source_pause_resume_finish_and_cancel_release_forward_and_decoder",
+      "rule": "delay-or-deadline",
+      "context_sha256": "25e23206454579b7b2d4c66644b6ab90ef653abbc055e5aece7a53301c090267",
+      "category": "virtual-time",
+      "reason": "All current async fake-ADB/source tests wrap manual_time. Allocation/response/removal/child evidence arrives over explicit socket/channel events; command expiry and reconnect use registered TimerWitness advances. Production deadline expressions execute under the paused test clock, and cleanup is causally witnessed before assertions. Merged change relocates identical ReadWitness to test_support; timeout wrappers remain frozen and are not the outer hang safeguard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "3beb947d8ada4f10627c3325a45ebd941c21b11cd47def3bb8451175a772296e": {
+      "path": "hostd/src/owned_child.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-reference",
+      "context_sha256": "7f6368ab6a4be140c6aa71c27f99f79c51458ca100da09ef301ca345842ea801",
+      "category": "virtual-time",
+      "reason": "All five owning tests enter manual_time. Real child exit/reap is witnessed causally; the pending-reap test observes the registered3s deadline and advances it explicitly. The4s witness wrapper remains frozen while OS reaping completes; the separate manual_time watchdog bounds fixture failure. Merged wait() retains supervisor ownership until result, and finish() requests stop then calls wait(); neither adds a clock or timeout.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "ef8821fe9881986ddb3bdb4a199affcd032c9d1e7f727c8f6cf1be2bf6e9bcdb": {
+      "path": "hostd/src/owned_child.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "7f6368ab6a4be140c6aa71c27f99f79c51458ca100da09ef301ca345842ea801",
+      "category": "virtual-time",
+      "reason": "All five owning tests enter manual_time. Real child exit/reap is witnessed causally; the pending-reap test observes the registered3s deadline and advances it explicitly. The4s witness wrapper remains frozen while OS reaping completes; the separate manual_time watchdog bounds fixture failure. Merged wait() retains supervisor ownership until result, and finish() requests stop then calls wait(); neither adds a clock or timeout.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "5d748ffdabdc314e89f852b5f551d3a2600955b6e79f230e4c92fa6d444c35e4": {
+      "path": "hostd/src/owned_child.rs",
+      "scope": "assert_reaped",
+      "rule": "delay-or-deadline",
+      "context_sha256": "c252d2eb3d77e3ef1df45e2b21e390f5f994763450433e7d1a2df2241f53901a",
+      "category": "virtual-time",
+      "reason": "All five owning tests enter manual_time. Real child exit/reap is witnessed causally; the pending-reap test observes the registered3s deadline and advances it explicitly. The4s witness wrapper remains frozen while OS reaping completes; the separate manual_time watchdog bounds fixture failure. Merged wait() retains supervisor ownership until result, and finish() requests stop then calls wait(); neither adds a clock or timeout.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "74f1cf86cba093c941bae9d831bb8cb47ea72ed01139fb2fd459c3c7c1ec7824": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "f0326b35c811e9b13b5c78ac46c7d99669dff2783c34ba4f6cbe0d64e758e1ca",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "ee8139afd9ea4276890951f8c048d8e4682a1aeb8d33880fe275d147a8a1b7c8": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "manual_time",
+      "rule": "delay-or-deadline",
+      "context_sha256": "60c2e009997d578c3a72e9a129256d0d48a10b4d3820e06e11fd61bf14f60faa",
+      "category": "outer-hang-guard",
+      "reason": "The30s blocking-channel watchdog only panics on a wedged fixture. It inhibits Tokio auto-time while real child/socket events complete; Drop releases it and resumes time. It is not used as a readiness/success criterion.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "346a8da5458282f9f8d09c6335dcb17f68080d7076d1ac66e63667cd495b2053": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "f0326b35c811e9b13b5c78ac46c7d99669dff2783c34ba4f6cbe0d64e758e1ca",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "25d1c12ec441e93e0f80b0f66de24cb470b0b48817e4292249ba7e1634db2810": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "fixture-file",
+      "rule": "clock-reference",
+      "context_sha256": "f0326b35c811e9b13b5c78ac46c7d99669dff2783c34ba4f6cbe0d64e758e1ca",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "d60cc48623de4d3d2a9f8e21c88176c19f9e4f2cb4b31e2d489e8cb8ca55c5b3": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "observe",
+      "rule": "clock-reference",
+      "context_sha256": "b8bba70c492e3c038347a9becf9e50d43dcaaea7b5765836e8a12c7edfa88e35",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "e81b3994d859ae2cf92fd2406e499a61c9426a582b2a66b8f63de7dbbc81eb3d": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "observe",
+      "rule": "clock-read",
+      "context_sha256": "b8bba70c492e3c038347a9becf9e50d43dcaaea7b5765836e8a12c7edfa88e35",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "209bd1bf26ae6d6eacf5d3216fb6db2692cf08017150447c398fd9605f647f5f": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "observe",
+      "rule": "clock-reference",
+      "context_sha256": "b8bba70c492e3c038347a9becf9e50d43dcaaea7b5765836e8a12c7edfa88e35",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "a5c4ce6431ba229659519581c8b7f458f804e820d9419e695d6ce8e05ce49b35": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-read",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "788e3b345fef863cdfbb050da91262f49eaa55ba9a10644a4a5b95e6832ff5ed": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-reference",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "27feb84dcb4e40523d7419273ab382407909c39a8c196d97c703366196b31494": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-reference",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "503efe3c34e36fad7406c3d7a4dcd2a2984af2bc7fd93cdc4d472b0d906739bb": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-read",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
+    },
+    "9f0f1c273cc841da4b55ce9d8aef5ecaf4d8d15bc2f1f345a68c2badc6460f65": {
+      "path": "hostd/src/test_support.rs",
+      "scope": "advance_registered_timer",
+      "rule": "clock-reference",
+      "context_sha256": "2b7bb0693ed979e1a41636fd8b78aed5afe961991a2ba26a6426229d99207107",
+      "category": "virtual-time",
+      "reason": "TimerWitness carries Tokio deadlines and causally publishes registered/pending/fired states. Every current caller is within manual_time; advance_registered_timer explicitly advances the paused clock before/through the registered deadline. These Instant values are virtual, not elapsed wall-clock assertions. Merged managed-GPS callers also enter manual_time; new ReadWitness only sends a causal newline-consumed event and introduces no clock.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review of exact e47 source/context and all owning manual_time callers, verified unchanged at836ec; receipt airhound-support-classifications-root-review. Exact keys only."
     }
   },
   "migration_baseline": {
