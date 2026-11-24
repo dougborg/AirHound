@@ -149,8 +149,28 @@ pub async fn serve(
     backend: Arc<dyn Backend>,
     shutdown: impl Future<Output = ()>,
 ) -> io::Result<()> {
+    serve_inner(
+        path,
+        backend,
+        shutdown,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+async fn serve_inner(
+    path: &Path,
+    backend: Arc<dyn Backend>,
+    shutdown: impl Future<Output = ()>,
+    #[cfg(test)] listening: Option<tokio::sync::oneshot::Sender<()>>,
+) -> io::Result<()> {
     let (listener, _owned_socket) = bind_private(path)?;
     log::debug!("AirHound control socket listening");
+    #[cfg(test)]
+    if let Some(listening) = listening {
+        let _ = listening.send(());
+    }
     let hello = Arc::new(Hello {
         version: VERSION,
         // A per-process instance marker, not an authentication token.
@@ -416,89 +436,95 @@ mod tests {
         }
     }
     async fn connect(path: &Path) -> Client {
-        for _ in 0..100 {
-            if let Ok(client) = Client::connect(path, Duration::from_secs(1)).await {
-                return client;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        panic!("service did not become available")
+        // Callers have awaited the actual bind/listen event; no retries or
+        // filesystem readiness inference participate in successful behavior.
+        Client::connect(path, Duration::from_secs(1)).await.unwrap()
     }
     #[tokio::test]
     async fn two_clients_share_service_and_detach_does_not_stop_it() {
-        let dir = Directory::new();
-        let path = dir.socket();
-        let server_path = path.clone();
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            serve(&server_path, Arc::new(Fake), async {
-                let _ = stopped.await;
-            })
-            .await
-            .unwrap();
-        });
-        let mut a = connect(&path).await;
-        let mut b = connect(&path).await;
-        assert_eq!(a.hello.instance_id, b.hello.instance_id);
-        assert_eq!(a.devices(true).await.unwrap()["all"], true);
-        assert_eq!(a.list_profiles().await.unwrap()["method"], "profiles.list");
-        let saved = a
-            .save_profile(
-                "fixture".into(),
-                "Fixture".into(),
-                json!({"version":1}),
-                false,
-            )
-            .await
-            .unwrap();
-        assert_eq!(saved["method"], "profiles.save");
-        assert_eq!(saved["params"]["replace"], false);
-        assert_eq!(
-            a.load_profile("fixture".into()).await.unwrap()["params"]["id"],
-            "fixture"
-        );
-        assert_eq!(
-            a.delete_profile("fixture".into()).await.unwrap()["method"],
-            "profiles.delete"
-        );
-        assert!(matches!(
-            a.save_profile(
-                "large".into(),
-                "Large".into(),
-                json!({"padding":"x".repeat(MAX_CONFIG_BYTES)}),
-                false
-            )
-            .await,
-            Err(airhound_client::ClientError::Remote(ApiError {
-                code: ErrorCode::InvalidRequest,
-                ..
-            }))
-        ));
-        assert!(matches!(
-            a.validate(json!({"version":1,"padding":"x".repeat(MAX_CONFIG_BYTES)}))
+        crate::test_support::manual_time(async {
+            let dir = Directory::new();
+            let path = dir.socket();
+            let server_path = path.clone();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let (listening, ready) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                serve_inner(
+                    &server_path,
+                    Arc::new(Fake),
+                    async {
+                        let _ = stopped.await;
+                    },
+                    Some(listening),
+                )
+                .await
+                .unwrap();
+            });
+            ready.await.expect("server did not reach bind/listen");
+            let mut a = connect(&path).await;
+            let mut b = connect(&path).await;
+            assert_eq!(a.hello.instance_id, b.hello.instance_id);
+            assert_eq!(a.devices(true).await.unwrap()["all"], true);
+            assert_eq!(a.list_profiles().await.unwrap()["method"], "profiles.list");
+            let saved = a
+                .save_profile(
+                    "fixture".into(),
+                    "Fixture".into(),
+                    json!({"version":1}),
+                    false,
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved["method"], "profiles.save");
+            assert_eq!(saved["params"]["replace"], false);
+            assert_eq!(
+                a.load_profile("fixture".into()).await.unwrap()["params"]["id"],
+                "fixture"
+            );
+            assert_eq!(
+                a.delete_profile("fixture".into()).await.unwrap()["method"],
+                "profiles.delete"
+            );
+            assert!(matches!(
+                a.save_profile(
+                    "large".into(),
+                    "Large".into(),
+                    json!({"padding":"x".repeat(MAX_CONFIG_BYTES)}),
+                    false
+                )
                 .await,
-            Err(airhound_client::ClientError::Remote(ApiError {
-                code: ErrorCode::InvalidSession,
-                ..
-            }))
-        ));
-        assert_eq!(
-            b.validate(json!({"version":1})).await.unwrap()["readiness"],
-            "unverified"
-        );
-        assert!(matches!(
-            b.validate(json!({})).await,
-            Err(airhound_client::ClientError::Remote(ApiError {
-                code: ErrorCode::InvalidSession,
-                ..
-            }))
-        ));
-        drop(a);
-        assert_eq!(b.status().await.unwrap()["capture_control"], false);
-        assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
-        stop.send(()).unwrap();
-        task.await.unwrap();
-        assert!(!path.exists());
+                Err(airhound_client::ClientError::Remote(ApiError {
+                    code: ErrorCode::InvalidRequest,
+                    ..
+                }))
+            ));
+            assert!(matches!(
+                a.validate(json!({"version":1,"padding":"x".repeat(MAX_CONFIG_BYTES)}))
+                    .await,
+                Err(airhound_client::ClientError::Remote(ApiError {
+                    code: ErrorCode::InvalidSession,
+                    ..
+                }))
+            ));
+            assert_eq!(
+                b.validate(json!({"version":1})).await.unwrap()["readiness"],
+                "unverified"
+            );
+            assert!(matches!(
+                b.validate(json!({})).await,
+                Err(airhound_client::ClientError::Remote(ApiError {
+                    code: ErrorCode::InvalidSession,
+                    ..
+                }))
+            ));
+            drop(a);
+            assert_eq!(b.status().await.unwrap()["capture_control"], false);
+            assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+            stop.send(()).unwrap();
+            task.await.unwrap();
+            assert!(!path.exists());
+        })
+        .await;
     }
     #[tokio::test]
     async fn endpoint_security_never_unlinks_existing_paths() {
@@ -521,101 +547,119 @@ mod tests {
     }
     #[tokio::test]
     async fn pending_client_does_not_block_another_and_shutdown_cancels_it() {
-        struct Waiting(Arc<tokio::sync::Notify>);
-        impl Backend for Waiting {
-            fn devices(&self, _: bool) -> BackendResult {
-                Box::pin(async { Ok(json!({})) })
+        crate::test_support::manual_time(async {
+            struct Waiting(Arc<tokio::sync::Notify>);
+            impl Backend for Waiting {
+                fn devices(&self, _: bool) -> BackendResult {
+                    Box::pin(async { Ok(json!({})) })
+                }
+                fn validate(&self, _: Value) -> BackendResult {
+                    let entered = self.0.clone();
+                    Box::pin(async move {
+                        entered.notify_one();
+                        std::future::pending().await
+                    })
+                }
             }
-            fn validate(&self, _: Value) -> BackendResult {
-                let entered = self.0.clone();
-                Box::pin(async move {
-                    entered.notify_one();
-                    std::future::pending().await
-                })
-            }
-        }
-        let dir = Directory::new();
-        let path = dir.socket();
-        let server_path = path.clone();
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let backend = Arc::new(Waiting(entered.clone()));
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let server = tokio::spawn(async move {
-            serve(&server_path, backend, async {
-                let _ = stopped.await;
-            })
-            .await
-            .unwrap();
-        });
-        let mut a = connect(&path).await;
-        let mut b = connect(&path).await;
-        let pending = tokio::spawn(async move { a.validate(json!({})).await });
-        tokio::time::timeout(Duration::from_secs(1), entered.notified())
-            .await
-            .unwrap();
-        assert_eq!(b.status().await.unwrap()["mode"], "passive_control");
-        stop.send(()).unwrap();
-        server.await.unwrap();
-        assert!(pending.await.unwrap().is_err());
-        assert!(!path.exists());
+            let dir = Directory::new();
+            let path = dir.socket();
+            let server_path = path.clone();
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let backend = Arc::new(Waiting(entered.clone()));
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let (listening, ready) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                serve_inner(
+                    &server_path,
+                    backend,
+                    async {
+                        let _ = stopped.await;
+                    },
+                    Some(listening),
+                )
+                .await
+                .unwrap();
+            });
+            ready.await.expect("server did not reach bind/listen");
+            let mut a = connect(&path).await;
+            let mut b = connect(&path).await;
+            let pending = tokio::spawn(async move { a.validate(json!({})).await });
+            entered.notified().await;
+            assert_eq!(b.status().await.unwrap()["mode"], "passive_control");
+            stop.send(()).unwrap();
+            server.await.unwrap();
+            assert!(pending.await.unwrap().is_err());
+            assert!(!path.exists());
+        })
+        .await;
     }
     #[tokio::test]
     async fn protocol_rejects_capture_unknown_version_and_reused_ids() {
-        let dir = Directory::new();
-        let path = dir.socket();
-        let server_path = path.clone();
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            serve(&server_path, Arc::new(Fake), async {
-                let _ = stopped.await;
-            })
-            .await
-            .unwrap();
-        });
-        drop(connect(&path).await);
-        let mut stream = UnixStream::connect(&path).await.unwrap();
-        for (id, command, code) in [
-            (
-                1,
-                json!({"method":"status","params":{}}),
-                ErrorCode::HandshakeRequired,
-            ),
-            (
-                2,
-                json!({"method":"session.start","params":{}}),
-                ErrorCode::UnsupportedMethod,
-            ),
-        ] {
+        crate::test_support::manual_time(async {
+            let dir = Directory::new();
+            let path = dir.socket();
+            let server_path = path.clone();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let (listening, ready) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                serve_inner(
+                    &server_path,
+                    Arc::new(Fake),
+                    async {
+                        let _ = stopped.await;
+                    },
+                    Some(listening),
+                )
+                .await
+                .unwrap();
+            });
+            ready.await.expect("server did not reach bind/listen");
+            drop(connect(&path).await);
+            let mut stream = UnixStream::connect(&path).await.unwrap();
+            for (id, command, code) in [
+                (
+                    1,
+                    json!({"method":"status","params":{}}),
+                    ErrorCode::HandshakeRequired,
+                ),
+                (
+                    2,
+                    json!({"method":"session.start","params":{}}),
+                    ErrorCode::UnsupportedMethod,
+                ),
+            ] {
+                write_frame(
+                    &mut stream,
+                    &json!({"version":1,"request_id":id,"command":command}),
+                )
+                .await
+                .unwrap();
+                let response: Response =
+                    serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+                assert_eq!(response.error.unwrap().code, code);
+            }
             write_frame(
                 &mut stream,
-                &json!({"version":1,"request_id":id,"command":command}),
+                &json!({"version":1,"request_id":2,"command":{"method":"hello","params":{}}}),
             )
             .await
             .unwrap();
             let response: Response =
                 serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
-            assert_eq!(response.error.unwrap().code, code);
-        }
-        write_frame(
-            &mut stream,
-            &json!({"version":1,"request_id":2,"command":{"method":"hello","params":{}}}),
-        )
-        .await
-        .unwrap();
-        let response: Response =
-            serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
-        assert_eq!(response.error.unwrap().code, ErrorCode::InvalidRequest);
-        let mut stream = UnixStream::connect(&path).await.unwrap();
-        write_frame(
-            &mut stream,
-            &json!({"version":9,"request_id":1,"command":{"method":"hello","params":{}}}),
-        )
-        .await
-        .unwrap();
-        let response: Response =
-            serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
-        assert_eq!(response.error.unwrap().code, ErrorCode::IncompatibleVersion);
-        stop.send(()).unwrap();
-        task.await.unwrap();
+            assert_eq!(response.error.unwrap().code, ErrorCode::InvalidRequest);
+            let mut stream = UnixStream::connect(&path).await.unwrap();
+            write_frame(
+                &mut stream,
+                &json!({"version":9,"request_id":1,"command":{"method":"hello","params":{}}}),
+            )
+            .await
+            .unwrap();
+            let response: Response =
+                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+            assert_eq!(response.error.unwrap().code, ErrorCode::IncompatibleVersion);
+            stop.send(()).unwrap();
+            task.await.unwrap();
+        })
+        .await;
     }
 }
