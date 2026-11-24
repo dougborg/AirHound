@@ -129,11 +129,13 @@ fn injected_outer_guard_failure_still_kills_and_reaps_owned_child() {
 #[test]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn readiness_requires_complete_marker_and_reaps_early_exit_or_oversized_log() {
-    for oversized in [false, true] {
+    for scenario in ["early-exit", "oversized", "unterminated"] {
         let root = Root::new();
         let pidfile = root.0.join("pid");
-        let script = if oversized {
+        let script = if scenario == "oversized" {
             "printf '%s' $$ >\"$1\"; i=0; while [ \"$i\" -lt 9000 ]; do printf x >&2; i=$((i+1)); done; IFS= read -r release"
+        } else if scenario == "unterminated" {
+            "printf '%s' $$ >\"$1\"; printf 'AirHound control socket listening' >&2"
         } else {
             "printf '%s' $$ >\"$1\"; printf 'not a readiness announcement\\n' >&2; exit 7"
         };
@@ -147,10 +149,10 @@ fn readiness_requires_complete_marker_and_reaps_early_exit_or_oversized_log() {
         .err()
         .expect("readiness must fail");
         assert_eq!(error.kind(), io::ErrorKind::Other);
-        assert!(error.to_string().contains(if oversized {
-            "diagnostic bound"
-        } else {
-            "before listening"
+        assert!(error.to_string().contains(match scenario {
+            "oversized" => "diagnostic bound",
+            "unterminated" => "unterminated",
+            _ => "before listening",
         }));
         let pid: libc::pid_t = std::fs::read_to_string(pidfile).unwrap().parse().unwrap();
         let mut status = 0;
