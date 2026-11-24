@@ -11,9 +11,22 @@
     "scripts/stage-local-receiver-helpers.py": "Imported by test_helper_capabilities.py; external-child deadlines need review.",
     "scripts/package-receiver.py": "Imported by test_package_receiver.py; explicit helper coverage.",
     "scripts/check-firmware-memory.py": "Imported by test_firmware_memory.py; explicit helper coverage.",
-    "scripts/check-release-assets.py": "Imported by test_release_assets.py; explicit helper coverage."
+    "scripts/check-release-assets.py": "Imported by test_release_assets.py; explicit helper coverage.",
+    "apps/macos/build-metadata.py": "Imported by BuildMetadataTests/test_build_metadata.py; scan provenance helpers exercised by tests.",
+    "scripts/compile-signatures.py": "Imported by signatures/tests/test_compiler.py; scan signature compiler helpers exercised by tests.",
+    "companions/flipper/scripts/build-diagnostic.py": "Imported by test-diagnostic-artifacts.py; scan artifact verification helpers exercised by tests."
   },
   "dispositions": {
+    "766d2af74ab4fdc70c3d908a3e971b7de6a7fc8ac131a8e17e4c48308bc95101": {
+      "path": "scripts/tests/test_registered_timing_helpers.py",
+      "scope": "fixture-file",
+      "rule": "delay-or-deadline",
+      "context_sha256": "86914574d01f27b42f05a1eb69752e611d95d9bf2a2f35dafa40f80f79b50bf2",
+      "category": "detector-input",
+      "reason": "The literal is written into three temporary tracked helper files and passed only to the scanner; it is never imported or executed. The test verifies exact registered-path detection and omission for each removed registration.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root review approved the exact 47-line regression and context 86914574d01f27b42f05a1eb69752e611d95d9bf2a2f35dafa40f80f79b50bf2; the literal is only written and scanned, never executed."
+    },
     "002f70b7062f6aeb913709df5fe4ca6106bd0c2a132d13ded53e413473de0016": {
       "path": "hostd/src/main.rs",
       "scope": "remote_id_pipeline_filters_invalid_weak_and_disabled_events",
