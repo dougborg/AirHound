@@ -322,65 +322,62 @@ mod tests {
             .await
             .is_err());
     }
+    async fn pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                future.as_mut().poll(cx).is_pending()
+            ))
+            .await
+        );
+    }
     #[tokio::test]
     async fn incomplete_capture_is_counted_and_blocked_header_is_cancellable() {
-        let mut bytes = pcap(true, false, &[frame()]);
-        let original = (frame().len() as u32 + 10).to_le_bytes();
-        bytes[36..40].copy_from_slice(&original);
-        let (tx, mut rx) = mpsc::channel(1);
-        let control = ScanControl::new(true);
-        let mut stats = Stats::default();
-        assert!(consume(bytes.as_slice(), &tx, &control, &mut stats)
-            .await
-            .unwrap());
-        assert_eq!((stats.records, stats.rejected, stats.events), (1, 1, 0));
-        assert!(rx.try_recv().is_err());
-        let (input, _writer) = tokio::io::duplex(32);
-        let task_control = control.clone();
-        let task =
-            tokio::spawn(
-                async move { consume(input, &tx, &task_control, &mut Stats::default()).await },
-            );
-        tokio::task::yield_now().await;
-        control.shutdown();
-        assert!(
-            !tokio::time::timeout(std::time::Duration::from_secs(1), task)
+        crate::test_support::manual_time(async {
+            let mut bytes = pcap(true, false, &[frame()]);
+            let original = (frame().len() as u32 + 10).to_le_bytes();
+            bytes[36..40].copy_from_slice(&original);
+            let (tx, mut rx) = mpsc::channel(1);
+            let control = ScanControl::new(true);
+            let mut stats = Stats::default();
+            assert!(consume(bytes.as_slice(), &tx, &control, &mut stats)
                 .await
-                .unwrap()
-                .unwrap()
-                .unwrap()
-        );
+                .unwrap());
+            assert_eq!((stats.records, stats.rejected, stats.events), (1, 1, 0));
+            assert!(rx.try_recv().is_err());
+            let (input, _writer) = tokio::io::duplex(32);
+            let mut waiting_stats = Stats::default();
+            let mut reader = Box::pin(consume(input, &tx, &control, &mut waiting_stats));
+            pending(reader.as_mut()).await; // actual incomplete header read
+            control.shutdown();
+            assert!(!reader.await.unwrap());
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn pause_backpressure_shutdown_and_rejection() {
-        let bytes = pcap(true, false, &vec![frame(); 100]);
-        let control = ScanControl::new(false);
-        let (tx, mut rx) = mpsc::channel(1);
-        let task_control = control.clone();
-        let task = tokio::spawn(async move {
+        crate::test_support::manual_time(async {
+            let bytes = pcap(true, false, &vec![frame(); 100]);
+            let control = ScanControl::new(false);
+            let (tx, mut rx) = mpsc::channel(1);
             let mut stats = Stats::default();
-            consume(bytes.as_slice(), &tx, &task_control, &mut stats).await
-        });
-        tokio::task::yield_now().await;
-        assert!(rx.try_recv().is_err());
-        control.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert!(matches!(rx.recv().await, Some(ScanEvent::Replay { .. })));
-        control.shutdown();
-        assert!(
-            !tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            let mut reader = Box::pin(consume(bytes.as_slice(), &tx, &control, &mut stats));
+            pending(reader.as_mut()).await; // actual paused watch wait before any read
+            assert!(rx.try_recv().is_err());
+            control.store(true, std::sync::atomic::Ordering::Relaxed);
+            pending(reader.as_mut()).await; // queue capacity reached, next send is pending
+            assert!(matches!(rx.try_recv(), Ok(ScanEvent::Replay { .. })));
+            control.shutdown();
+            assert!(!reader.await.unwrap());
+            let bytes = pcap(true, false, &[vec![0; 13]]);
+            let control = ScanControl::new(true);
+            let (tx, _rx) = mpsc::channel(1);
+            let mut stats = Stats::default();
+            assert!(consume(bytes.as_slice(), &tx, &control, &mut stats)
                 .await
-                .unwrap()
-                .unwrap()
-                .unwrap()
-        );
-        let bytes = pcap(true, false, &[vec![0; 13]]);
-        let control = ScanControl::new(true);
-        let (tx, _rx) = mpsc::channel(1);
-        let mut stats = Stats::default();
-        assert!(consume(bytes.as_slice(), &tx, &control, &mut stats)
-            .await
-            .unwrap());
-        assert_eq!(stats.rejected, 1);
+                .unwrap());
+            assert_eq!(stats.rejected, 1);
+        })
+        .await;
     }
 }

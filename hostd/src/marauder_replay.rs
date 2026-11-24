@@ -231,98 +231,108 @@ pub(crate) mod tests {
             assert!(!matches!(event, ScanEvent::MarauderReplay { .. }));
         }
     }
+    async fn pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                future.as_mut().poll(cx).is_pending()
+            ))
+            .await
+        );
+    }
+    async fn event_while_running<F: std::future::Future>(
+        mut source: std::pin::Pin<&mut F>,
+        rx: &mut mpsc::Receiver<ScanEvent>,
+    ) -> ScanEvent {
+        tokio::select! {
+            event = rx.recv() => event.expect("source ended before event"),
+            _ = &mut source => panic!("source completed before expected event"),
+        }
+    }
     #[tokio::test]
     async fn marauder_paused_queue_stops_without_dropping_into_live_semantics() {
-        let f = Fixture::new(&fixture_bytes());
-        let (tx, mut rx) = mpsc::channel(1);
-        let control = ScanControl::new(false);
-        let c = control.clone();
-        let path = f.0.clone();
-        let task = tokio::spawn(async move { scan(path, MarauderFormat::Pcap, tx, c).await });
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(30), rx.recv())
-                .await
-                .is_err()
-        );
-        control.store(true, Ordering::Relaxed);
-        assert!(matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-                .await
-                .unwrap(),
-            Some(ScanEvent::MarauderReplay {
-                timestamp_micros32: u32::MAX,
-                ..
-            })
-        ));
-        control.shutdown();
-        tokio::time::timeout(std::time::Duration::from_secs(2), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        crate::test_support::manual_time(async {
+            let f = Fixture::new(&fixture_bytes());
+            let (tx, mut rx) = mpsc::channel(1);
+            let control = ScanControl::new(false);
+            let mut source = Box::pin(scan(f.0.clone(), MarauderFormat::Pcap, tx, control.clone()));
+            pending(source.as_mut()).await; // actual pause wait precedes filesystem access
+            assert!(rx.try_recv().is_err());
+            control.store(true, Ordering::Relaxed);
+            assert!(matches!(
+                event_while_running(source.as_mut(), &mut rx).await,
+                ScanEvent::MarauderReplay {
+                    timestamp_micros32: u32::MAX,
+                    ..
+                }
+            ));
+            control.shutdown();
+            let (result, ()) = tokio::join!(source, async { while rx.recv().await.is_some() {} });
+            result.unwrap();
+        })
+        .await;
     }
     #[tokio::test]
     async fn marauder_backpressure_pause_resume_restores_running_health() {
-        let original = fixture_bytes();
-        let mut bytes = original[..24].to_vec();
-        for _ in 0..20 {
-            bytes.extend(&original[24..]);
-        }
-        let f = Fixture::new(&bytes);
-        let (tx, mut rx) = mpsc::channel(1);
-        let control = ScanControl::new(true);
-        let c = control.clone();
-        let path = f.0.clone();
-        let task = tokio::spawn(async move { scan(path, MarauderFormat::Pcap, tx, c).await });
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while rx.is_empty() {
-                tokio::task::yield_now().await;
+        crate::test_support::manual_time(async {
+            let original = fixture_bytes();
+            let mut bytes = original[..24].to_vec();
+            for _ in 0..20 {
+                bytes.extend(&original[24..]);
             }
+            let f = Fixture::new(&bytes);
+            let (tx, mut rx) = mpsc::channel(1);
+            let control = ScanControl::new(true);
+            let mut source = Box::pin(scan(f.0.clone(), MarauderFormat::Pcap, tx, control.clone()));
+            assert!(matches!(
+                event_while_running(source.as_mut(), &mut rx).await,
+                ScanEvent::MarauderReplay { .. }
+            ));
+            // File input is now decoded. Drive the next send until the bounded
+            // output queue is full, then observe Pause at that exact boundary.
+            pending(source.as_mut()).await;
+            assert_eq!(rx.len(), 1);
+            control.store(false, Ordering::Relaxed);
+            pending(source.as_mut()).await;
+            assert_eq!(control.health().wifi.state, Phase::Paused);
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(ScanEvent::MarauderReplay { .. })
+            ));
+            pending(source.as_mut()).await; // pause wait cannot publish another record
+            assert!(rx.try_recv().is_err());
+            control.store(true, Ordering::Relaxed);
+            assert!(matches!(
+                event_while_running(source.as_mut(), &mut rx).await,
+                ScanEvent::MarauderReplay { .. }
+            ));
+            assert_eq!(control.health().wifi.state, Phase::Running);
+            control.shutdown();
+            let (result, ()) = tokio::join!(source, async { while rx.recv().await.is_some() {} });
+            result.unwrap();
         })
-        .await
-        .unwrap();
-        control.store(false, Ordering::Relaxed);
-        assert_eq!(control.health().wifi.state, Phase::Paused);
-        rx.recv().await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        // A packet already reserved before pause may remain queued; no
-        // fabricated source identity or current location is attached to it.
-        while rx.try_recv().is_ok() {}
-        control.store(true, Ordering::Relaxed);
-        tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(control.health().wifi.state, Phase::Running);
-        control.shutdown();
-        tokio::time::timeout(std::time::Duration::from_secs(2), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        .await;
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn marauder_rejects_fifo_and_device_nodes_without_waiting() {
-        let path =
-            std::env::temp_dir().join(format!("airhound-marauder-fifo-{}", std::process::id()));
-        let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        let _f = Fixture(path.clone());
-        let saved = Fixture::new(&fixture_bytes());
-        let link = saved.0.with_extension("link");
-        std::os::unix::fs::symlink(&saved.0, &link).unwrap();
-        let _link = Fixture(link.clone());
-        for path in [path, link, PathBuf::from("/dev/null")] {
-            let (tx, _rx) = mpsc::channel(8);
-            assert!(tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                scan(path, MarauderFormat::Pcap, tx, ScanControl::new(true))
-            )
-            .await
-            .unwrap()
-            .is_err());
-        }
+        crate::test_support::manual_time(async {
+            let path =
+                std::env::temp_dir().join(format!("airhound-marauder-fifo-{}", std::process::id()));
+            let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+            let _f = Fixture(path.clone());
+            let saved = Fixture::new(&fixture_bytes());
+            let link = saved.0.with_extension("link");
+            std::os::unix::fs::symlink(&saved.0, &link).unwrap();
+            let _link = Fixture(link.clone());
+            for path in [path, link, PathBuf::from("/dev/null")] {
+                let (tx, _rx) = mpsc::channel(8);
+                assert!(scan(path, MarauderFormat::Pcap, tx, ScanControl::new(true))
+                    .await
+                    .is_err());
+            }
+        })
+        .await;
     }
 }
