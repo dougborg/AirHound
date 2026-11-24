@@ -23,7 +23,57 @@ struct Reply {
     stdout: Vec<u8>,
     success: bool,
 }
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    command: Option<CommandProbe>,
+    completed: Option<tokio::sync::mpsc::Sender<bool>>,
+}
+#[cfg(test)]
+struct CommandProbe {
+    consumed: oneshot::Sender<()>,
+    timer: crate::test_support::TimerWitness,
+}
+#[cfg(test)]
+struct ReadWitness<R> {
+    inner: R,
+    consumed: Option<oneshot::Sender<()>>,
+}
+#[cfg(test)]
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ReadWitness<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(result, std::task::Poll::Ready(Ok(())))
+            && buf.filled()[before..].contains(&b'\n')
+        {
+            if let Some(witness) = self.consumed.take() {
+                let _ = witness.send(());
+            }
+        }
+        result
+    }
+}
 async fn command(config: &RayhunterAdb, args: &[&str], end: Instant) -> io::Result<Reply> {
+    command_inner(
+        config,
+        args,
+        end,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+async fn command_inner(
+    config: &RayhunterAdb,
+    args: &[&str],
+    end: Instant,
+    #[cfg(test)] probe: Option<CommandProbe>,
+) -> io::Result<Reply> {
     let remaining = end
         .checked_duration_since(Instant::now())
         .ok_or_else(|| invalid("ADB operation deadline"))?;
@@ -36,7 +86,7 @@ async fn command(config: &RayhunterAdb, args: &[&str], end: Instant) -> io::Resu
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| invalid("ADB stdout absent"))?
@@ -46,16 +96,37 @@ async fn command(config: &RayhunterAdb, args: &[&str], end: Instant) -> io::Resu
         .take()
         .ok_or_else(|| invalid("ADB stderr absent"))?
         .take(LIMIT + 1);
+    #[cfg(not(test))]
+    let mut stdout = stdout;
+    #[cfg(test)]
+    let (consumed, timer) = match probe {
+        Some(probe) => (Some(probe.consumed), Some(probe.timer)),
+        None => (None, None),
+    };
+    #[cfg(test)]
+    let mut stdout = ReadWitness {
+        inner: stdout,
+        consumed,
+    };
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let result = timeout(remaining.min(Duration::from_secs(2)), async {
+    let deadline = Instant::now() + remaining.min(Duration::from_secs(2));
+    let waiting = tokio::time::timeout_at(deadline, async {
         tokio::try_join!(
             stdout.read_to_end(&mut out),
             stderr.read_to_end(&mut err),
             child.wait()
         )
-    })
-    .await;
+    });
+    #[cfg(test)]
+    let waiting = async {
+        if let Some(witness) = timer {
+            witness.observe(deadline, waiting, Result::is_err).await
+        } else {
+            waiting.await
+        }
+    };
+    let result = waiting.await;
     let success = match result {
         Ok(Ok((_, _, status))) => status.success(),
         _ => {
@@ -163,11 +234,52 @@ pub(crate) struct Forward {
 }
 impl Forward {
     pub async fn open(config: RayhunterAdb, expected_hash: String) -> io::Result<Self> {
+        Self::open_inner(
+            config,
+            expected_hash,
+            #[cfg(test)]
+            TestHooks::default(),
+        )
+        .await
+    }
+    #[cfg(test)]
+    pub(crate) async fn open_observed(
+        config: RayhunterAdb,
+        expected_hash: String,
+        completed: Option<tokio::sync::mpsc::Sender<bool>>,
+    ) -> io::Result<Self> {
+        Self::open_inner(
+            config,
+            expected_hash,
+            TestHooks {
+                completed,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn open_inner(
+        config: RayhunterAdb,
+        expected_hash: String,
+        #[cfg(test)] mut hooks: TestHooks,
+    ) -> io::Result<Self> {
         config.validate()?;
         let (ready_tx, ready_rx) = oneshot::channel();
         let (close_tx, close_rx) = oneshot::channel();
         let worker = tokio::spawn(async move {
-            let result = own(config, expected_hash, ready_tx, close_rx).await;
+            let result = own(
+                config,
+                expected_hash,
+                ready_tx,
+                close_rx,
+                #[cfg(test)]
+                hooks.command.take(),
+            )
+            .await;
+            #[cfg(test)]
+            if let Some(completed) = hooks.completed {
+                let _ = completed.try_send(result.is_ok());
+            }
             if let Err(error) = &result {
                 log::error!("Rayhunter ADB ownership: {error}");
             }
@@ -217,6 +329,7 @@ async fn own(
     expected_hash: String,
     ready: Ready,
     close: oneshot::Receiver<()>,
+    #[cfg(test)] probe: Option<CommandProbe>,
 ) -> io::Result<()> {
     let acquired = async {
         let hash = crate::rayhunter_source::decoder_hash(&config.executable).await?;
@@ -228,7 +341,7 @@ async fn own(
         let path = text(command(&config, &["get-devpath"], end).await?)?;
         let path = path.trim();
         if !path.starts_with("usb:") || path.len() > 256 || path.chars().any(char::is_control) { return Err(invalid("Selected ADB transport is not explicit USB")); }
-        let reply = command(&config, &["forward", "tcp:0", "tcp:8082"], end).await
+        let reply = command_inner(&config, &["forward", "tcp:0", "tcp:8082"], end, #[cfg(test)] probe).await
             .map_err(|error| invalid(format!("ADB allocation outcome unknown: {error}; no inferred cleanup")))?;
         let port = allocated_port(&reply.stdout)?;
         let binding = Binding { config: config.clone(), port };
@@ -268,6 +381,7 @@ mod tests {
     struct Fixture {
         root: PathBuf,
         config: RayhunterAdb,
+        events: tokio::net::UnixListener,
     }
     impl Fixture {
         fn new(mode: &str) -> Self {
@@ -276,6 +390,7 @@ mod tests {
             let root = PathBuf::from("/tmp")
                 .join(format!("airhound-adb-{}-{sequence}", std::process::id()));
             std::fs::create_dir(&root).unwrap();
+            let events = tokio::net::UnixListener::bind(root.join("events")).unwrap();
             let executable = root.join("fake-adb");
             let serial = format!("fixture-{}-{sequence}", std::process::id());
             std::fs::write(root.join("mode"), mode).unwrap();
@@ -288,6 +403,9 @@ assert sys.argv[1:6]==['-H','127.0.0.1','-P','5037','-s']
 serial=sys.argv[6];args=sys.argv[7:]
 with (p/'calls').open('a') as f:f.write(json.dumps(args)+'\n')
 mode=(p/'mode').read_text()
+def notify(event):
+ with socket.socket(socket.AF_UNIX) as peer:
+  peer.connect(str(p/'events'));peer.sendall((event+'\n').encode())
 if args==['get-state']:print('offline' if mode=='offline' else 'device')
 elif args==['get-serialno']:print('wrong' if mode=='wrongserial' else serial)
 elif args==['get-devpath']:print('network:host' if mode=='network' else 'usb:fixture')
@@ -296,16 +414,19 @@ elif args==['forward','tcp:0','tcp:8082']:
  if mode=='delayed':
   gate=socket.socket(socket.AF_UNIX);gate.bind(str(p/'release'));gate.listen(1)
  (p/'allocated').write_text(str(os.getpid()))
+ notify('allocated')
  if mode=='lost':sys.exit(0)
  if mode=='delayed':
   peer,_=gate.accept();assert peer.recv(1)==b'!';peer.close();gate.close()
  print('49123',flush=True)
  (p/'emitted').write_text('ready')
+ notify('emitted')
  if mode=='hang':signal.pause()
 elif args==['forward','--list']:
  if (p/'forward').exists():print((p/'forward').read_text(),end='')
 elif args==['forward','--remove','tcp:49123']:
  (p/'forward').unlink()
+ notify('removed')
 else:raise AssertionError(args)
 "#,
             )
@@ -314,6 +435,7 @@ else:raise AssertionError(args)
             Self {
                 root,
                 config: RayhunterAdb { executable, serial },
+                events,
             }
         }
         fn hash(&self) -> String {
@@ -330,23 +452,22 @@ else:raise AssertionError(args)
                 .map(|s| serde_json::from_str(s).unwrap())
                 .collect()
         }
-        async fn wait_allocated(&self) {
-            timeout(Duration::from_secs(3), async {
-                while !self.root.join("allocated").exists() {
-                    tokio::task::yield_now().await;
+        async fn event(&self, expected: &str) {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            loop {
+                let (stream, _) = self.events.accept().await.unwrap();
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).await.unwrap();
+                if line.trim() == expected {
+                    return;
                 }
-            })
-            .await
-            .unwrap();
+            }
+        }
+        async fn wait_allocated(&self) {
+            self.event("allocated").await;
         }
         async fn wait_removed(&self) {
-            timeout(Duration::from_secs(3), async {
-                while self.root.join("forward").exists() {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .unwrap();
+            self.event("removed").await;
         }
     }
     impl Drop for Fixture {
@@ -357,143 +478,167 @@ else:raise AssertionError(args)
 
     #[tokio::test]
     async fn owns_exact_selected_tuple_and_releases_lease_for_second_start() {
-        let f = Fixture::new("normal");
-        let first = Forward::open(f.config.clone(), f.hash()).await.unwrap();
-        assert_eq!(first.endpoint, "ws://127.0.0.1:49123/raw-diag");
-        assert_eq!(first.provenance["serial"], f.config.serial);
-        assert!(airhound_hostd::serial_lease::acquire_adb(&f.config.serial).is_err());
-        first.close().await.unwrap();
-        assert!(!f.root.join("forward").exists());
-        Forward::open(f.config.clone(), f.hash())
-            .await
-            .unwrap()
-            .close()
-            .await
-            .unwrap();
-        assert_eq!(
-            f.calls()
-                .iter()
-                .filter(|a| a.as_slice() == ["forward", "--remove", "tcp:49123"])
-                .count(),
-            2
-        );
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("normal");
+            let first = Forward::open(f.config.clone(), f.hash()).await.unwrap();
+            assert_eq!(first.endpoint, "ws://127.0.0.1:49123/raw-diag");
+            assert_eq!(first.provenance["serial"], f.config.serial);
+            assert!(airhound_hostd::serial_lease::acquire_adb(&f.config.serial).is_err());
+            first.close().await.unwrap();
+            assert!(!f.root.join("forward").exists());
+            Forward::open(f.config.clone(), f.hash())
+                .await
+                .unwrap()
+                .close()
+                .await
+                .unwrap();
+            assert_eq!(
+                f.calls()
+                    .iter()
+                    .filter(|a| a.as_slice() == ["forward", "--remove", "tcp:49123"])
+                    .count(),
+                2
+            );
+        })
+        .await;
     }
     #[tokio::test]
     async fn cancelled_acquisition_waits_for_response_then_removes_owned_forward() {
-        let f = Fixture::new("delayed");
-        let config = f.config.clone();
-        let hash = f.hash();
-        let task = tokio::spawn(async move { Forward::open(config, hash).await });
-        f.wait_allocated().await;
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        // The ownership task remains blocked until this explicit response gate.
-        use std::io::Write;
-        std::os::unix::net::UnixStream::connect(f.root.join("release"))
-            .unwrap()
-            .write_all(b"!")
-            .unwrap();
-        f.wait_removed().await;
-        // Wait for final inventory and lease release, not merely unlink.
-        timeout(Duration::from_secs(2), async {
-            loop {
-                if airhound_hostd::serial_lease::acquire_adb(&f.config.serial).is_ok() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("delayed");
+            let config = f.config.clone();
+            let hash = f.hash();
+            let (completed_tx, mut completed_rx) = tokio::sync::mpsc::channel(1);
+            let task = tokio::spawn(async move {
+                Forward::open_observed(config, hash, Some(completed_tx)).await
+            });
+            f.wait_allocated().await;
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            // The ownership task remains blocked until this explicit response gate.
+            use std::io::Write;
+            std::os::unix::net::UnixStream::connect(f.root.join("release"))
+                .unwrap()
+                .write_all(b"!")
+                .unwrap();
+            f.wait_removed().await;
+            assert_eq!(completed_rx.recv().await, Some(true));
+            let lease = airhound_hostd::serial_lease::acquire_adb(&f.config.serial).unwrap();
+            drop(lease);
+            assert!(f
+                .calls()
+                .iter()
+                .any(|a| a.as_slice() == ["forward", "--remove", "tcp:49123"]));
         })
-        .await
-        .unwrap();
-        assert!(f
-            .calls()
-            .iter()
-            .any(|a| a.as_slice() == ["forward", "--remove", "tcp:49123"]));
+        .await;
     }
     #[tokio::test]
     async fn lost_response_is_unknown_and_never_guessed_from_inventory() {
-        let f = Fixture::new("lost");
-        let error = match Forward::open(f.config.clone(), f.hash()).await {
-            Ok(_) => panic!("unexpected ready"),
-            Err(e) => e,
-        };
-        assert!(error.to_string().contains("outcome unknown"));
-        assert!(f.root.join("forward").exists());
-        assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("lost");
+            let error = match Forward::open(f.config.clone(), f.hash()).await {
+                Ok(_) => panic!("unexpected ready"),
+                Err(e) => e,
+            };
+            assert!(error.to_string().contains("outcome unknown"));
+            assert!(f.root.join("forward").exists());
+            assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        })
+        .await;
     }
     #[tokio::test]
     async fn complete_response_survives_command_timeout_and_child_is_reaped() {
-        let f = Fixture::new("hang");
-        let config = f.config.clone();
-        let hash = f.hash();
-        let task = tokio::spawn(async move { Forward::open(config, hash).await });
-        timeout(Duration::from_secs(3), async {
-            while !f.root.join("emitted").exists() {
-                tokio::task::yield_now().await;
-            }
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("hang");
+            let config = f.config.clone();
+            let hash = f.hash();
+            let (consumed_tx, consumed_rx) = oneshot::channel();
+            let (timer, mut timer_rx) = crate::test_support::TimerWitness::channel();
+            let task = tokio::spawn(async move {
+                Forward::open_inner(
+                    config,
+                    hash,
+                    TestHooks {
+                        command: Some(CommandProbe {
+                            consumed: consumed_tx,
+                            timer,
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+            });
+            consumed_rx.await.unwrap();
+            crate::test_support::advance_registered_timer(&mut timer_rx).await;
+            assert!(task.await.unwrap().is_err());
+            assert!(!f.root.join("forward").exists());
+            let pid = std::fs::read_to_string(f.root.join("allocated"))
+                .unwrap()
+                .parse::<i32>()
+                .unwrap();
+            assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
         })
-        .await
-        .unwrap();
-        // stdout was flushed before the marker. Expire the real command
-        // timeout with virtual time, then resume before subprocess cleanup.
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(3)).await;
-        tokio::time::resume();
-        assert!(task.await.unwrap().is_err());
-        assert!(!f.root.join("forward").exists());
-        let pid = std::fs::read_to_string(f.root.join("allocated"))
-            .unwrap()
-            .parse::<i32>()
-            .unwrap();
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
-        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        .await;
     }
     #[tokio::test]
     async fn replaced_tuple_is_not_removed_and_cleanup_failure_propagates() {
-        let f = Fixture::new("normal");
-        let owner = Forward::open(f.config.clone(), f.hash()).await.unwrap();
-        std::fs::write(
-            f.root.join("forward"),
-            "another-device tcp:49123 tcp:8082\n",
-        )
-        .unwrap();
-        assert!(owner
-            .close()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("replaced"));
-        assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("normal");
+            let owner = Forward::open(f.config.clone(), f.hash()).await.unwrap();
+            std::fs::write(
+                f.root.join("forward"),
+                "another-device tcp:49123 tcp:8082\n",
+            )
+            .unwrap();
+            assert!(owner
+                .close()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("replaced"));
+            assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        })
+        .await;
     }
     #[tokio::test]
     async fn missing_tuple_is_expired_not_permission_to_remove() {
-        let f = Fixture::new("normal");
-        let owner = Forward::open(f.config.clone(), f.hash()).await.unwrap();
-        std::fs::remove_file(f.root.join("forward")).unwrap();
-        owner.close().await.unwrap();
-        assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("normal");
+            let owner = Forward::open(f.config.clone(), f.hash()).await.unwrap();
+            std::fs::remove_file(f.root.join("forward")).unwrap();
+            owner.close().await.unwrap();
+            assert!(!f.calls().iter().any(|a| a.iter().any(|s| s == "--remove")));
+        })
+        .await;
     }
     #[tokio::test]
     async fn changed_executable_is_rejected_before_any_device_command() {
-        let f = Fixture::new("normal");
-        let expected = f.hash();
-        let mut bytes = std::fs::read(&f.config.executable).unwrap();
-        bytes.extend_from_slice(b"\n# changed\n");
-        std::fs::write(&f.config.executable, bytes).unwrap();
-        assert!(Forward::open(f.config.clone(), expected)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("executable changed"));
-        assert!(f.calls().is_empty());
+        crate::test_support::manual_time(async {
+            let f = Fixture::new("normal");
+            let expected = f.hash();
+            let mut bytes = std::fs::read(&f.config.executable).unwrap();
+            bytes.extend_from_slice(b"\n# changed\n");
+            std::fs::write(&f.config.executable, bytes).unwrap();
+            assert!(Forward::open(f.config.clone(), expected)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("executable changed"));
+            assert!(f.calls().is_empty());
+        })
+        .await;
     }
     #[tokio::test]
     async fn wrong_unauthorized_or_non_usb_device_never_allocates() {
-        for mode in ["offline", "wrongserial", "network"] {
-            let f = Fixture::new(mode);
-            assert!(Forward::open(f.config.clone(), f.hash()).await.is_err());
-            assert!(!f.root.join("allocated").exists());
-        }
+        crate::test_support::manual_time(async {
+            for mode in ["offline", "wrongserial", "network"] {
+                let f = Fixture::new(mode);
+                assert!(Forward::open(f.config.clone(), f.hash()).await.is_err());
+                assert!(!f.root.join("allocated").exists());
+            }
+        })
+        .await;
     }
     #[test]
     fn strict_port_and_tuple_parsing_never_accepts_ambiguity() {
@@ -528,6 +673,7 @@ else:raise AssertionError(args)
     }
     #[tokio::test]
     async fn actual_transport_eof_releases_forward_before_bounded_reconnect() {
+        crate::test_support::manual_time(async {
         let f = Fixture::new("normal");
         let decoder = f.root.join("decoder");
         std::fs::write(&decoder, r#"#!/usr/bin/env python3
@@ -543,11 +689,13 @@ if n>1:signal.pause()
         std::fs::set_permissions(&decoder, std::fs::Permissions::from_mode(0o700)).unwrap();
         let control = crate::control::ScanControl::new(true);
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-        let task = tokio::spawn(crate::rayhunter_source::scan_adb(
+        let (retry, mut retry_rx) = crate::test_support::TimerWitness::channel();
+        let task = tokio::spawn(crate::rayhunter_source::scan_adb_test(
             f.config.clone(),
             decoder,
             tx,
             control.clone(),
+            crate::rayhunter_source::TestHooks { retry: Some(retry), ..Default::default() },
         ));
         let (first, _) = decoder_event(&mut rx).await;
         timeout(Duration::from_secs(4), async {
@@ -563,9 +711,7 @@ if n>1:signal.pause()
         })
         .await
         .unwrap();
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(1)).await;
-        tokio::time::resume();
+        crate::test_support::advance_registered_timer(&mut retry_rx).await;
         let (second, _) = decoder_event(&mut rx).await;
         assert_ne!(first, second);
         control.shutdown();
@@ -595,9 +741,11 @@ if n>1:signal.pause()
                 && allocations[1] < removals[1]
         );
         assert!(!f.root.join("forward").exists());
+        }).await;
     }
     #[tokio::test]
     async fn actual_source_pause_resume_finish_and_cancel_release_forward_and_decoder() {
+        crate::test_support::manual_time(async {
         use std::sync::atomic::Ordering;
         for cancel in [false, true] {
             let f = Fixture::new("normal");
@@ -614,12 +762,17 @@ signal.pause()
             let control = crate::control::ScanControl::new(true);
             let (tx, mut rx) = tokio::sync::mpsc::channel(2);
             let (witness_tx, mut witness_rx) = tokio::sync::mpsc::channel(8);
+            let (reaped_tx, mut reaped_rx) = tokio::sync::mpsc::channel(8);
+            let (forward_tx, mut forward_rx) = tokio::sync::mpsc::channel(8);
             let task = tokio::spawn(crate::rayhunter_source::scan_adb_test(
                 f.config.clone(),
                 decoder,
                 tx,
                 control.clone(),
-                witness_tx,
+                crate::rayhunter_source::TestHooks {
+                    ingress: Some(witness_tx), reaped: Some(reaped_tx),
+                    forward_completed: Some(forward_tx), ..Default::default()
+                },
             ));
             let (first, generation) = decoder_event(&mut rx).await;
             let last = if cancel {
@@ -635,6 +788,8 @@ signal.pause()
             } else {
                 control.store(false, Ordering::Relaxed);
                 f.wait_removed().await;
+                assert_eq!(forward_rx.recv().await, Some(true));
+                assert_eq!(reaped_rx.recv().await, Some((first as u32, true)));
                 while rx.try_recv().is_ok() {}
                 control.store(true, Ordering::Relaxed);
                 let (second, next) = decoder_event(&mut rx).await;
@@ -650,14 +805,11 @@ signal.pause()
                 second
             };
             f.wait_removed().await;
-            timeout(Duration::from_secs(3), async {
-                while unsafe { libc::kill(last, 0) } == 0 {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .unwrap();
+            assert_eq!(forward_rx.recv().await, Some(true));
+            assert_eq!(reaped_rx.recv().await, Some((last as u32, true)));
+            assert_eq!(unsafe { libc::kill(last, 0) }, -1);
             assert!(!f.root.join("forward").exists());
         }
+        }).await;
     }
 }
