@@ -92,14 +92,13 @@ scanner tasks, so they do not establish driver or physical-radio behavior.
 
 ## Timing regression guard
 
-Run `python3 scripts/check-test-timing.py --report /tmp/test-timing-report.json`.
-CI rejects new or changed unclassified clock/wait sites and scanner/configuration
-errors. It publishes the report even when the check fails. Existing unresolved
-migration findings remain visible; a green regression check does **not** mean
-that the repository timing audit is complete.
+Run `python3 scripts/check-test-timing.py --report /tmp/test-timing-report.json --require-resolved`.
+CI rejects new or changed unclassified clock/wait sites, unresolved migration
+findings, and scanner/configuration errors. It publishes the report even when
+the check fails. A green check does **not** prove that every indirect timing
+dependency has been found.
 
-For closure, also run `python3 scripts/check-test-timing.py --require-resolved`.
-That command rejects every remaining unresolved migration finding. See the
+The original migration inventory remains immutable. See the
 [timing policy guide](test-timing-guard.md) for scope, review requirements and
 limitations. Production-delay investigation is separate from this test guard;
 protocol dwell, retry/backoff and periodic work must not be removed merely to
