@@ -330,6 +330,7 @@ async fn scan_loop_with_timeouts(
     let mut drops = 0u64;
     let mut selected_usb = None;
     let mut identity = airhound_hostd::external_identity::Identity::default();
+    let mut diagnostics = airhound_hostd::external_diagnostics::Snapshot::default();
     let mut producer_dropped = 0u64;
     let mut reconnect_attempts = 0u64;
     let mut next_request = 1u64;
@@ -436,7 +437,8 @@ async fn scan_loop_with_timeouts(
                             identity.status(&message)?;
                             publish_identity(&control, &identity, selected_usb.as_deref(), status);
                             read_metrics(&message, &mut producer_dropped, &mut reconnect_attempts)?;
-                            publish_status(&tx, ScanEvent::ExternalStatus { state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts, usb_selector: selected_usb.clone(), identity:identity.clone() }).await;
+                            diagnostics.observe(&message);
+                            publish_status(&tx, ScanEvent::ExternalStatus { diagnostics: diagnostics.value.clone(), diagnostics_invalid: diagnostics.invalid, state: status.to_owned(), dropped: drops, producer_dropped, reconnect_attempts, usb_selector: selected_usb.clone(), identity:identity.clone() }).await;
                         }
                         Some("stopped") => { stopped = Some(message); return Err(error("companion stopped unexpectedly")); },
                         _ => return Err(error("unexpected companion message")),
@@ -456,6 +458,18 @@ async fn scan_loop_with_timeouts(
         hooks.stop.clone(),
     )
     .await;
+    match &cleanup {
+        Ok(message) => diagnostics.observe(message),
+        Err(error) => {
+            if let Some(message) = error
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<ShutdownFailure>())
+                .and_then(|failure| failure.outcome.stopped.as_ref())
+            {
+                diagnostics.observe(message);
+            }
+        }
+    }
     match &mut cleanup {
         Ok(message) => {
             if let Err(e) = qualify_cleanup(
@@ -507,6 +521,8 @@ async fn scan_loop_with_timeouts(
     publish_status(
         &tx,
         ScanEvent::ExternalStatus {
+            diagnostics: diagnostics.value,
+            diagnostics_invalid: diagnostics.invalid,
             usb_selector: selected_usb,
             identity,
             state: if cleanup.is_ok() && result.is_ok() {
@@ -1269,6 +1285,55 @@ exit 7
             }
             assert_eq!(final_status, Some(("failed".to_owned(), 2)));
             fake.assert_exited();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn final_diagnostics_survive_nonzero_exit_and_malformed_extension_cannot_skip_reap() {
+        crate::test_support::manual_time(async {
+            let sample: serde_json::Value = serde_json::from_str(include_str!(
+                "../tests/fixtures/external-diagnostics-v1.json"
+            ))
+            .unwrap();
+            for (value, invalid) in [
+                (sample, false),
+                (serde_json::json!({"last_failure":"malformed"}), true),
+            ] {
+                let body = LIFECYCLE.replace("exit 0;;", "exit 7;;").replace(
+                    "\"type\":\"stopped\"",
+                    &format!("\"type\":\"stopped\",\"diagnostics_v1\":{value}"),
+                );
+                let fake = Fake::new(&body);
+                let (tx, mut rx) = mpsc::channel(16);
+                let control = ScanControl::new(true);
+                let mut task = tokio::spawn(scan_loop(fake.options(), tx, control.clone()));
+                status(&mut rx, "running", &mut task).await;
+                control.shutdown();
+                let error = task.await.unwrap().unwrap_err().to_string();
+                assert!(error.contains("companion exited unsuccessfully"));
+                assert!(error.contains("reaped=true"));
+                let mut final_status = None;
+                while let Some(event) = rx.recv().await {
+                    if let ScanEvent::ExternalStatus {
+                        state,
+                        diagnostics,
+                        diagnostics_invalid,
+                        ..
+                    } = event
+                    {
+                        final_status = Some((state, diagnostics, diagnostics_invalid));
+                    }
+                }
+                let (state, diagnostics, diagnostics_invalid) = final_status.unwrap();
+                assert_eq!(state, "failed");
+                assert_eq!(diagnostics_invalid, invalid);
+                assert_eq!(diagnostics.is_some(), !invalid);
+                if let Some(d) = diagnostics {
+                    assert_eq!(serde_json::to_value(d).unwrap(), value);
+                }
+                fake.assert_exited();
+            }
         })
         .await;
     }

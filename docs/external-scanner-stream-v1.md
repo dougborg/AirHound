@@ -139,3 +139,35 @@ A port selector is not hardware authentication. Another matching adapter placed
 in the same port can satisfy it; USB bus numbering may change after reboot.
 Separate processes rely on OS interface-claim exclusion. Hostd rejects duplicate
 selectors within its session, but does not claim global ownership coordination.
+
+
+## Optional failure diagnostics
+
+New helpers can add `diagnostics_v1` to status and stopped messages. It contains
+nullable `last_failure` and `last_cleanup_failure` objects. These are historical
+facts: a later successful retry or shutdown does not erase them or imply the
+receiver is currently failed. Current availability and `firmware.load_state`
+remain separate. The helper records the failure before checking retry exhaustion,
+so final stopped status can retain the underlying cause.
+
+Each failure reports a bounded operation (`initialize`, `receive`,
+`pause_shutdown`, `recovery_shutdown` or `stop_shutdown`), kind (`mcu_timeout`,
+`usb`, `mcu_exchange` or `other`), optional preparation stage (`firmware_load`,
+`initialize_channel`, `initial_retune`), and optional typed USB error. A nullable
+`firmware_uploaded_in_failed_preparation` describes only that failed attempt;
+it does not attest the currently running image. MCU failures retain command and
+sequence plus optional exchange metadata: command/reply endpoint addresses,
+completed-write flag, saturating read-attempt/timeout/reply/byte/stale-sequence/
+short-reply/error-event counters, and the last reply's sequence/event nibbles.
+No raw reply, RF payload, arbitrary error string or device address is included.
+A completed USB write does not prove that the MCU executed the command, and an
+MCU timeout does not imply that no reply bytes arrived.
+
+Hostd accepts this extension only within 2 KiB, validates the known typed fields
+and counter/header bounds, and discards unknown fields. Omission remains
+compatible with old helpers. Invalid optional metadata sets a sticky
+`diagnostics_invalid:true` on host status while preserving any earlier valid
+historical snapshot. It neither skips owned-child cleanup nor replaces the
+primary receiver failure. Accepted diagnostics reach source-attributed live and
+saved `external_scanner_status` records, including final nonzero-exit failures.
+This metadata does not change timeouts, retries, passive gates or recovery policy.

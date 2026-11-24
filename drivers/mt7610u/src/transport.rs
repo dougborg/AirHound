@@ -39,6 +39,35 @@ impl std::fmt::Display for McuTimeout {
 }
 impl std::error::Error for McuTimeout {}
 
+/// Bounded metadata for a failed command exchange; never retains payload bytes.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct McuExchangeEvidence {
+    pub command: u8,
+    pub sequence: u8,
+    pub output_endpoint: u8,
+    pub input_endpoint: u8,
+    pub write_completed: bool,
+    pub read_attempts: u32,
+    pub read_timeouts: u32,
+    pub replies: u32,
+    pub reply_bytes: u64,
+    pub stale_sequences: u32,
+    pub short_replies: u32,
+    pub error_events: u32,
+    pub last_reply_sequence: Option<u8>,
+    pub last_reply_event: Option<u8>,
+}
+impl std::fmt::Display for McuExchangeEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MCU exchange diagnostics for command {} sequence {}",
+            self.command, self.sequence
+        )
+    }
+}
+impl std::error::Error for McuExchangeEvidence {}
+
 pub trait RegisterIo {
     fn clock(&self) -> Clock {
         Clock::default()
@@ -269,45 +298,80 @@ impl<T: UsbIo> UsbDevice<T> {
             0
         };
         let packet = mcu_packet(command, seq, payload)?;
-        self.write_mcu_bulk(&packet)?;
-        if !wait {
-            return Ok(Vec::new());
-        }
-        let deadline = self.clock.now() + Duration::from_millis(1500);
-        let mut reply = [0u8; 1024];
-        while self.clock.now() < deadline {
-            let n = match self.handle.read_bulk(
-                self.input_endpoints[1],
-                &mut reply,
-                Duration::from_millis(300),
-            ) {
-                Ok(n) => n,
-                Err(rusb::Error::Timeout) => continue,
-                Err(e) => return Err(e.into()),
-            };
-            ensure!(n >= 8, "Short MCU reply ({n} bytes)");
-            let header = u32::from_le_bytes(reply[..4].try_into().unwrap());
-            let got_seq = ((header >> 16) & 15) as u8;
-            let event = (header >> 20) & 15;
-            if got_seq != seq {
-                continue;
-            }
-            ensure!(
-                event == 0,
-                "MCU command {command} failed with event {event}"
-            );
-            // A read may complete after the absolute response deadline.
-            // Keep protocol/I/O errors intact, but never accept a late ACK.
-            if self.clock.now() >= deadline {
-                break;
-            }
-            return Ok(reply[4..n - 4].to_vec());
-        }
-        Err(McuTimeout {
+        let mut evidence = McuExchangeEvidence {
             command,
             sequence: seq,
-        }
-        .into())
+            output_endpoint: self.output_endpoints[0],
+            input_endpoint: self.input_endpoints[1],
+            write_completed: false,
+            read_attempts: 0,
+            read_timeouts: 0,
+            replies: 0,
+            reply_bytes: 0,
+            stale_sequences: 0,
+            short_replies: 0,
+            error_events: 0,
+            last_reply_sequence: None,
+            last_reply_event: None,
+        };
+        let result = (|| -> Result<Vec<u8>> {
+            self.write_mcu_bulk(&packet)?;
+            evidence.write_completed = true;
+            if !wait {
+                return Ok(Vec::new());
+            }
+            let deadline = self.clock.now() + Duration::from_millis(1500);
+            let mut reply = [0u8; 1024];
+            while self.clock.now() < deadline {
+                evidence.read_attempts = evidence.read_attempts.saturating_add(1);
+                let n = match self.handle.read_bulk(
+                    self.input_endpoints[1],
+                    &mut reply,
+                    Duration::from_millis(300),
+                ) {
+                    Ok(n) => n,
+                    Err(rusb::Error::Timeout) => {
+                        evidence.read_timeouts = evidence.read_timeouts.saturating_add(1);
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                evidence.replies = evidence.replies.saturating_add(1);
+                evidence.reply_bytes = evidence.reply_bytes.saturating_add(n as u64);
+                if n < 8 {
+                    evidence.short_replies = evidence.short_replies.saturating_add(1);
+                }
+                ensure!(n >= 8, "Short MCU reply ({n} bytes)");
+                let header = u32::from_le_bytes(reply[..4].try_into().unwrap());
+                let got_seq = ((header >> 16) & 15) as u8;
+                let event = (header >> 20) & 15;
+                evidence.last_reply_sequence = Some(got_seq);
+                evidence.last_reply_event = Some(event as u8);
+                if got_seq != seq {
+                    evidence.stale_sequences = evidence.stale_sequences.saturating_add(1);
+                    continue;
+                }
+                if event != 0 {
+                    evidence.error_events = evidence.error_events.saturating_add(1);
+                }
+                ensure!(
+                    event == 0,
+                    "MCU command {command} failed with event {event}"
+                );
+                // A read may complete after the absolute response deadline.
+                // Keep protocol/I/O errors intact, but never accept a late ACK.
+                if self.clock.now() >= deadline {
+                    break;
+                }
+                return Ok(reply[4..n - 4].to_vec());
+            }
+            Err(McuTimeout {
+                command,
+                sequence: seq,
+            }
+            .into())
+        })();
+        result.map_err(|error| error.context(evidence))
     }
 }
 
@@ -371,6 +435,82 @@ pub fn mcu_packet(command: u8, sequence: u8, payload: &[u8]) -> Result<Vec<u8>> 
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    #[test]
+    fn exchange_diagnostics_distinguish_read_timeouts_from_stale_replies() {
+        let endpoint = crate::test_support::Endpoint::default();
+        {
+            let mut model = endpoint.0.lock().unwrap();
+            model.suppress_mcu_replies = true;
+            model
+                .responses
+                .extend([Err(rusb::Error::Timeout), Ok(vec![0; 8])]);
+        }
+        let error = endpoint
+            .device()
+            .mcu_command(12, &[0; 8], true)
+            .unwrap_err();
+        assert!(error.is::<McuTimeout>());
+        let evidence = error.downcast_ref::<McuExchangeEvidence>().unwrap();
+        assert_eq!((evidence.command, evidence.sequence), (12, 1));
+        assert_eq!(
+            (evidence.output_endpoint, evidence.input_endpoint),
+            (1, 0x82)
+        );
+        assert!(evidence.write_completed);
+        assert_eq!((evidence.read_attempts, evidence.read_timeouts), (6, 5));
+        assert_eq!(
+            (
+                evidence.replies,
+                evidence.reply_bytes,
+                evidence.stale_sequences
+            ),
+            (1, 8, 1)
+        );
+        assert_eq!(evidence.last_reply_sequence, Some(0));
+        assert!(serde_json::to_vec(evidence).unwrap().len() < 512);
+    }
+
+    #[test]
+    fn exchange_diagnostics_preserve_short_event_and_usb_errors() {
+        for (reply, short, event, usb) in [
+            (Ok(vec![0; 3]), 1, 0, None),
+            (Ok(vec![0, 0, 0x11, 0, 0, 0, 0, 0]), 0, 1, None),
+            (
+                Err(rusb::Error::NoDevice),
+                0,
+                0,
+                Some(rusb::Error::NoDevice),
+            ),
+        ] {
+            let endpoint = crate::test_support::Endpoint::default();
+            endpoint.0.lock().unwrap().responses.push_back(reply);
+            let error = endpoint
+                .device()
+                .mcu_command(12, &[0; 8], true)
+                .unwrap_err();
+            let evidence = error.downcast_ref::<McuExchangeEvidence>().unwrap();
+            assert_eq!(
+                (evidence.short_replies, evidence.error_events),
+                (short, event)
+            );
+            assert_eq!(error.downcast_ref::<rusb::Error>().copied(), usb);
+            assert!(!error.is::<McuTimeout>());
+        }
+        let endpoint = crate::test_support::Endpoint::default();
+        endpoint.0.lock().unwrap().error = Some(rusb::Error::Pipe);
+        let error = endpoint
+            .device()
+            .mcu_command(12, &[0; 8], true)
+            .unwrap_err();
+        let evidence = error.downcast_ref::<McuExchangeEvidence>().unwrap();
+        assert!(!evidence.write_completed);
+        assert_eq!(evidence.read_attempts, 0);
+        assert_eq!(
+            error.downcast_ref::<rusb::Error>(),
+            Some(&rusb::Error::Pipe)
+        );
+    }
+
     #[test]
     fn register_io_and_mcu_exchange_validate_real_wire_protocol() {
         let endpoint = crate::test_support::Endpoint::default();
@@ -439,11 +579,7 @@ mod tests {
         let mut reply = (((seq as u32) << 16) | (1 << 20)).to_le_bytes().to_vec();
         reply.extend([0; 4]);
         endpoint.0.lock().unwrap().responses.push_back(Ok(reply));
-        assert!(d
-            .mcu_query(1, &[])
-            .unwrap_err()
-            .to_string()
-            .contains("event"));
+        assert!(format!("{:#}", d.mcu_query(1, &[]).unwrap_err()).contains("event"));
         endpoint.0.lock().unwrap().responses.clear();
         endpoint
             .0

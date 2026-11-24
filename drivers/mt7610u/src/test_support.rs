@@ -36,6 +36,7 @@ pub struct Model {
     pub eeprom: [u8; 512],
     pub efuse_offset: usize,
     pub responses: VecDeque<rusb::Result<Vec<u8>>>,
+    pub suppress_mcu_replies: bool,
     pub packets: VecDeque<rusb::Result<Vec<u8>>>,
     pub writes: Vec<(u8, u8, u16, u16, Vec<u8>)>,
     pub bulk_writes: Vec<Vec<u8>>,
@@ -65,6 +66,7 @@ impl Default for Model {
             eeprom,
             efuse_offset: 0,
             responses: VecDeque::new(),
+            suppress_mcu_replies: false,
             packets: VecDeque::new(),
             writes: vec![],
             bulk_writes: vec![],
@@ -192,7 +194,7 @@ impl UsbIo for Endpoint {
                 "TX-inclusive calibration"
             );
         }
-        if seq != 0 {
+        if seq != 0 && !m.suppress_mcu_replies {
             let mut reply = (seq << 16).to_le_bytes().to_vec();
             reply.extend(response);
             reply.extend([0; 4]);
