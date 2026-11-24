@@ -32,8 +32,20 @@ private final class Cancellation: @unchecked Sendable {
   }
 }
 
+/// Injectable scheduling keeps deadline correctness independent of machine speed.
+/// The public initializer retains the production monotonic clock and poll delay.
+struct ProcessScheduling: Sendable {
+  var now: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+  var wait: @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+  var launched: @Sendable (Int32) -> Void = { _ in }
+  var stdout: @Sendable (Data) -> Void = { _ in }
+  var signalling: @Sendable (Int32, TimeInterval) -> Void = { _, _ in }
+}
+
 public struct DiscoveryProcess {
-  public init() {}
+  private let scheduling: ProcessScheduling
+  public init() { scheduling = ProcessScheduling() }
+  init(scheduling: ProcessScheduling) { self.scheduling = scheduling }
   public func run(
     executable: URL, arguments: [String] = ["devices", "list", "--json"],
     timeout: TimeInterval = 15, outputLimit: Int = 4 * 1024 * 1024
@@ -49,7 +61,7 @@ public struct DiscoveryProcess {
               with: Result {
                 try Self.collect(
                   executable, arguments: arguments, timeout: timeout, limit: outputLimit,
-                  cancellation: cancellation)
+                  cancellation: cancellation, scheduling: scheduling)
               })
           }
         }
@@ -65,7 +77,7 @@ public struct DiscoveryProcess {
 
   private static func collect(
     _ executable: URL, arguments: [String] = ["devices", "list", "--json"], timeout: TimeInterval,
-    limit: Int, cancellation: Cancellation
+    limit: Int, cancellation: Cancellation, scheduling: ProcessScheduling
   ) throws -> Data {
     guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path),
       timeout > 0, limit > 0
@@ -93,12 +105,13 @@ public struct DiscoveryProcess {
     try configureNonblocking(outFD)
     try configureNonblocking(errFD)
     try process.run()
+    scheduling.launched(process.processIdentifier)
     try? stdout.fileHandleForWriting.close()
     try? stderr.fileHandleForWriting.close()
     var output = Data()
     var errors = Data()
     var failure: DiscoveryError?
-    let start = ProcessInfo.processInfo.systemUptime
+    let start = scheduling.now()
     var stopTime: TimeInterval?
     func drain(_ fd: Int32, into data: inout Data, cap: Int) {
       var bytes = [UInt8](repeating: 0, count: 8192)
@@ -116,14 +129,17 @@ public struct DiscoveryProcess {
     repeat {
       drain(outFD, into: &output, cap: limit)
       drain(errFD, into: &errors, cap: min(limit, 64 * 1024))
-      let now = ProcessInfo.processInfo.systemUptime
+      scheduling.stdout(output)
+      let now = scheduling.now()
       if cancellation.isCancelled { failure = failure ?? .cancelled }
       if now - start >= timeout { failure = failure ?? .timedOut }
       if failure != nil && process.isRunning {
         if stopTime == nil {
+          scheduling.signalling(SIGTERM, now)
           process.terminate()
           stopTime = now
         } else if now - stopTime! >= 0.25 {
+          scheduling.signalling(SIGKILL, now)
           _ = kill(process.processIdentifier, SIGKILL)
         }
       }
@@ -135,7 +151,7 @@ public struct DiscoveryProcess {
         }
         break
       }
-      Thread.sleep(forTimeInterval: 0.01)
+      scheduling.wait(0.01)
     } while true
     process.waitUntilExit()
     if let failure { throw failure }

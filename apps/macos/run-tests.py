@@ -118,40 +118,60 @@ def diagnose(process, destination):
     return rows
 
 
-def run(command, timeout, destination):
+def cleanup_owned(process, destination, cleanup_grace):
+    rows = []
+    try:
+        rows = diagnose(process, destination)
+    finally:
+        try:
+            try:
+                known = {(row["pid"], tuple(row["birth"])): row for row in rows}
+                for row in snapshot(process.pid):
+                    known[(row["pid"], tuple(row["birth"]))] = row
+                rows = list(known.values())
+            except (OSError, subprocess.SubprocessError) as error:
+                report(destination / "cleanup-snapshot-error.txt", str(error))
+            report(destination / "cleanup-processes.json", json.dumps(rows, indent=2))
+            try:
+                for row in reversed(rows):
+                    signal_owned(row, signal.SIGTERM)
+                if cleanup_grace is None:
+                    time.sleep(2)
+                else:
+                    cleanup_grace()
+            finally:
+                # A failed readiness/grace hook must not skip descendant cleanup.
+                for row in reversed(rows):
+                    signal_owned(row, signal.SIGKILL)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
+
+
+def run(command, timeout, destination, *, wait_for_exit=None, cleanup_grace=None):
     environment = dict(os.environ, NSUnbufferedIO="YES", PYTHONUNBUFFERED="1")
     # Inherit stdout/stderr: XCTest progress is streamed, not held in a pipe.
     process = subprocess.Popen(command, env=environment, start_new_session=True)
     try:
-        return process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        print(f"Native tests exceeded {timeout:g}s; collecting owned-process diagnostics", flush=True)
-        rows = []
+        status = (wait_for_exit(process, timeout) if wait_for_exit is not None
+                  else process.wait(timeout=timeout))
+        if process.poll() is None:
+            raise RuntimeError("Wait hook returned before the owned child exited")
+        return status
+    except BaseException as error:
+        timed_out = isinstance(error, subprocess.TimeoutExpired)
+        if timed_out:
+            print(f"Native tests exceeded {timeout:g}s; collecting owned-process diagnostics", flush=True)
         try:
-            rows = diagnose(process, destination)
-        finally:
-            try:
-                try:
-                    known = {(row["pid"], tuple(row["birth"])): row for row in rows}
-                    for row in snapshot(process.pid):
-                        known[(row["pid"], tuple(row["birth"]))] = row
-                    rows = list(known.values())
-                except (OSError, subprocess.SubprocessError) as error:
-                    report(destination / "cleanup-snapshot-error.txt", str(error))
-                report(destination / "cleanup-processes.json", json.dumps(rows, indent=2))
-                for row in reversed(rows):
-                    signal_owned(row, signal.SIGTERM)
-                time.sleep(2)
-                for row in reversed(rows):
-                    signal_owned(row, signal.SIGKILL)
-            finally:
-                # The direct child is owned even if diagnostic enumeration fails.
-                # Reap only after cross-group cleanup; PID birth tokens prevent
-                # signalling replacements after descendants exit/reparent.
-                if process.poll() is None:
-                    process.kill()
-                process.wait(timeout=2)
-        return 124
+            cleanup_owned(process, destination, cleanup_grace)
+        except BaseException as cleanup_error:
+            if not timed_out:
+                raise error from cleanup_error
+            raise
+        if timed_out:
+            return 124
+        raise
 
 
 def main():

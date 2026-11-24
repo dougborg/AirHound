@@ -136,10 +136,8 @@ final class CoreTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let fifo = root.appendingPathComponent("pipe")
     XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
-    let start = Date()
     XCTAssertThrowsError(try Recording.load(fifo))
     XCTAssertThrowsError(try Recording.load(root))
-    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
     let file = root.appendingPathComponent("regular.ndjson")
     try Data(#"{"type":"wifi_observation","ch":6}"#.utf8).write(to: file)
     XCTAssertEqual(try Recording.load(file).observations[0].channel, "6")
@@ -178,23 +176,53 @@ final class CoreTests: XCTestCase {
     } catch { XCTAssertEqual(error as? DiscoveryError, .failed(7, "backend unavailable")) }
   }
   func testTimeoutKillsAndReapsUncooperativeChild() async throws {
-    let executable = try script("trap '' TERM\nwhile :; do :; done\n")
-    let start = Date()
+    let executable = try script("trap '' TERM\nprintf READY\nkill -STOP $$\nexit 9\n")
+    let time = ControlledProcessTime()
+    let scheduling = ProcessScheduling(
+      now: { time.now },
+      launched: { time.launched($0) },
+      stdout: { bytes in
+        // Advance only after the child actually installed its TERM handler.
+        if bytes.starts(with: Data("READY".utf8)) { time.stepDeadlineBoundary() }
+      }, signalling: { signal, now in time.signalled(signal, now) })
     do {
-      _ = try await DiscoveryProcess().run(executable: executable, timeout: 0.1)
+      _ = try await DiscoveryProcess(scheduling: scheduling).run(
+        executable: executable, timeout: 15)
       XCTFail("Expected timeout")
     } catch { XCTAssertEqual(error as? DiscoveryError, .timedOut) }
-    XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    XCTAssertEqual(time.signals.first?.0, SIGTERM)
+    XCTAssertEqual(time.signals.first?.1, 15)
+    XCTAssertTrue(time.signals.contains { $0.0 == SIGKILL })
+    XCTAssertTrue(time.signals.filter { $0.0 == SIGKILL }.allSatisfy { $0.1 >= 15.25 })
+    XCTAssertTrue(time.visitedTimes.contains(14.999))
+    XCTAssertTrue(time.visitedTimes.contains(15.249))
+    XCTAssertEqual(kill(time.pid, 0), -1)
+    XCTAssertEqual(errno, ESRCH, "Owned process was reaped")
   }
   func testCancellationWaitsForOwnedProcess() async throws {
-    let executable = try script("trap '' TERM\nwhile :; do :; done\n")
-    let task = Task { try await DiscoveryProcess().run(executable: executable) }
-    try await Task.sleep(nanoseconds: 50_000_000)
+    let executable = try script("trap '' TERM\nprintf READY\nkill -STOP $$\nexit 9\n")
+    let ready = expectation(description: "Child installed termination handler")
+    let time = ControlledProcessTime()
+    let scheduling = ProcessScheduling(
+      now: { time.now },
+      launched: { time.launched($0) },
+      stdout: { bytes in
+        if bytes.starts(with: Data("READY".utf8)), time.markReady() { ready.fulfill() }
+        if time.isCancelled { time.advance(1) }
+      })
+    let task = Task {
+      try await DiscoveryProcess(scheduling: scheduling).run(
+        executable: executable, timeout: 100_000)
+    }
+    await fulfillment(of: [ready], timeout: 30)  // Outer hang guard, not a timing assertion.
     task.cancel()
+    time.cancel()
     do {
       _ = try await task.value
       XCTFail("Expected cancellation")
     } catch { XCTAssertEqual(error as? DiscoveryError, .cancelled) }
+    XCTAssertEqual(kill(time.pid, 0), -1)
+    XCTAssertEqual(errno, ESRCH)
   }
   func testOutputFloodIsBounded() async throws {
     for redirect in ["", " >&2"] {
@@ -418,5 +446,80 @@ final class CoreTests: XCTestCase {
       _ = try await DiscoveryProcess().run(executable: URL(fileURLWithPath: "/does-not-exist"))
       XCTFail("Expected failure")
     } catch { XCTAssertEqual(error as? DiscoveryError, .invalidExecutable) }
+  }
+}
+
+/// Thread-safe manual time for the actual subprocess collector. No wall time
+/// advances correctness; real OS readiness and terminal state are still checked.
+private final class ControlledProcessTime: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: TimeInterval = 0
+  private var child: Int32 = 0
+  private var ready = false
+  private var cancelled = false
+  private var boundary = 0
+  private var signalEvents: [(Int32, TimeInterval)] = []
+  private var visited: [TimeInterval] = []
+  var signals: [(Int32, TimeInterval)] {
+    lock.lock()
+    defer { lock.unlock() }
+    return signalEvents
+  }
+  var visitedTimes: [TimeInterval] {
+    lock.lock()
+    defer { lock.unlock() }
+    return visited
+  }
+  func signalled(_ signal: Int32, _ now: TimeInterval) {
+    lock.lock()
+    signalEvents.append((signal, now))
+    lock.unlock()
+  }
+  func stepDeadlineBoundary() {
+    lock.lock()
+    defer { lock.unlock() }
+    let steps: [TimeInterval] = [14.999, 15, 15.249, 15.25]
+    if boundary < steps.count {
+      value = steps[boundary]
+      visited.append(value)
+      boundary += 1
+    }
+  }
+  var now: TimeInterval {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+  var pid: Int32 {
+    lock.lock()
+    defer { lock.unlock() }
+    return child
+  }
+  var isCancelled: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return cancelled
+  }
+  func launched(_ pid: Int32) {
+    lock.lock()
+    child = pid
+    lock.unlock()
+  }
+  func advance(_ amount: TimeInterval) {
+    lock.lock()
+    value += amount
+    lock.unlock()
+  }
+  func markReady() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if ready { return false }
+    ready = true
+    return true
+  }
+  func cancel() {
+    lock.lock()
+    cancelled = true
+    lock.unlock()
   }
 }
