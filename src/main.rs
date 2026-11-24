@@ -1030,10 +1030,7 @@ fn forward_ble(line: &[u8]) -> airhound::output_pool::BleAdmission {
 #[cfg(feature = "m5stickc")]
 #[embassy_executor::task]
 async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Blocking>) {
-    use airhound::{
-        output_pool::Reason,
-        serial_output::{drain_cooperative, LineError},
-    };
+    use airhound::output_pool::{Reason, UartOutcome};
     let pool = psram_output::pool();
     let _owner = pool.writer_owner().expect("output task already owned");
     serial_console::take_runtime_ownership();
@@ -1047,22 +1044,15 @@ async fn output_serial_task(mut uart: esp_hal::uart::UartTx<'static, esp_hal::Bl
             embassy_futures::yield_now().await;
             continue;
         }
-        let result = drain_cooperative(
-            line.bytes(),
-            |chunk, offset| serial_console::step(&mut uart, chunk, offset),
-            || Instant::now().as_micros(),
-            |gap| pool.poll_gap(gap),
-        )
-        .await;
-        match result {
-            Ok(()) => line.complete(),
-            Err(error) => {
-                serial_console::increment(&serial_console::WRITE_ERRORS);
-                line.fail(match error {
-                    LineError::Timeout => Reason::Timeout,
-                    _ => Reason::Write,
-                });
-            }
+        let result = line
+            .write_cooperative(
+                |chunk, offset| serial_console::step(&mut uart, chunk, offset),
+                || Instant::now().as_micros(),
+                |gap| pool.poll_gap(gap),
+            )
+            .await;
+        if result != UartOutcome::Sent {
+            serial_console::increment(&serial_console::WRITE_ERRORS);
         }
         embassy_futures::yield_now().await;
     }
