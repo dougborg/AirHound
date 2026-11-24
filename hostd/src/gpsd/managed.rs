@@ -541,12 +541,23 @@ c.close();signal.pause()
         assert!(retain_fixture_conflict(conflict, false).is_none());
     }
 
+    #[derive(Debug)]
+    struct RejectedAttempt {
+        attempt: usize,
+        intentional_conflict: bool,
+        fixture_extra_conflict: bool,
+        state: String,
+        helper_markers_absent: bool,
+        joined: bool,
+    }
+
     struct Started {
         port: u16,
         source: Source,
         control: crate::control::ScanControl,
         task: tokio::task::JoinHandle<()>,
         attempts: usize,
+        rejected: Vec<RejectedAttempt>,
     }
 
     // Keep the reservation through scheduling. No port reservation can span
@@ -556,7 +567,18 @@ c.close();signal.pause()
         fixture: &Fixture,
         injected_conflicts: usize,
     ) -> Result<Started, String> {
+        start_fixture_with_extra_conflict(fixture, injected_conflicts, None).await
+    }
+
+    async fn start_fixture_with_extra_conflict(
+        fixture: &Fixture,
+        injected_conflicts: usize,
+        extra_conflict_attempt: Option<usize>,
+    ) -> Result<Started, String> {
+        let mut rejected = Vec::new();
         for attempt in 1..=3 {
+            let intentional_conflict = attempt <= injected_conflicts;
+            let fixture_extra_conflict = extra_conflict_attempt == Some(attempt);
             let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let port = reservation.local_addr().unwrap().port();
             let source = fixture.source();
@@ -567,7 +589,10 @@ c.close();signal.pause()
             let mut task = tokio::spawn(async move {
                 // Retain the actual reservation for injected conflicts. Closing
                 // and rebinding it would create a second, unintended port race.
-                let conflict = retain_fixture_conflict(reservation, attempt <= injected_conflicts);
+                let conflict = retain_fixture_conflict(
+                    reservation,
+                    intentional_conflict || fixture_extra_conflict,
+                );
                 run_with_probe_timeout(options, owned_source, state, Duration::from_secs(10)).await;
                 drop(conflict);
             });
@@ -589,23 +614,53 @@ c.close();signal.pause()
                     control,
                     task,
                     attempts: attempt,
+                    rejected,
                 });
             }
+            let terminal_state = source.health()["state"].as_str().unwrap().to_owned();
+            let helper_markers_absent = ["args", "pids", "trace"]
+                .iter()
+                .all(|name| !fixture.root.join(name).exists());
             let pre_spawn_busy = matches!(outcome, Ok(false))
-                && source.health()["state"] == "managed_endpoint_busy"
-                && ["args", "pids", "trace"]
-                    .iter()
-                    .all(|name| !fixture.root.join(name).exists());
+                && terminal_state == "managed_endpoint_busy"
+                && helper_markers_absent;
             control.shutdown();
             let joined = if joined_early { Ok(()) } else { task.await };
+            rejected.push(RejectedAttempt {
+                attempt,
+                intentional_conflict,
+                fixture_extra_conflict,
+                state: terminal_state,
+                helper_markers_absent,
+                joined: joined.is_ok(),
+            });
             if joined.is_err() || !pre_spawn_busy || attempt == 3 {
                 return Err(format!(
-                    "attempt {attempt}: expected fix, got {}; pre-spawn busy={pre_spawn_busy}",
+                    "attempt {attempt}: expected fix, got {}; pre-spawn busy={pre_spawn_busy}; rejected={rejected:?}",
                     source.health()
                 ));
             }
         }
         unreachable!()
+    }
+
+    fn assert_retry_evidence(started: &Started, intentional_conflicts: usize) {
+        assert!((1..=3).contains(&started.attempts));
+        assert_eq!(started.rejected.len() + 1, started.attempts);
+        assert_eq!(
+            started
+                .rejected
+                .iter()
+                .filter(|r| r.intentional_conflict)
+                .count(),
+            intentional_conflicts
+        );
+        for (index, rejected) in started.rejected.iter().enumerate() {
+            assert_eq!(rejected.attempt, index + 1);
+            assert_eq!(rejected.state, "managed_endpoint_busy");
+            assert!(rejected.helper_markers_absent);
+            assert!(rejected.joined);
+        }
     }
 
     async fn until(source: &Source, expected: &str, _fixture: &Fixture) {
@@ -835,7 +890,9 @@ c.close();signal.pause()
             // A competing listener before spawn is the only retryable precondition.
             let fixture = Fixture::new().await;
             let started = start_fixture(&fixture, 1).await.unwrap();
-            assert_eq!(started.attempts, 2);
+            assert_retry_evidence(&started, 1);
+            assert!(started.rejected[0].intentional_conflict);
+            assert!(started.rejected.iter().all(|r| !r.fixture_extra_conflict));
             assert_eq!(started.source.health()["state"], "fix");
             assert_eq!(
                 std::fs::read_to_string(fixture.root.join("pids"))
@@ -853,6 +910,30 @@ c.close();signal.pause()
                 .err()
                 .expect("started helper must not retry");
             assert!(error.contains("attempt 1:") && error.contains("pre-spawn busy=false"));
+            // An additional competing listener is still retryable only with
+            // the same terminal, joined, no-child evidence. Attribute it
+            // separately instead of assuming the OS grants the next port.
+            let fixture = Fixture::new().await;
+            let started = start_fixture_with_extra_conflict(&fixture, 1, Some(2))
+                .await
+                .unwrap();
+            assert_retry_evidence(&started, 1);
+            assert_eq!(started.attempts, 3);
+            assert!(started.rejected[0].intentional_conflict);
+            assert!(!started.rejected[0].fixture_extra_conflict);
+            assert!(!started.rejected[1].intentional_conflict);
+            assert!(started.rejected[1].fixture_extra_conflict);
+            assert_eq!(started.source.health()["state"], "fix");
+            assert_eq!(
+                std::fs::read_to_string(fixture.root.join("pids"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                1
+            );
+            started.control.shutdown();
+            started.task.await.unwrap();
+
             let fixture = Fixture::new().await;
             let error = start_fixture(&fixture, 3)
                 .await
