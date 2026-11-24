@@ -7,10 +7,28 @@ struct ReceiverSettings: View {
   var body: some View {
     switch receiver.kind {
     case "rayhunter":
-      field("Forwarded raw endpoint", "endpoint")
+      Picker(
+        "Connection",
+        selection: Binding(
+          get: { receiver.source["adb"] != nil && receiver.source["adb"] != .null },
+          set: { session.setRayhunterConnection(id: receiver.id, managedUSB: $0) })
+      ) {
+        Text("Prepared local endpoint").tag(false)
+        Text("USB device").tag(true).disabled(!session.canManageRayhunterUSB)
+      }
+      if case .object = receiver.source["adb"] {
+        adbField("USB serial", "serial")
+        adbField("ADB executable", "executable", file: true)
+        if !session.canManageRayhunterUSB {
+          Text("Connect to a backend with managed USB support to edit this connection.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      } else {
+        field("Forwarded raw endpoint", "endpoint")
+      }
       field("Rayhunter decoder", "decoder", file: true)
       Text(
-        "Experimental cellular subscription. Select a prepared local forward. Pause and Finish close the subscription; the modem keeps operating. Capture time and transmitter location are unverified."
+        "Experimental cellular subscription. USB mode uses the selected authorized device and manages its local forward. Pause and Finish release the subscription and owned forward; the modem keeps operating. Capture time and transmitter location are unverified."
       )
       .font(.caption).foregroundStyle(.secondary)
     case "external_wifi":
@@ -79,6 +97,26 @@ struct ReceiverSettings: View {
     default:
       Text("Use Advanced JSON to edit this receiver.").font(.caption).foregroundStyle(.secondary)
     }
+  }
+
+  private func adbField(_ title: String, _ name: String, file: Bool = false) -> some View {
+    HStack {
+      TextField(
+        title,
+        text: Binding(
+          get: { receiver.source["adb"]?[name]?.string ?? "" },
+          set: { session.setRayhunterADBField(id: receiver.id, field: name, value: $0) }))
+      if file {
+        Button("Choose…") {
+          let panel = NSOpenPanel()
+          panel.title = title
+          panel.canChooseDirectories = false
+          if panel.runModal() == .OK, let url = panel.url {
+            session.setRayhunterADBField(id: receiver.id, field: name, value: url.path)
+          }
+        }.accessibilityLabel("Choose \(title)")
+      }
+    }.disabled(!session.canManageRayhunterUSB)
   }
 
   private func field(

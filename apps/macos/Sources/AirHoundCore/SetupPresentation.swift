@@ -23,7 +23,11 @@ public struct PlanReceiver: Identifiable {
     }
   }
   public var endpoint: String {
-    ["endpoint", "port", "usb_selector", "interface", "adapter", "path"].compactMap {
+    if kind == "rayhunter", case .object = source["adb"] {
+      let serial = source["adb"]?["serial"]?.string ?? ""
+      return serial.isEmpty ? "Choose a USB device" : "USB · \(serial)"
+    }
+    return ["endpoint", "port", "usb_selector", "interface", "adapter", "path"].compactMap {
       source[$0]?.string
     }.first
       ?? "System managed"
@@ -54,6 +58,30 @@ public enum PlanEditing {
         case .object(var receiver) = receivers[index], case .object(var source) = receiver["source"]
       else { throw ModelError.invalid("This receiver is no longer in the plan.") }
       source[field] = value
+      receiver["source"] = .object(source)
+      receivers[index] = .object(receiver)
+    }
+  }
+
+  /// Only edits the displayed transport fields; Rust owns validation and forwarding.
+  public static func rayhunterConnection(
+    _ config: JSONValue, receiverID: String, managedUSB: Bool
+  ) throws -> JSONValue {
+    try update(config) { receivers in
+      guard let index = receivers.firstIndex(where: { $0["id"]?.string == receiverID }),
+        case .object(var receiver) = receivers[index],
+        case .object(var source) = receiver["source"], source["kind"] == .string("rayhunter")
+      else { throw ModelError.invalid("This Rayhunter receiver is no longer in the plan.") }
+      if managedUSB {
+        source.removeValue(forKey: "endpoint")
+        if case .object = source["adb"] {
+        } else {
+          source["adb"] = .object(["executable": .string(""), "serial": .string("")])
+        }
+      } else {
+        source.removeValue(forKey: "adb")
+        if source["endpoint"] == nil { source["endpoint"] = .string("") }
+      }
       receiver["source"] = .object(source)
       receivers[index] = .object(receiver)
     }
