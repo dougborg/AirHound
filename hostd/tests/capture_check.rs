@@ -16,12 +16,8 @@ mod offline_cli {
     impl Fixture {
         fn new(bytes: &[u8]) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "airhound-capture-check-{}-{}-{}.ndjson",
+                "airhound-capture-check-{}-{}.ndjson",
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos(),
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             let mut file = OpenOptions::new()

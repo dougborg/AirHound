@@ -1,6 +1,7 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 use std::process::Command;
+static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[test]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn offline_cli_requires_source_identity_and_rejects_bad_input_without_output() {
@@ -29,10 +30,7 @@ fn offline_cli_imports_binary_serial_capture() {
     let path = std::env::temp_dir().join(format!(
         "airhound-marauder-fixture-{}-{}.bin",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut fixture = std::fs::OpenOptions::new()
         .write(true)

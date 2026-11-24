@@ -1,28 +1,33 @@
 //! Actual service/client roundtrip; saved fixture only, no device or network access.
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #[cfg_attr(coverage_nightly, coverage(off))]
+mod support;
+#[path = "../crates/airhound-client/src/test_clock.rs"]
+mod test_clock;
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod replay {
     use airhound_api::CaptureAction;
     use airhound_client::Client;
     use serde_json::json;
     use std::{
         path::PathBuf,
-        process::{Child, Command, Stdio},
+        process::{Command, Stdio},
         time::Duration,
     };
     struct Service {
-        child: Child,
+        child: crate::support::ServiceChild,
         root: PathBuf,
     }
     impl Drop for Service {
         fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            let _ = self.child.child.kill();
+            let _ = self.child.child.wait();
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn marauder_service_client_profile_and_durable_query_roundtrip() {
+        let time = crate::test_clock::ManualTime::hold().await;
         let root = std::env::temp_dir().join(format!("ah-marauder-service-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("capture.bin");
@@ -35,25 +40,18 @@ mod replay {
         std::fs::write(&path, bytes).unwrap();
         let socket = root.join("private/control.sock");
         let database = root.join("recordings.sqlite");
-        let child = Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
-            .args(["serve", "--capture", "--socket"])
-            .arg(&socket)
-            .arg("--database")
-            .arg(&database)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut service = Service { child, root };
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while !socket.exists() {
-                assert!(service.child.try_wait().unwrap().is_none());
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
+        let child = crate::support::ServiceChild::spawn(
+            Command::new(env!("CARGO_BIN_EXE_airhound-hostd"))
+                .args(["serve", "--capture", "--socket"])
+                .arg(&socket)
+                .arg("--database")
+                .arg(&database)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
         .unwrap();
+        let mut service = Service { child, root };
         let mut client = Client::connect(&socket, Duration::from_secs(3))
             .await
             .unwrap();
@@ -85,16 +83,23 @@ mod replay {
             .await
             .unwrap();
         let run = started["run_id"].as_str().unwrap().to_owned();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if client.capture(CaptureAction::Status).await.unwrap()["active"] == false {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        let wal = PathBuf::from(format!("{}-wal", database.display()));
+        let mut completed = crate::support::FileEvents::new(&[&database, &wal]).unwrap();
+        completed
+            .until(|| {
+                assert!(
+                    service.child.child.try_wait()?.is_none(),
+                    "service exited during replay"
+                );
+                let reader = airhound_hostd::storage::Reader::open(&database)?;
+                let terminal = reader
+                    .runs(100)?
+                    .into_iter()
+                    .find(|row| row.id == run)
+                    .is_some_and(|row| row.state == "finished");
+                Ok(terminal.then_some(()))
+            })
+            .unwrap();
         drop(client);
         // A fresh authenticated client sees the completed durable recording.
         let mut client = Client::connect(&socket, Duration::from_secs(3))
@@ -124,5 +129,6 @@ mod replay {
             client.load_profile("saved-awok".into()).await.unwrap()["resources"]["valid"],
             false
         );
+        time.finish().await;
     }
 }

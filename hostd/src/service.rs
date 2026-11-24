@@ -150,6 +150,7 @@ pub async fn serve(
     shutdown: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let (listener, _owned_socket) = bind_private(path)?;
+    log::debug!("AirHound control socket listening");
     let hello = Arc::new(Hello {
         version: VERSION,
         // A per-process instance marker, not an authentication token.
