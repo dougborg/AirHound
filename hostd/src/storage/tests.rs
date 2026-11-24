@@ -741,3 +741,33 @@ fn projected_pages_include_serialized_wrapper_and_metadata_in_byte_budget() {
     assert_eq!(count, 12);
     assert!(pages >= 3, "projection bytes must reduce page capacity");
 }
+
+#[test]
+fn live_and_saved_raw_references_preserve_the_single_original_array() {
+    let f = Fixture::new();
+    let (mut store, run) = setup(&f);
+    let mut input = record("receiver-a");
+    input.payload = json!({"type":"wifi_observation","wifi_metadata":{"schema_version":1,"source":"corewlan_scan_snapshot","information_elements":{"bytes":vec![0u8;4096],"original_length":4200,"truncated":true}}});
+    store.append(&run, std::slice::from_ref(&input)).unwrap();
+    let reader = Reader::open(&f.database()).unwrap();
+    let live = reader.records(&run, 0, 10).unwrap();
+    let row = &live.records[0];
+    let projection = row.observation_metadata.as_ref().unwrap();
+    let reference = &projection["wifi"]["information_elements"];
+    assert_eq!(row.payload, input.payload);
+    assert_eq!(
+        row.payload
+            .pointer(reference["json_pointer"].as_str().unwrap())
+            .unwrap(),
+        &input.payload["wifi_metadata"]["information_elements"]["bytes"]
+    );
+    assert_eq!(reference["length"], 4096);
+    assert_eq!(reference["original_length"], 4200);
+    assert_eq!(reference["truncated"], true);
+    assert!(serde_json::to_vec(projection).unwrap().len() < 1024);
+    store.transition(&run, "finished", "fixture").unwrap();
+    assert_eq!(
+        serde_json::to_value(live).unwrap(),
+        serde_json::to_value(reader.records(&run, 0, 10).unwrap()).unwrap()
+    );
+}

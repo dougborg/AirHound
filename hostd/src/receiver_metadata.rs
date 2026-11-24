@@ -103,6 +103,17 @@ pub fn project(record: &Value) -> Option<Value> {
             .filter(|v| v["schema_version"] == 1 && v["source"] == "corewlan_scan_snapshot")
         {
             out["wifi"] = wifi.clone();
+            // Preserve bytes once, in the immutable payload. The projection
+            // carries resolvable references rather than duplicating large arrays.
+            for field in ["ssid", "information_elements"] {
+                if let Some(bytes) = wifi[field]["bytes"].as_array() {
+                    out["wifi"][field] = json!({
+                        "json_pointer":format!("/wifi_metadata/{field}/bytes"),
+                        "offset":0,"length":bytes.len(),
+                        "original_length":wifi[field]["original_length"],
+                        "truncated":wifi[field]["truncated"]});
+                }
+            }
             if out["frequency_mhz"].is_number() {
                 out["frequency_basis"] = wifi
                     .get("frequency_basis")
@@ -154,6 +165,42 @@ mod tests {
         alfa["source"] = "unknown".into();
         assert!(project(&alfa).unwrap()["frequency_mhz"].is_null());
     }
+    #[test]
+    fn raw_references_resolve_exact_native_and_frame_evidence() {
+        fn referenced(record: &Value, reference: &Value) -> Value {
+            let raw = record
+                .pointer(reference["json_pointer"].as_str().unwrap())
+                .unwrap()
+                .as_array()
+                .unwrap();
+            let start = reference["offset"].as_u64().unwrap() as usize;
+            let length = reference["length"].as_u64().unwrap() as usize;
+            json!(&raw[start..start + length])
+        }
+        let native = json!({"type":"wifi_observation","wifi_metadata":{"schema_version":1,"source":"corewlan_scan_snapshot","ssid":{"bytes":[255,128],"original_length":2,"truncated":false},"information_elements":{"bytes":[222,2,1,2],"original_length":4,"truncated":false}}});
+        let original = native.clone();
+        let projected = project(&native).unwrap();
+        for field in ["ssid", "information_elements"] {
+            let reference = &projected["wifi"][field];
+            assert!(reference.get("bytes").is_none());
+            assert_eq!(
+                referenced(&native, reference),
+                native["wifi_metadata"][field]["bytes"]
+            );
+        }
+        assert_eq!(native, original);
+        let mut frame = vec![0u8; 36 + 4100];
+        frame[0] = 0x80;
+        let record = json!({"type":"wifi_packet_observation","frame_bytes":frame});
+        let projected = project(&record).unwrap();
+        let reference = &projected["wifi"]["information_elements"];
+        assert_eq!(reference["offset"], 36);
+        assert_eq!(reference["length"], 4096);
+        assert_eq!(reference["original_length"], 4100);
+        assert_eq!(reference["truncated"], true);
+        assert_eq!(referenced(&record, reference), json!(&frame[36..36 + 4096]));
+    }
+
     #[test]
     fn source_specific_metadata_preserves_partial_identity_and_unknowns() {
         let cell = json!({"type":"cellular_observation","observation":{"pci":1,"earfcn":100}});

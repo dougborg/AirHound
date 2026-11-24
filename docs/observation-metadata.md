@@ -36,6 +36,11 @@ semantics; absent default suites are not fabricated. Conflicting or incomplete
 channel evidence does not become an authoritative advertised channel. HE/EHT
 presence is explicitly unparsed, not a complete capability decoder.
 
+Raw arrays are retained once in the original payload. The projection references
+them by an exact JSON pointer plus byte offset, retained length, original length
+and truncation where available. For Flipper, this selects the tagged-parameter
+slice within the original frame; it does not replace or discard that frame.
+
 A projection is limited to 64 KiB serialized. Oversize projections report omission
 while retaining the original payload. A record page's 512 KiB limit includes the
 payload, projection, record wrappers and page envelope. Swift's existing bounded
