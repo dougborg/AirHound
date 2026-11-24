@@ -1135,9 +1135,10 @@
       "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
       "rule": "clock-read",
       "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
-      "category": "unresolved",
-      "reason": "Unchanged source and exact context from the frozen migration inventory. Removing namespace-only ::time false positives reindexed remaining clock-read occurrence identities; this site remains unresolved, not accepted.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329"
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
     },
     "1eded6d2bf8cbb2e6235590743b66d834ff0a955fbb97cadf05b352647088825": {
       "path": "hostd/src/receiver.rs",
@@ -1472,6 +1473,346 @@
       "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "4462cbd2c52005564007eb0f601461fa36616a010029db33e58568144e97c9b4": {
+      "path": "apps/macos/Benchmarks/ObservationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-read",
+      "context_sha256": "ba782259ae661c32a50a6e9b8fd265800f7126adbf654ca322261b9cb41fccbd",
+      "category": "benchmark-or-physical",
+      "reason": "Measures decode/window operations for an informational benchmark. No elapsed-time correctness pass criterion; operation assertions remain independent.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "0c099d6381c2bd8131648429880f9093b090bf8690c493e966112da07071d96d": {
+      "path": "apps/macos/Benchmarks/ObservationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-reference",
+      "context_sha256": "ba782259ae661c32a50a6e9b8fd265800f7126adbf654ca322261b9cb41fccbd",
+      "category": "benchmark-or-physical",
+      "reason": "Measures decode/window operations for an informational benchmark. No elapsed-time correctness pass criterion; operation assertions remain independent.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "46843fb668d353f6fb7dd4e39298a0b1d975f00c3fe5159d1d00e929bce431c0": {
+      "path": "apps/macos/Benchmarks/ObservationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-read",
+      "context_sha256": "ba782259ae661c32a50a6e9b8fd265800f7126adbf654ca322261b9cb41fccbd",
+      "category": "benchmark-or-physical",
+      "reason": "Measures decode/window operations for an informational benchmark. No elapsed-time correctness pass criterion; operation assertions remain independent.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "010dc6b8d3dd93c691bbbf2f05ce1206511bde4b43be575aa3b5d1e4e7315774": {
+      "path": "apps/macos/Benchmarks/ObservationBenchmark.swift",
+      "scope": "ms",
+      "rule": "clock-reference",
+      "context_sha256": "ba782259ae661c32a50a6e9b8fd265800f7126adbf654ca322261b9cb41fccbd",
+      "category": "benchmark-or-physical",
+      "reason": "Measures decode/window operations for an informational benchmark. No elapsed-time correctness pass criterion; operation assertions remain independent.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "7c0a3fb12beb27e05b4a882edbcebf09fe60693128cfbd6346a68b1283866819": {
+      "path": "apps/macos/Tests/AirHoundAppTests/GPSVersionTests.swift",
+      "scope": "testSnapshotUsesOnlyValidBackendQueryTime",
+      "rule": "clock-read",
+      "context_sha256": "fc747ad44b200fbbc4c1c090ee3a4b77542089a2d21749083b90c1d6b359a45b",
+      "category": "fixed-input",
+      "reason": "Constructs a fixed Unix epoch expected value from supplied backend observed_at_ms; never reads current time or makes freshness claims.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "ce62e0ad0211d85712956025733dd5aab26a779476053fb8b0e348bfdfd6f79d": {
+      "path": "scripts/tests/test_sniffle_source.py",
+      "scope": "fixture-file",
+      "rule": "delay-import",
+      "context_sha256": "9b67825c9ce784a788d687114b257e92c1d6224b617cbd942658c826ee7bbae4",
+      "category": "virtual-time",
+      "reason": "Synthetic Sniffle adapter replaces only physical settle sleep with an explicit no-op; packet/query/stop progression is fixture-controlled, with actual PTY lease and signal/exit evidence. Does not claim physical settle behavior tested.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root source review of PR338 efa0b1e and reviewed Python PR332; exact per-site classification approval recorded with this candidate diff."
+    },
+    "607632f496518e330fd36c7277139a601de08a00777f9a27cb4adbb9502b98dc": {
+      "path": "hostd/crates/airhound-client/src/lib.rs",
+      "scope": "fragmented_frame_and_remote_error_preserve_connection",
+      "rule": "client-deadline-seam",
+      "context_sha256": "e4788f0fa9941c9c95595a5a18ea6d28a92f4ddd3e0c8b5d044d2a63bc50fd21",
+      "category": "virtual-time",
+      "reason": "This exact test is start_paused and holds ManualTime across the client operation and peer join. Readiness/EOF channels establish causality; explicit999ms+1ms advances drive timeout assertions. Success/protocol/cancellation cases never advance time while OS work runs.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "20f59c0f68f3cbed5850027f8108d73725185b56d3c78d2c4188cf5603bed334": {
+      "path": "hostd/crates/airhound-client/src/lib.rs",
+      "scope": "mismatched_response_poisons_connection",
+      "rule": "client-deadline-seam",
+      "context_sha256": "7cad374139d49196b2e46c87554ab0a3b57db061adf335b2d6e0109994065216",
+      "category": "virtual-time",
+      "reason": "This exact test is start_paused and holds ManualTime across the client operation and peer join. Readiness/EOF channels establish causality; explicit999ms+1ms advances drive timeout assertions. Success/protocol/cancellation cases never advance time while OS work runs.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "118a354ac73d71507e7bd6414282d99424f884c899760a916e6953135d35c952": {
+      "path": "hostd/crates/airhound-client/src/lib.rs",
+      "scope": "request_timeout_boundary_poisons_connection_and_closes_peer",
+      "rule": "client-deadline-seam",
+      "context_sha256": "a9c5ddc8c8ed3a5dda044d1a3a0b863731c7446e89c33b83b4f244c55d334c06",
+      "category": "virtual-time",
+      "reason": "This exact test is start_paused and holds ManualTime across the client operation and peer join. Readiness/EOF channels establish causality; explicit999ms+1ms advances drive timeout assertions. Success/protocol/cancellation cases never advance time while OS work runs.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "c8d47e95f4edd8a71d36b4b20a022faa9cbc410c812450bb131a1cce8ccf95b7": {
+      "path": "hostd/crates/airhound-client/src/lib.rs",
+      "scope": "handshake_timeout_uses_virtual_deadline_and_closes_peer",
+      "rule": "client-deadline-seam",
+      "context_sha256": "b41577dfc420defb86e978033532129a145a3317d8cca7c269626d15434ee75e",
+      "category": "virtual-time",
+      "reason": "This exact test is start_paused and holds ManualTime across the client operation and peer join. Readiness/EOF channels establish causality; explicit999ms+1ms advances drive timeout assertions. Success/protocol/cancellation cases never advance time while OS work runs.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "cd738592e375d0d9e57f0d2bb40654c75e87ef4794a7f627dbdf9aece43dfc4b": {
+      "path": "hostd/crates/airhound-client/src/lib.rs",
+      "scope": "cancelled_call_closes_stream_instead_of_accepting_late_response",
+      "rule": "client-deadline-seam",
+      "context_sha256": "71cc4b3713b9f6b9b169b7723bf9f98eb1352d2a22f9b0494e60c4a21b9d0962",
+      "category": "virtual-time",
+      "reason": "This exact test is start_paused and holds ManualTime across the client operation and peer join. Readiness/EOF channels establish causality; explicit999ms+1ms advances drive timeout assertions. Success/protocol/cancellation cases never advance time while OS work runs.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "c4c88e916c815a04bb3ea8003c56443432b15eded53383b2a7a1eebc6980a701": {
+      "path": "hostd/crates/airhound-client/src/test_clock.rs",
+      "scope": "hold",
+      "rule": "delay-or-deadline",
+      "context_sha256": "bcda83d4caa3463947654581eedae0ebac7c5facd693af35185bf9b0bd3a3cb3",
+      "category": "outer-hang-guard",
+      "reason": "The120s std-channel timeout only aborts a wedged fixture; it cannot return a successful behavioral result or advance the correctness clock. Entry acknowledgment precedes test work; finish/Drop releases the worker.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "aedc2c144f87e783f0f8816ee92a8444761e47bff0fcae65005506bad4525e39": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "c5cf0ea4624e8b45659939442e67f4ef3552f61327a1f801d58be7633346daa2": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-reference",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "b4495418992c86a79e32c851e00597d5e8411ea6b9982a09a230672f65ad87fc": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "production-scope",
+      "reason": "This shared production path stamps host receipt metadata with UTC. The tests only validate timestamp syntax; no ordering, freshness, readiness or timeout oracle uses this wall value. GNSS association/freshness uses the explicitly injected wall/monotonic pair. This classification does not exempt other clocks in the function.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "3426257ee321ab8c28823d4eefe084692dfec2ad9fd6115bc4aa5b1e31924fcf": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "f44cee086d04164ec9b9f9df5d8127a726c9ddc92bea8bb1bd4a889e583a3ec0": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "production-scope",
+      "reason": "This shared production path stamps host receipt metadata with UTC. The tests only validate timestamp syntax; no ordering, freshness, readiness or timeout oracle uses this wall value. GNSS association/freshness uses the explicitly injected wall/monotonic pair. This classification does not exempt other clocks in the function.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "ba42094e87f39baf543d428e75e9d1e40f96382b01583396b93d386cde2def6b": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "clock-read",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "57d0bc4ddcf46281798117670c9dfbcef0b672d695870b1dfec878898c0c48b0": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "rust-test-item",
+      "rule": "delay-or-deadline",
+      "context_sha256": "39f1ae170d6918f325bedc565748f777a93ed67cd93737244e461b1b390c8bd4",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "ed89f8bebfedb1a9972e4f3848a5cc478e5f7163b01c4ce7c7ac9dcbd49b952b": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "pid",
+      "rule": "delay-or-deadline",
+      "context_sha256": "576a780f73991eaad87b6ee0c3207461680c708ee4d2670af050c17f7860b12c",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "17b0f09dc1a1daf6f0173f2826bcaa46ce7e164742bab1ec0fff92f91c2f4502": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "gone",
+      "rule": "delay-or-deadline",
+      "context_sha256": "eea17bb00c3314843a68ac97771d5964b55cb7fb37781eeb79b3d30fc7465715",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "a91c62b4264e2ab796b005524b4e46606cda447a33cd587c7f21f7e7e3b68570": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "blocked_tick",
+      "rule": "delay-or-deadline",
+      "context_sha256": "4c20c54f1ec92470b6f7650a1dfa9dbfa2940b2ba33458e06a55e6c77f36624a",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "49f1b9dc7f98ec898c0244160dc546cb6c5666ed6465a6d9286c71d85d3c07d0": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-reference",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "feb3a44cb00eea734c37c30335012c144a11a29f58151dd144116c0d63694146": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-reference",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "1edc9cfb2a15c844f35884d69a6e731a1c4e42993aa0d25056788a694bf5821e": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-reference",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "2a156fa6d1ff7b7e760d03ab57b86693615d3491e2c7f5f2b1416d35b5aeeb73": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-reference",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "1cf987c051865182705f5f9b740f7c4e1354d976c1d1cc7aec561ba76ea664f2": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "clock-reference",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "1b627a1e05d1ad3515db4bd8797e7e96e4545002565d600d6bccf07540a362b2": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "ingress_fix_is_frozen_across_blocked_queue_and_later_filter_processing",
+      "rule": "delay-import",
+      "context_sha256": "e0fa065404338e7ccadc11a1683a54ac0d96eff8e8a33502bc10c5babf4ab703",
+      "category": "fixed-input",
+      "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "b732377dd496e9a17998f4e6ae966eb8e007c358d27fa5ed84123d37925be1e9": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "pause_reaps_owned_helper_resume_new_generation_and_finish_no_orphan",
+      "rule": "delay-or-deadline",
+      "context_sha256": "20ad5b5a7908f91726c2cfd744ca191cbd8a7fba75dee9ac2d19f193005cf750",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "b49041d2f42926597bed73a87e6d5720da80723586e8b7cfe8299498f8a48b65": {
+      "path": "hostd/src/rayhunter_source.rs",
+      "scope": "resume_refuses_changed_decoder_before_spawning_it",
+      "rule": "delay-or-deadline",
+      "context_sha256": "4974b77c4731d3ac33cb6e055f6efe0132a8b2966c66b1570796056212815c8c",
+      "category": "virtual-time",
+      "reason": "Source tests and their PID/reap/blocked-ingress helpers run inside manual_time; registered retry advancement drives reconnect, and causal ingress/reap evidence drives success. Tokio origin/elapsed/deadline expressions therefore use the paused clock, not real scheduling elapsed time. Frozen Tokio timeout wrappers are not the outer safeguard; manual_time owns the separate wall-clock abort guard.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "d8fe03de03a282abc73a33bbc2b50e5545afc2e34a133f108f23144b01aa2726": {
+      "path": "clients/mcp/tests/protocol.rs",
+      "scope": "actual_stdio_executable_initializes_and_exposes_passive_tools",
+      "rule": "delay-or-deadline",
+      "context_sha256": "a38f0e4056fc9911e0d7b84d137520b991cdcaad7533e74588d525e502395464",
+      "category": "outer-hang-guard",
+      "reason": "The30s wrapper bounds an actual executable stdio initialization/tool-catalog smoke. No backend request is issued and no timeout value or elapsed-time correctness assertion is made. Backend forwarding/error/deadline tests are separate paused-clock tests.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "50931551607df641ffec2635898cb8876fb09eb0f31a9c42d237be2eb0ac41f2": {
+      "path": "hostd/src/performance.rs",
+      "scope": "performance_event_pipeline",
+      "rule": "clock-read",
+      "context_sha256": "e9805cfa92d294fa2daa01cb46b88cb4b0b15cb0e254c5125606b6353197cc2e",
+      "category": "benchmark-or-physical",
+      "reason": "Explicitly ignored release-only production-pipeline benchmark measures elapsed throughput and prints it. Correctness assertions verify output identities/counts after timing; there is no elapsed-time pass threshold. Real measurement is intentional, separate from deterministic correctness tests.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "c7853a886c8999ad582728449f457aba72f0120d4c911e9dcb3fe351523463c3": {
+      "path": "hostd/src/performance.rs",
+      "scope": "performance_event_pipeline",
+      "rule": "clock-reference",
+      "context_sha256": "e9805cfa92d294fa2daa01cb46b88cb4b0b15cb0e254c5125606b6353197cc2e",
+      "category": "benchmark-or-physical",
+      "reason": "Explicitly ignored release-only production-pipeline benchmark measures elapsed throughput and prints it. Correctness assertions verify output identities/counts after timing; there is no elapsed-time pass threshold. Real measurement is intentional, separate from deterministic correctness tests.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "2ef9b04a10950ddb83f325aa5abfc5270bfd8d9f37ebc0ba7743a5fe2974feae": {
+      "path": "hostd/src/performance.rs",
+      "scope": "performance_event_pipeline",
+      "rule": "clock-read",
+      "context_sha256": "e9805cfa92d294fa2daa01cb46b88cb4b0b15cb0e254c5125606b6353197cc2e",
+      "category": "benchmark-or-physical",
+      "reason": "Explicitly ignored release-only production-pipeline benchmark measures elapsed throughput and prints it. Correctness assertions verify output identities/counts after timing; there is no elapsed-time pass threshold. Real measurement is intentional, separate from deterministic correctness tests.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
     }
   },
   "migration_baseline": {
