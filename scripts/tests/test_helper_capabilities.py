@@ -1,7 +1,9 @@
 """Offline helper capability inspection is bounded and does not open devices."""
 import importlib.util
 import os
+import select
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,15 +21,39 @@ SUPPORT_SPEC.loader.exec_module(support)
 
 
 class HelperCapabilitiesTests(unittest.TestCase):
+    def query_payload(self, helper):
+        def await_readable(readers, writers, errors, remaining):
+            self.assertEqual(remaining, 3)
+            events = select.select(readers, writers, errors, 30)
+            self.assertTrue(events[0], 'Capability fixture did not complete its pipe output')
+            return events
+
+        def spawn(*args, **kwargs):
+            process = subprocess.Popen(*args, **kwargs)
+            original_wait = process.wait
+
+            def wait(timeout):
+                self.assertEqual(timeout, 3)
+                return original_wait(timeout=30)  # Outer owned-child hang guard.
+
+            process.wait = wait
+            return process
+
+        with patch.object(stage, 'time', SimpleNamespace(monotonic=lambda: 0)), \
+             patch.object(stage, 'select', SimpleNamespace(select=await_readable)), \
+             patch.object(stage, 'subprocess', SimpleNamespace(
+                 **{**vars(subprocess), 'Popen': spawn})):
+            return stage.helper_capabilities(Path(sys.executable), helper)
+
     def test_current_contract_and_legacy_oversized_reports(self):
-        report = stage.helper_capabilities(Path(sys.executable), SCRIPT.parent / 'sniffle-source.py')
+        report = self.query_payload(SCRIPT.parent / 'sniffle-source.py')
         self.assertIn('borrowed_serial_lease_v1', report)
         with tempfile.TemporaryDirectory() as root:
             script = Path(root) / 'helper.py'
             for content in ('print("{}")', 'print("x" * 10000)'):
                 script.write_text(content)
                 with self.assertRaises(ValueError):
-                    stage.helper_capabilities(Path(sys.executable), script)
+                    self.query_payload(script)
 
     def test_stalled_query_virtual_deadline_boundaries_kill_and_reap(self):
         for now in (2.999, 3.0, 3.001):
