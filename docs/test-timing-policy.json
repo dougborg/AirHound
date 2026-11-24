@@ -184,16 +184,6 @@
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Timing guard adversarial-test source review; classification is limited to this exact source context."
     },
-    "0b311b407202e0bc0244cbfd2613e1c577c02c777bf826584cc2a0baab96c593": {
-      "path": "hostd/src/main.rs",
-      "scope": "raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context",
-      "rule": "clock-read",
-      "context_sha256": "88cee84d8379f57906c4b32cc66c8f45962acbc56082d33f93f83dd4ba8bd1f9",
-      "category": "fixed-input",
-      "reason": "This call supplies one opaque stdInstant origin to command/filter/record emission. Assertions concern payloads, counts, command state, or output errors, not observed real elapsed time. Async tests additionally hold manual_time for Tokio policies; flush/shutdown tests explicitly register and advance virtual timers. Output ts metadata is not a clock-proximity oracle.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
-    },
     "0b7b52a164b281c92d56ae69a6ecfee9c72700f57380cf73cf1f2fe868999b25": {
       "path": "hostd/src/main.rs",
       "scope": "weak_wifi_is_retained_without_legacy_match_or_alert",
@@ -2073,16 +2063,6 @@
       "scope": "external_signal_estimates_preserve_provenance_and_never_enter_csv",
       "rule": "clock-reference",
       "context_sha256": "eb20667a83094cae2017edce2064ebede1c8fe01e57fe5733c36e74f39475c00",
-      "category": "fixed-input",
-      "reason": "This call supplies one opaque stdInstant origin to command/filter/record emission. Assertions concern payloads, counts, command state, or output errors, not observed real elapsed time. Async tests additionally hold manual_time for Tokio policies; flush/shutdown tests explicitly register and advance virtual timers. Output ts metadata is not a clock-proximity oracle.",
-      "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Independent root per-site source/caller review approved this exact context; proposal proposed-main-final340.json SHA256 78a56603d62bdc6b3c68e10fee8927bbbd6096922b75eb6463acc66fb224756f."
-    },
-    "7d80296071e54981f4cd60d973b2af391bde27fe194b3f93645f95d061f41910": {
-      "path": "hostd/src/main.rs",
-      "scope": "raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context",
-      "rule": "clock-reference",
-      "context_sha256": "88cee84d8379f57906c4b32cc66c8f45962acbc56082d33f93f83dd4ba8bd1f9",
       "category": "fixed-input",
       "reason": "This call supplies one opaque stdInstant origin to command/filter/record emission. Assertions concern payloads, counts, command state, or output errors, not observed real elapsed time. Async tests additionally hold manual_time for Tokio policies; flush/shutdown tests explicitly register and advance virtual timers. Output ts metadata is not a clock-proximity oracle.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
@@ -4499,6 +4479,56 @@
       "reason": "One opaque monotonic anchor is captured, then every GNSS freshness/association check uses explicitly injected fixed UTC and anchor+known offsets. Queue ingress/reap witnesses determine ordering; no observed real elapsed interval determines the expected location. The remaining monotonic spellings refer to that frozen value.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Independent root exact source/caller review approved these 29 sites; source unchanged from0834 through e47. Exact context keys only."
+    },
+    "db5c69bde01ac790b52cb2213599a07827205cf770eba29b78b4df52aff62b3d": {
+      "path": "hostd/src/main.rs",
+      "scope": "handle_wifi_event",
+      "rule": "clock-reference",
+      "context_sha256": "3f79dcef899da17831a13aee26d693e2c0268c1749259d069ac932dcbaae76ca",
+      "category": "fixed-input",
+      "reason": "The new cfg(test) adapter only forwards its Instant parameter to the production metadata emitter; it does not read or wait on a clock itself. Existing output tests supply a timestamp origin and assert fields/filter behavior, not elapsed duration. Production elapsed timestamp generation remains unchanged.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
+    },
+    "cdc985eee46513375d3290c46c82e867f45992c25d452f31d8398c552af4a475": {
+      "path": "hostd/src/main.rs",
+      "scope": "detailed_wifi_metadata_survives_the_actual_event_pipeline",
+      "rule": "clock-read",
+      "context_sha256": "3a51624bdbf2e97513cb4360840ea3b205dbe657c07be38e62a81c4094cce033",
+      "category": "fixed-input",
+      "reason": "The actual queued WiFiDetailed event pipeline runs under manual_time and completes on channel closure. std::Instant::now supplies only an opaque output-timestamp origin. Assertions check exact retained SSID/IE bytes, frequency provenance, unknown subtype/PHY; they neither inspect generated elapsed ts nor use it to advance policy time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
+    },
+    "051ea5ba6fdddcc83ab99802827017129acdb65b558e674593e2fd5584cb5e20": {
+      "path": "hostd/src/main.rs",
+      "scope": "detailed_wifi_metadata_survives_the_actual_event_pipeline",
+      "rule": "clock-reference",
+      "context_sha256": "3a51624bdbf2e97513cb4360840ea3b205dbe657c07be38e62a81c4094cce033",
+      "category": "fixed-input",
+      "reason": "The actual queued WiFiDetailed event pipeline runs under manual_time and completes on channel closure. std::Instant::now supplies only an opaque output-timestamp origin. Assertions check exact retained SSID/IE bytes, frequency provenance, unknown subtype/PHY; they neither inspect generated elapsed ts nor use it to advance policy time.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
+    },
+    "0c8c857fed6b13d322cba715288f7d63c795ee6c421e3de49737812a120ff375": {
+      "path": "hostd/src/main.rs",
+      "scope": "raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context",
+      "rule": "clock-read",
+      "context_sha256": "a5196e8c029e45cf07d5fe692e5721911abdb2272b3d282f070a40ad7b7cae5a",
+      "category": "fixed-input",
+      "reason": "The reviewed raw-packet pipeline still runs under manual_time and completes on channel closure. std::Instant::now is only an output timestamp origin; assertions use fixed captured_at_us, generation, sequence and fixed CSV UTC. Added RF alias/frequency projection assertions do not depend on elapsed time. Only scope fingerprint changed.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
+    },
+    "3fb0b942ff980ef070f72d1544545e10f613bdb593e229abd304ffd3ed2acdfa": {
+      "path": "hostd/src/main.rs",
+      "scope": "raw_packet_pipeline_attaches_rule_local_evidence_and_preserves_capture_context",
+      "rule": "clock-reference",
+      "context_sha256": "a5196e8c029e45cf07d5fe692e5721911abdb2272b3d282f070a40ad7b7cae5a",
+      "category": "fixed-input",
+      "reason": "The reviewed raw-packet pipeline still runs under manual_time and completes on channel closure. std::Instant::now is only an output timestamp origin; assertions use fixed captured_at_us, generation, sequence and fixed CSV UTC. Added RF alias/frequency projection assertions do not depend on elapsed time. Only scope fingerprint changed.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root independently approved these five exact metadata contexts; final composition preserves the reviewed manual-time callers and opaque timestamp origins."
     }
   },
   "migration_baseline": {
