@@ -45,6 +45,20 @@ receiver startup failure without the host pipeline, but does not identify the
 firmware, USB or driver root cause or prove the earlier combined failure had the
 same cause.
 
+Private experimental helpers then tested bounded firmware reload and more precise
+failure reporting. The retained evidence located the timeout at MCU command 12,
+sequence 1, during radio initialization: first with the existing firmware image,
+then after completed reloads. A separate upstream-backed USB DMA initialization
+pulse did not resolve that failure. That candidate also contained the experimental
+reload policy, so its result does not isolate the DMA change alone. These helpers
+received no observations, exited with code 1 and were reaped without forced
+termination. Their qualified producer cleanup acknowledgements are not independent
+physical verification. The installed helper remains unchanged; neither recovery
+nor combined acceptance is established, and the speculative reload policy is not
+justified for integration by these results. A user-confirmed power cycle followed
+by a fresh-topology check with the original helper is the next comparison; it has
+not yet been performed.
+
 Native WiFi address redaction and native BLE initialization timeout remain
 unresolved; current permission approval and diagnosis are incomplete. The M5
 transport opened at the configured baud but accepted no firmware records during
