@@ -1412,6 +1412,66 @@
       "reason": "Retry and MCU deadline tests use ManualTime or scripted Endpoint with timeout-induced logical advances; no OS clock determines the assertions.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
       "review": "Root independent source review of injected clocks and all listed call sites at 0834b5ec68fc71f2ed3d9260699cf571c9fc5686; merged PR331."
+    },
+    "5a4fb0bff999bc8de53beb83d92345fdc58e0266c0c51257a64704d68061e6cb": {
+      "path": "src/ble_transport.rs",
+      "scope": "read",
+      "rule": "delay-or-deadline",
+      "context_sha256": "76e66f96e9dce2a1de866e7ddfeb0bdba324ad2b6ce786a281a0af5638f42bb6",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "e21389c63814ba40a5b82cb9f6f72436009248462c36ebe756afc16082edb2a0": {
+      "path": "src/display_render.rs",
+      "scope": "draw_status_cooperative",
+      "rule": "delay-or-deadline",
+      "context_sha256": "5075181c5d1472d0bc11a004c487b563b91eeef23df84a8da3ba5a8fb43e6064",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "9601efe282f39e1fb4a48dd9b8fcca00cd927cd286dafd067a883405bd15bcae": {
+      "path": "src/health_output.rs",
+      "scope": "publish_pair",
+      "rule": "delay-or-deadline",
+      "context_sha256": "08bffe50cc31fe68266975775bb3b44637dfb17f938e6a7bb6e9bdc25ad05030",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "cbf8c948945218e71370a7d1b1ef4a7978e090c3f91a6327f687e0b6a8ccc9a2": {
+      "path": "src/health_output.rs",
+      "scope": "publish_pair",
+      "rule": "delay-or-deadline",
+      "context_sha256": "08bffe50cc31fe68266975775bb3b44637dfb17f938e6a7bb6e9bdc25ad05030",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "c95d1f1a2feea834400ccd4d4c7606844c78b83ffa4b40a27585d66f82b7cf86": {
+      "path": "src/output_pool.rs",
+      "scope": "producer_during_failed_writer_yield_hands_off_old_json_before_new_without_duplicates",
+      "rule": "delay-or-deadline",
+      "context_sha256": "437e810d78023c6556fa77fc47b74fd1ef32c4d6eee60d7aa2d7a769271ca83b",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
+    },
+    "4ce85d6bd1b672e3ec8e94e728f5225264087fb2762ead5cffd0cffe5be96e50": {
+      "path": "src/serial_output.rs",
+      "scope": "drain_with_budget",
+      "rule": "delay-or-deadline",
+      "context_sha256": "d6625ba83feb9b7bcf34cbb1b4b82630421c997de86e52a092a37f02dd848f25",
+      "category": "causal-event",
+      "reason": "Cooperative yield is a deterministic future-poll boundary, not a timer or elapsed-time assertion. Tests directly poll the future to verify queue, rendering or transport progress across that boundary. Production callers use it to yield executor work.",
+      "tracking": "https://github.com/dougborg/AirHound/issues/329",
+      "review": "Root reviewed concrete yield sites and direct-poll tests at0834b5ec68fc71f2ed3d9260699cf571c9fc5686; no sleep or OS-clock scheduling assumption."
     }
   },
   "migration_baseline": {
