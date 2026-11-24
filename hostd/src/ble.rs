@@ -371,34 +371,45 @@ mod tests {
     use std::collections::HashMap;
     use uuid::Uuid;
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn initialization_timeout_and_shutdown_do_not_hang_session() {
-        let (tx, _rx) = mpsc::channel(1);
-        let control = crate::control::ScanControl::new(true);
-        let error = initialize(
-            std::future::pending::<Result<(), btleplug::Error>>(),
-            &control,
-            &tx,
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        control.shutdown();
-        assert_eq!(
-            initialize(
-                std::future::pending::<Result<(), btleplug::Error>>(),
-                &control,
-                &tx
-            )
-            .await
-            .unwrap(),
-            None
-        );
-        let control = crate::control::ScanControl::new(true);
-        assert_eq!(
-            initialize(async { Ok(7) }, &control, &tx).await.unwrap(),
-            Some(7)
-        );
+        crate::test_support::manual_time(async {
+            let (tx, _rx) = mpsc::channel(1);
+            let control = crate::control::ScanControl::new(true);
+            let error = {
+                let operation = initialize(
+                    std::future::pending::<Result<(), btleplug::Error>>(),
+                    &control,
+                    &tx,
+                );
+                tokio::pin!(operation);
+                pending_once(operation.as_mut()).await;
+                tokio::time::advance(std::time::Duration::from_millis(9999)).await;
+                pending_once(operation.as_mut()).await;
+                // Tokio rounds timer-wheel deadlines to milliseconds; cross the next tick.
+                // The production10s budget is unchanged.
+                tokio::time::advance(std::time::Duration::from_millis(2)).await;
+                operation.await.unwrap_err()
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+            control.shutdown();
+            assert_eq!(
+                initialize(
+                    std::future::pending::<Result<(), btleplug::Error>>(),
+                    &control,
+                    &tx
+                )
+                .await
+                .unwrap(),
+                None
+            );
+            let control = crate::control::ScanControl::new(true);
+            assert_eq!(
+                initialize(async { Ok(7) }, &control, &tx).await.unwrap(),
+                Some(7)
+            );
+        })
+        .await;
     }
 
     fn make_props() -> PeripheralProperties {
@@ -556,77 +567,99 @@ mod tests {
     }
     #[tokio::test]
     async fn event_stream_skips_missing_properties_and_forwards_discoveries() {
-        let (tx, mut rx) = mpsc::channel(1);
-        let props = make_props();
-        let task = tokio::spawn(forward_events(
-            futures_lite::stream::iter([None, Some(("test-id".into(), props))]),
-            tx,
-            crate::control::ScanControl::new(true),
-            std::future::ready,
-            |_| std::future::ready(None),
-        ));
-        let event = rx.recv().await.unwrap();
-        let event = match event {
-            ScanEvent::Ble(event)
-            | ScanEvent::BlePeripheral { event, .. }
-            | ScanEvent::BleSnapshot { event, .. } => event,
-            _ => panic!("expected BLE"),
-        };
-        assert_eq!(event.mac, [0xaa, 0xbb, 0xcc, 0x11, 0x22, 0x33]);
-        assert!(rx.recv().await.is_none());
-        task.await.unwrap();
+        crate::test_support::manual_time(async {
+            let (tx, mut rx) = mpsc::channel(1);
+            let props = make_props();
+            let task = tokio::spawn(forward_events(
+                futures_lite::stream::iter([None, Some(("test-id".into(), props))]),
+                tx,
+                crate::control::ScanControl::new(true),
+                std::future::ready,
+                |_| std::future::ready(None),
+            ));
+            let event = rx.recv().await.unwrap();
+            let event = match event {
+                ScanEvent::Ble(event)
+                | ScanEvent::BlePeripheral { event, .. }
+                | ScanEvent::BleSnapshot { event, .. } => event,
+                _ => panic!("expected BLE"),
+            };
+            assert_eq!(event.mac, [0xaa, 0xbb, 0xcc, 0x11, 0x22, 0x33]);
+            assert!(rx.recv().await.is_none());
+            task.await.unwrap();
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn consumer_close_cancels_idle_property_fetch_and_backpressure() {
-        for mode in 0..4 {
-            let (tx, rx) = mpsc::channel(1);
-            let task = tokio::spawn(async move {
-                if mode == 0 {
-                    forward_events(
-                        futures_lite::stream::pending::<()>(),
-                        tx,
-                        crate::control::ScanControl::new(true),
-                        |_| std::future::ready(None),
-                        move |_| async move {
-                            if mode == 3 {
-                                std::future::pending().await
-                            } else {
-                                None
-                            }
-                        },
-                    )
-                    .await;
-                } else {
-                    forward_events(
-                        futures_lite::stream::repeat(()),
-                        tx,
-                        crate::control::ScanControl::new(true),
-                        move |_| async move {
-                            if mode == 1 {
-                                std::future::pending().await
-                            } else {
-                                Some(("test-id".into(), make_props()))
-                            }
-                        },
-                        move |_| async move {
-                            if mode == 3 {
-                                std::future::pending().await
-                            } else {
-                                None
-                            }
-                        },
-                    )
-                    .await;
+        crate::test_support::manual_time(async {
+            for mode in 0..4 {
+                let (tx, rx) = mpsc::channel(1);
+                let entered = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let properties_entered = entered.clone();
+                let address_entered = entered.clone();
+                let task = async move {
+                    if mode == 0 {
+                        forward_events(
+                            futures_lite::stream::pending::<()>(),
+                            tx,
+                            crate::control::ScanControl::new(true),
+                            |_| std::future::ready(None),
+                            move |_| async move {
+                                if mode == 3 {
+                                    std::future::pending().await
+                                } else {
+                                    None
+                                }
+                            },
+                        )
+                        .await;
+                    } else {
+                        forward_events(
+                            futures_lite::stream::repeat(()),
+                            tx,
+                            crate::control::ScanControl::new(true),
+                            move |_| {
+                                let properties_entered = properties_entered.clone();
+                                async move {
+                                    if mode == 1 {
+                                        properties_entered
+                                            .store(1, std::sync::atomic::Ordering::Relaxed);
+                                        std::future::pending().await
+                                    } else {
+                                        Some(("test-id".into(), make_props()))
+                                    }
+                                }
+                            },
+                            move |_| {
+                                let address_entered = address_entered.clone();
+                                async move {
+                                    if mode == 3 {
+                                        address_entered
+                                            .store(3, std::sync::atomic::Ordering::Relaxed);
+                                        std::future::pending().await
+                                    } else {
+                                        None
+                                    }
+                                }
+                            },
+                        )
+                        .await;
+                    }
+                };
+                tokio::pin!(task);
+                pending_once(task.as_mut()).await;
+                if mode == 1 || mode == 3 {
+                    assert_eq!(entered.load(std::sync::atomic::Ordering::Relaxed), mode);
+                } else if mode == 2 {
+                    assert_eq!(rx.len(), 1, "exercise actual output backpressure");
                 }
-            });
-            tokio::task::yield_now().await;
-            drop(rx);
-            tokio::time::timeout(std::time::Duration::from_secs(1), task)
-                .await
-                .unwrap()
-                .unwrap();
-        }
+                drop(rx);
+                task.await;
+            }
+        })
+        .await;
     }
     // Mirrors btleplug's 16-slot broadcast stream, including skipped lag errors.
     fn discovery_stream(
@@ -646,151 +679,217 @@ mod tests {
         ))
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn slow_enrichment_preserves_burst_discoveries_exactly_once() {
-        for delay in [0, 20] {
-            let (send, receive) = tokio::sync::broadcast::channel(16);
-            let (output, mut observations) = mpsc::channel(128);
-            let task = tokio::spawn(forward_events(
-                discovery_stream(receive),
-                output,
-                crate::control::ScanControl::new(true),
-                |id| std::future::ready(Some((id.to_string(), PeripheralProperties::default()))),
-                move |_| async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                    Some([1; 6])
-                },
-            ));
-            for id in 0..100 {
-                send.send(id).unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    // Acknowledgement occurs when ingest requests its next item, after it has
+    // processed the previous discovery and admitted or emitted its observation.
+    // This wraps the real bounded broadcast stream; no scheduler turns are guessed.
+    struct IngestWitness<S> {
+        inner: S,
+        previous: Option<usize>,
+        admitted: mpsc::UnboundedSender<usize>,
+    }
+    impl<S: futures_lite::Stream<Item = usize> + Unpin> futures_lite::Stream for IngestWitness<S> {
+        type Item = usize;
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<usize>> {
+            let this = self.get_mut();
+            if let Some(id) = this.previous.take() {
+                this.admitted.send(id).unwrap();
             }
-            drop(send);
-            assert!(task.await.unwrap());
-            let mut ids = std::collections::HashSet::new();
-            let mut enriched = 0;
-            while let Some(event) = observations.recv().await {
-                let ScanEvent::BleSnapshot { id, address, .. } = event else {
-                    panic!("expected UUID observation");
-                };
-                assert!(ids.insert(id), "observation must be emitted exactly once");
-                enriched += usize::from(address.is_some());
+            let next = std::pin::Pin::new(&mut this.inner).poll_next(cx);
+            if let std::task::Poll::Ready(Some(id)) = next {
+                this.previous = Some(id);
             }
-            assert_eq!(ids.len(), 100, "lookup delay must not lose discoveries");
-            assert!(enriched > 0);
-            if delay > 0 {
-                assert!(
-                    enriched < 100,
-                    "saturated enrichment must fall back to UUID"
-                );
-            }
+            next
         }
     }
 
-    #[tokio::test(start_paused = true)]
+    async fn pending_once<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+        assert!(
+            std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(future.as_mut().poll(cx).is_pending())
+            })
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_enrichment_preserves_burst_discoveries_exactly_once() {
+        crate::test_support::manual_time(async {
+            for held in [false, true] {
+                let (send, receive) = tokio::sync::broadcast::channel(16);
+                let (admitted, mut admissions) = mpsc::unbounded_channel();
+                let (started, mut lookups) = mpsc::unbounded_channel();
+                let (release, released) = tokio::sync::watch::channel(!held);
+                let (output, mut observations) = mpsc::channel(128);
+                let task = tokio::spawn(forward_events(
+                    IngestWitness {
+                        inner: discovery_stream(receive),
+                        previous: None,
+                        admitted,
+                    },
+                    output,
+                    crate::control::ScanControl::new(true),
+                    |id| {
+                        std::future::ready(Some((id.to_string(), PeripheralProperties::default())))
+                    },
+                    move |_| {
+                        let mut released = released.clone();
+                        let started = started.clone();
+                        async move {
+                            started.send(()).unwrap();
+                            if !*released.borrow_and_update() {
+                                released.changed().await.unwrap();
+                            }
+                            Some([1; 6])
+                        }
+                    },
+                ));
+                for id in 0..100 {
+                    send.send(id).unwrap();
+                    assert_eq!(admissions.recv().await, Some(id));
+                    if id == 0 {
+                        assert_eq!(lookups.recv().await, Some(()));
+                    }
+                }
+                release.send(true).unwrap();
+                drop(send);
+                assert!(task.await.unwrap());
+                let mut ids = std::collections::HashSet::new();
+                let mut enriched = 0;
+                while let Some(event) = observations.recv().await {
+                    let ScanEvent::BleSnapshot { id, address, .. } = event else {
+                        panic!("expected UUID observation");
+                    };
+                    assert!(ids.insert(id), "observation must be emitted exactly once");
+                    enriched += usize::from(address.is_some());
+                }
+                assert_eq!(ids.len(), 100, "held lookup must not lose discoveries");
+                assert!(enriched > 0);
+                if held {
+                    assert!(
+                        enriched < 100,
+                        "saturated enrichment must fall back to UUID"
+                    );
+                }
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
     async fn stalled_enrichment_flushes_on_shutdown_but_is_discarded_across_pause() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Arc;
-        for transition in 0..3 {
-            let control = crate::control::ScanControl::new(true);
-            let (send, receive) = tokio::sync::broadcast::channel(16);
-            let (output, mut observations) = mpsc::channel(128);
-            let calls = Arc::new(AtomicUsize::new(0));
-            let count = calls.clone();
-            let task = tokio::spawn(forward_events(
-                discovery_stream(receive),
-                output,
-                control.clone(),
-                |id| std::future::ready(Some((id.to_string(), PeripheralProperties::default()))),
-                move |_| {
-                    count.fetch_add(1, Ordering::Relaxed);
-                    std::future::pending()
-                },
-            ));
-            for id in 0..100 {
-                send.send(id).unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            }
-            assert_eq!(calls.load(Ordering::Relaxed), 1);
-            // Only one active lookup plus eight queued observations are retained.
-            assert_eq!(observations.len(), 100 - ENRICHMENT_CAPACITY - 1);
-            if transition == 1 {
-                control.shutdown();
-            } else {
-                control.store(false, Ordering::Relaxed);
-                control.store(true, Ordering::Relaxed);
-                if transition == 2 {
-                    control.shutdown();
+        crate::test_support::manual_time(async {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            use std::sync::Arc;
+            for transition in 0..3 {
+                let control = crate::control::ScanControl::new(true);
+                let (send, receive) = tokio::sync::broadcast::channel(16);
+                let (admitted, mut admissions) = mpsc::unbounded_channel();
+                let (started, mut lookups) = mpsc::unbounded_channel();
+                let (output, mut observations) = mpsc::channel(128);
+                let calls = Arc::new(AtomicUsize::new(0));
+                let count = calls.clone();
+                let task = tokio::spawn(forward_events(
+                    IngestWitness {
+                        inner: discovery_stream(receive),
+                        previous: None,
+                        admitted,
+                    },
+                    output,
+                    control.clone(),
+                    |id| {
+                        std::future::ready(Some((id.to_string(), PeripheralProperties::default())))
+                    },
+                    move |_| {
+                        count.fetch_add(1, Ordering::Relaxed);
+                        started.send(()).unwrap();
+                        std::future::pending()
+                    },
+                ));
+                for id in 0..100 {
+                    send.send(id).unwrap();
+                    assert_eq!(admissions.recv().await, Some(id));
+                    if id == 0 {
+                        assert_eq!(lookups.recv().await, Some(()));
+                    }
                 }
-            }
-            assert!(
-                !tokio::time::timeout(std::time::Duration::from_millis(1), task)
-                    .await
-                    .unwrap()
-                    .unwrap()
-            );
-            let mut ids = std::collections::HashSet::new();
-            while let Some(event) = observations.recv().await {
-                let ScanEvent::BleSnapshot { id, address, .. } = event else {
-                    panic!("expected UUID observation");
-                };
-                assert!(address.is_none());
-                assert!(ids.insert(id));
-            }
-            assert_eq!(
-                ids.len(),
+                assert_eq!(calls.load(Ordering::Relaxed), 1);
+                // Only one active lookup plus eight queued observations are retained.
+                assert_eq!(observations.len(), 100 - ENRICHMENT_CAPACITY - 1);
                 if transition == 1 {
-                    100
+                    control.shutdown();
                 } else {
-                    100 - ENRICHMENT_CAPACITY - 1
+                    control.store(false, Ordering::Relaxed);
+                    control.store(true, Ordering::Relaxed);
+                    if transition == 2 {
+                        control.shutdown();
+                    }
                 }
-            );
-            drop(send);
-        }
+                assert!(!task.await.unwrap());
+                let mut ids = std::collections::HashSet::new();
+                while let Some(event) = observations.recv().await {
+                    let ScanEvent::BleSnapshot { id, address, .. } = event else {
+                        panic!("expected UUID observation");
+                    };
+                    assert!(address.is_none());
+                    assert!(ids.insert(id));
+                }
+                assert_eq!(
+                    ids.len(),
+                    if transition == 1 {
+                        100
+                    } else {
+                        100 - ENRICHMENT_CAPACITY - 1
+                    }
+                );
+                drop(send);
+            }
+        })
+        .await;
     }
     #[tokio::test]
     async fn pause_cancels_backpressured_output_and_does_not_finish_the_session() {
-        for iteration in 0..20 {
-            let control = crate::control::ScanControl::new(true);
-            let (tx, mut rx) = mpsc::channel(1);
-            let task = tokio::spawn(forward_events(
-                futures_lite::stream::repeat(()),
-                tx,
-                control.clone(),
-                |_| std::future::ready(Some(("id".into(), PeripheralProperties::default()))),
-                |_| std::future::ready(None),
-            ));
-            tokio::task::yield_now().await;
-            assert_eq!(rx.len(), 1, "exercise pause while output is full");
-            control.store(false, std::sync::atomic::Ordering::Relaxed);
-            control.store(true, std::sync::atomic::Ordering::Relaxed);
-            if iteration % 2 == 0 {
-                control.shutdown();
+        crate::test_support::manual_time(async {
+            for iteration in 0..20 {
+                let control = crate::control::ScanControl::new(true);
+                let (tx, mut rx) = mpsc::channel(1);
+                let task = forward_events(
+                    futures_lite::stream::repeat(()),
+                    tx,
+                    control.clone(),
+                    |_| std::future::ready(Some(("id".into(), PeripheralProperties::default()))),
+                    |_| std::future::ready(None),
+                );
+                tokio::pin!(task);
+                pending_once(task.as_mut()).await;
+                assert_eq!(rx.len(), 1, "exercise pause while output is full");
+                control.store(false, std::sync::atomic::Ordering::Relaxed);
+                control.store(true, std::sync::atomic::Ordering::Relaxed);
+                if iteration % 2 == 0 {
+                    control.shutdown();
+                }
+                assert!(!task.await, "pause must allow the scan loop to restart");
+                assert!(rx.recv().await.is_some());
+                assert!(
+                    rx.recv().await.is_none(),
+                    "old-generation output must not appear after resume"
+                );
             }
+            let control = crate::control::ScanControl::new(false);
+            let (tx, _rx) = mpsc::channel(1);
             assert!(
-                !tokio::time::timeout(std::time::Duration::from_secs(1), task)
-                    .await
-                    .unwrap()
-                    .unwrap(),
-                "pause must allow the scan loop to restart"
+                !forward_events(
+                    futures_lite::stream::repeat(()),
+                    tx,
+                    control,
+                    |_| async { panic!("paused scanner must not read properties") },
+                    |_| async { panic!("paused scanner must not enrich") },
+                )
+                .await
             );
-            assert!(rx.recv().await.is_some());
-            assert!(
-                rx.recv().await.is_none(),
-                "old-generation output must not appear after resume"
-            );
-        }
-        let control = crate::control::ScanControl::new(false);
-        let (tx, _rx) = mpsc::channel(1);
-        assert!(
-            !forward_events(
-                futures_lite::stream::repeat(()),
-                tx,
-                control,
-                |_| async { panic!("paused scanner must not read properties") },
-                |_| async { panic!("paused scanner must not enrich") },
-            )
-            .await
-        );
+        })
+        .await;
     }
 }
