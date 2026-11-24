@@ -219,15 +219,56 @@ async fn run_probe(
     lease: Lease,
     duration: Duration,
 ) -> io::Result<(Version, Lease)> {
+    run_probe_with_clock(
+        port,
+        lease,
+        duration,
+        SystemProbeClock,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
+struct Completed(Option<tokio::sync::oneshot::Sender<()>>);
+#[cfg(test)]
+impl Drop for Completed {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            let _ = done.send(());
+        }
+    }
+}
+// Fields drop in declaration order. If the async caller is cancelled, the
+// blocking result releases its lease before the test completion witness fires.
+struct ProbeResult {
+    observed: io::Result<Version>,
+    lease: Lease,
+    #[cfg(test)]
+    _completed: Completed,
+}
+async fn run_probe_with_clock<C: ProbeClock + Send + 'static>(
+    port: PathBuf,
+    lease: Lease,
+    duration: Duration,
+    clock: C,
+    #[cfg(test)] completed: Option<tokio::sync::oneshot::Sender<()>>,
+) -> io::Result<(Version, Lease)> {
     let cancel = Arc::new(AtomicBool::new(false));
     let _cancel_guard = CancelOnDrop(cancel.clone());
-    let (observed, lease) = tokio::task::spawn_blocking(move || {
-        let observed = probe(&port, &lease, &cancel, duration);
-        (observed, lease)
+    let result = tokio::task::spawn_blocking(move || {
+        let observed = probe(&port, &lease, &cancel, duration, &clock);
+        ProbeResult {
+            observed,
+            lease,
+            #[cfg(test)]
+            _completed: Completed(completed),
+        }
     })
     .await
     .map_err(|_| io::Error::other("u-blox identification worker failed"))?;
-    Ok((observed?, lease))
+    Ok((result.observed?, result.lease))
 }
 
 #[cfg(target_os = "macos")]
@@ -258,9 +299,24 @@ async fn check_owner_with_timeout(port: &Path, duration: Duration) -> io::Result
 }
 
 #[cfg(target_os = "macos")]
-async fn ownership_result(mut child: tokio::process::Child, duration: Duration) -> io::Result<()> {
+async fn ownership_result(child: tokio::process::Child, duration: Duration) -> io::Result<()> {
+    ownership_result_inner(
+        child,
+        duration,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+#[cfg(target_os = "macos")]
+async fn ownership_result_inner(
+    mut child: tokio::process::Child,
+    duration: Duration,
+    #[cfg(test)] witness: Option<crate::test_support::TimerWitness>,
+) -> io::Result<()> {
     use tokio::io::AsyncReadExt;
-    let outcome = tokio::time::timeout(duration, async {
+    let deadline = tokio::time::Instant::now() + duration;
+    let outcome = tokio::time::timeout_at(deadline, async {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut stdout = child.stdout.take().expect("piped").take(4097);
@@ -280,9 +336,15 @@ async fn ownership_result(mut child: tokio::process::Child, duration: Duration) 
             ));
         }
         Ok(())
-    })
-    .await
-    .unwrap_or_else(|_| {
+    });
+    #[cfg(test)]
+    let outcome = async {
+        match witness {
+            Some(witness) => witness.observe(deadline, outcome, Result::is_err).await,
+            None => outcome.await,
+        }
+    };
+    let outcome = outcome.await.unwrap_or_else(|_| {
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "GNSS ownership check timed out",
@@ -411,42 +473,67 @@ fn settings_equal(a: &libc::termios, b: &libc::termios) -> bool {
                 && libc::cfgetospeed(a) == libc::cfgetospeed(b)
         }
 }
+trait ProbeClock {
+    fn now(&self) -> Instant;
+    fn poll(
+        &self,
+        fd: RawFd,
+        event: libc::c_short,
+        duration: Duration,
+    ) -> io::Result<libc::c_short>;
+}
+struct SystemProbeClock;
+impl ProbeClock for SystemProbeClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    fn poll(
+        &self,
+        fd: RawFd,
+        event: libc::c_short,
+        duration: Duration,
+    ) -> io::Result<libc::c_short> {
+        let mut poll = libc::pollfd {
+            fd,
+            events: event,
+            revents: 0,
+        };
+        let timeout = duration.as_millis().clamp(1, 100) as i32;
+        if unsafe { libc::poll(&mut poll, 1, timeout) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(poll.revents)
+    }
+}
+
 fn ready(
     fd: RawFd,
     event: libc::c_short,
     deadline: Instant,
     cancel: &AtomicBool,
+    clock: &dyn ProbeClock,
 ) -> io::Result<()> {
     loop {
         cancelled(cancel)?;
-        let now = Instant::now();
+        let now = clock.now();
         if now >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "MON-VER response timed out",
             ));
         }
-        let mut poll = libc::pollfd {
-            fd,
-            events: event,
-            revents: 0,
+        let events = match clock.poll(fd, event, deadline - now) {
+            Ok(events) => events,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
         };
-        let timeout = (deadline - now).as_millis().clamp(1, 100) as i32;
-        let n = unsafe { libc::poll(&mut poll, 1, timeout) };
-        if n < 0 {
-            let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(e);
-        }
-        if poll.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if events & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "GNSS transport closed",
             ));
         }
-        if poll.revents & event != 0 {
+        if events & event != 0 {
             return Ok(());
         }
     }
@@ -456,15 +543,16 @@ fn probe(
     lease: &Lease,
     cancel: &AtomicBool,
     duration: Duration,
+    clock: &dyn ProbeClock,
 ) -> io::Result<Version> {
     cancelled(cancel)?;
     if !lease.matches(path)? {
         return Err(invalid("GNSS endpoint changed after lease"));
     }
     let mut port = Port::open(path)?;
-    let deadline = Instant::now() + duration;
+    let deadline = clock.now() + duration;
     let result = (|| {
-        ready(port.fd(), libc::POLLOUT, deadline, cancel)?;
+        ready(port.fd(), libc::POLLOUT, deadline, cancel, clock)?;
         cancelled(cancel)?;
         // Exactly one informational write. A short write fails; it is never retried.
         if port.file.as_mut().expect("open").write(&POLL)? != POLL.len() {
@@ -476,7 +564,7 @@ fn probe(
         let mut parser = Parser::default();
         let mut buffer = [0; 4096];
         loop {
-            ready(port.fd(), libc::POLLIN, deadline, cancel)?;
+            ready(port.fd(), libc::POLLIN, deadline, cancel, clock)?;
             cancelled(cancel)?;
             match port.file.as_mut().expect("open").read(&mut buffer) {
                 Ok(0) => {
@@ -650,105 +738,210 @@ mod tests {
             t
         }
     }
+    fn fixture_ready(fd: RawFd, event: libc::c_short) -> libc::c_short {
+        let mut poll = libc::pollfd {
+            fd,
+            events: event,
+            revents: 0,
+        };
+        // Outer fixture hang guard only; never advances correctness time.
+        assert!(
+            unsafe { libc::poll(&mut poll, 1, 30_000) } > 0,
+            "fixture readiness hang guard"
+        );
+        assert_eq!(
+            poll.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL),
+            0
+        );
+        poll.revents
+    }
+    type PollStep = Box<
+        dyn FnMut(RawFd, libc::c_short, Duration, &std::sync::Mutex<Instant>) -> libc::c_short
+            + Send,
+    >;
+    struct TestClock {
+        time: std::sync::Mutex<Instant>,
+        step: std::sync::Mutex<PollStep>,
+    }
+    impl TestClock {
+        fn new(
+            step: impl FnMut(RawFd, libc::c_short, Duration, &std::sync::Mutex<Instant>) -> libc::c_short
+                + Send
+                + 'static,
+        ) -> Self {
+            Self {
+                time: std::sync::Mutex::new(Instant::now()),
+                step: std::sync::Mutex::new(Box::new(step)),
+            }
+        }
+        fn frozen() -> Self {
+            Self::new(|fd, event, _, _| fixture_ready(fd, event))
+        }
+    }
+    impl ProbeClock for TestClock {
+        fn now(&self) -> Instant {
+            *self.time.lock().unwrap()
+        }
+        fn poll(
+            &self,
+            fd: RawFd,
+            event: libc::c_short,
+            duration: Duration,
+        ) -> io::Result<libc::c_short> {
+            Ok(self.step.lock().unwrap()(fd, event, duration, &self.time))
+        }
+    }
     fn read_poll(master: &mut File) {
-        ready(
-            master.as_raw_fd(),
-            libc::POLLIN,
-            Instant::now() + Duration::from_secs(3),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        fixture_ready(master.as_raw_fd(), libc::POLLIN);
         let mut bytes = [0; 8];
         master.read_exact(&mut bytes).unwrap();
-        assert_eq!(bytes, POLL)
+        assert_eq!(bytes, POLL);
     }
     #[tokio::test]
     async fn private_pty_one_poll_lease_and_terminal_restore() {
-        let pty = Pty::new();
-        let before = pty.settings();
-        let lease = serial_lease::acquire(&pty.path).unwrap();
-        assert!(serial_lease::acquire(&pty.path).is_err());
-        let mut master = pty.master.try_clone().unwrap();
-        let peer = thread::spawn(move || {
-            read_poll(&mut master);
-            for part in version_frame().chunks(7) {
-                master.write_all(part).unwrap();
-            }
-        });
-        let (v, lease) = run_probe(pty.path.clone(), lease, Duration::from_secs(2))
-            .await
-            .unwrap();
-        peer.join().unwrap();
-        assert_eq!(v.firmware.as_deref(), Some("SPG 3.01"));
-        assert!(settings_equal(&before, &pty.settings()));
-        assert!(serial_lease::acquire(&pty.path).is_err());
-        drop(lease);
-        assert!(serial_lease::acquire(&pty.path).is_ok());
-        let _reopened = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-            .open(&pty.path)
-            .unwrap();
-    }
-    #[tokio::test]
-    async fn timeout_and_incomplete_reply_restore_before_lease_release() {
-        for reply in [vec![], version_frame()[..20].to_vec()] {
+        crate::test_support::manual_time(async {
             let pty = Pty::new();
             let before = pty.settings();
+            let lease = serial_lease::acquire(&pty.path).unwrap();
+            assert!(serial_lease::acquire(&pty.path).is_err());
             let mut master = pty.master.try_clone().unwrap();
             let peer = thread::spawn(move || {
                 read_poll(&mut master);
-                master.write_all(&reply).unwrap();
+                for part in version_frame().chunks(7) {
+                    master.write_all(part).unwrap();
+                }
             });
-            let lease = serial_lease::acquire(&pty.path).unwrap();
-            let start = Instant::now();
-            let error = run_probe(pty.path.clone(), lease, Duration::from_millis(150))
-                .await
-                .unwrap_err();
-            peer.join().unwrap();
-            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-            assert!(start.elapsed() < Duration::from_secs(2));
-            assert!(settings_equal(&before, &pty.settings()));
-            assert!(serial_lease::acquire(&pty.path).is_ok());
-        }
-    }
-    #[tokio::test]
-    async fn cancellation_keeps_lease_until_worker_restores_and_closes() {
-        let pty = Pty::new();
-        let before = pty.settings();
-        let lease = serial_lease::acquire(&pty.path).unwrap();
-        let path = pty.path.clone();
-        let task =
-            tokio::spawn(async move { run_probe(path, lease, Duration::from_secs(10)).await });
-        let mut master = pty.master.try_clone().unwrap();
-        tokio::task::spawn_blocking(move || read_poll(&mut master))
+            let (v, lease) = run_probe_with_clock(
+                pty.path.clone(),
+                lease,
+                Duration::from_secs(2),
+                TestClock::frozen(),
+                None,
+            )
             .await
             .unwrap();
-        assert!(serial_lease::acquire(&pty.path).is_err());
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            match serial_lease::acquire(&pty.path) {
-                Ok(lease) => {
-                    assert!(settings_equal(&before, &pty.settings()));
-                    let _port = OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
-                        .open(&pty.path)
-                        .unwrap();
-                    drop(lease);
-                    break;
-                }
-                Err(_) => {
-                    assert!(Instant::now() < deadline);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+            peer.join().unwrap();
+            assert_eq!(v.firmware.as_deref(), Some("SPG 3.01"));
+            assert!(settings_equal(&before, &pty.settings()));
+            assert!(serial_lease::acquire(&pty.path).is_err());
+            drop(lease);
+            assert!(serial_lease::acquire(&pty.path).is_ok());
+            let _reopened = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+                .open(&pty.path)
+                .unwrap();
+        })
+        .await;
     }
+    #[tokio::test]
+    async fn timeout_and_incomplete_reply_restore_before_lease_release() {
+        crate::test_support::manual_time(async {
+            for reply in [vec![], version_frame()[..20].to_vec()] {
+                let pty = Pty::new();
+                let before = pty.settings();
+                let mut master = pty.master.try_clone().unwrap();
+                let has_reply = !reply.is_empty();
+                let (sent, received) = std::sync::mpsc::sync_channel(1);
+                let peer = thread::spawn(move || {
+                    read_poll(&mut master);
+                    master.write_all(&reply).unwrap();
+                    sent.send(()).unwrap();
+                });
+                let mut first = true;
+                let clock = TestClock::new(move |fd, event, remaining, time| {
+                    if event == libc::POLLOUT {
+                        return fixture_ready(fd, event);
+                    }
+                    if first {
+                        received
+                            .recv_timeout(Duration::from_secs(30))
+                            .expect("peer reply hang guard");
+                        first = false;
+                        if has_reply {
+                            return fixture_ready(fd, event);
+                        }
+                    }
+                    // The peer completed its chosen reply and the real parser has
+                    // requested more input. Expire this exact remaining budget.
+                    *time.lock().unwrap() += remaining;
+                    0
+                });
+                let lease = serial_lease::acquire(&pty.path).unwrap();
+                let error = run_probe_with_clock(
+                    pty.path.clone(),
+                    lease,
+                    Duration::from_millis(150),
+                    clock,
+                    None,
+                )
+                .await
+                .unwrap_err();
+                peer.join().unwrap();
+                assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+                assert!(settings_equal(&before, &pty.settings()));
+                assert!(serial_lease::acquire(&pty.path).is_ok());
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_keeps_lease_until_worker_restores_and_closes() {
+        crate::test_support::manual_time(async {
+            let pty = Pty::new();
+            let before = pty.settings();
+            let lease = serial_lease::acquire(&pty.path).unwrap();
+            let (entered, ready) = tokio::sync::oneshot::channel();
+            let (release, wait) = std::sync::mpsc::sync_channel(1);
+            let (finished, done) = tokio::sync::oneshot::channel();
+            let mut entered = Some(entered);
+            let clock = TestClock::new(move |fd, event, _, _| {
+                if event == libc::POLLOUT {
+                    return fixture_ready(fd, event);
+                }
+                entered
+                    .take()
+                    .expect("only one blocked readiness call")
+                    .send(())
+                    .unwrap();
+                wait.recv_timeout(Duration::from_secs(30))
+                    .expect("fixture release hang guard");
+                0
+            });
+            let task = tokio::spawn(run_probe_with_clock(
+                pty.path.clone(),
+                lease,
+                Duration::from_secs(10),
+                clock,
+                Some(finished),
+            ));
+            ready.await.unwrap();
+            let mut master = pty.master.try_clone().unwrap();
+            tokio::task::spawn_blocking(move || read_poll(&mut master))
+                .await
+                .unwrap();
+            assert!(serial_lease::acquire(&pty.path).is_err());
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            // Worker still owns its open port until this explicit poll release.
+            assert!(serial_lease::acquire(&pty.path).is_err());
+            release.send(()).unwrap();
+            done.await.expect("cancelled worker completion");
+            assert!(settings_equal(&before, &pty.settings()));
+            let lease = serial_lease::acquire(&pty.path).unwrap();
+            let _port = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+                .open(&pty.path)
+                .unwrap();
+            drop(lease);
+        })
+        .await;
+    }
+
     #[test]
     fn post_query_binding_change_discards_the_observed_reply() {
         use crate::discovery::{assemble, Endpoint, Options, RawDevice};
@@ -795,55 +988,99 @@ mod tests {
         let other = Pty::new();
         let lease = serial_lease::acquire(&pty.path).unwrap();
         assert_eq!(
-            probe(&pty.path, &lease, &AtomicBool::new(true), DEADLINE)
-                .unwrap_err()
-                .kind(),
+            probe(
+                &pty.path,
+                &lease,
+                &AtomicBool::new(true),
+                DEADLINE,
+                &TestClock::frozen()
+            )
+            .unwrap_err()
+            .kind(),
             io::ErrorKind::Interrupted
         );
-        assert!(probe(&other.path, &lease, &AtomicBool::new(false), DEADLINE).is_err());
+        assert!(probe(
+            &other.path,
+            &lease,
+            &AtomicBool::new(false),
+            DEADLINE,
+            &TestClock::frozen()
+        )
+        .is_err());
         assert!(serial_lease::acquire(&pty.path).is_err());
     }
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn existing_external_pty_owner_is_refused() {
-        let pty = Pty::new();
-        // This integration test checks lsof's actual ownership result, not its
-        // speed under concurrent coverage instrumentation. Production still
-        // bounds the lsof result wait to one second and refuses on timeout.
-        let error = check_owner_with_timeout(&pty.path, Duration::from_secs(10))
-            .await
-            .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        crate::test_support::manual_time(async {
+            let pty = Pty::new();
+            // This integration test checks lsof's actual ownership result, not its
+            // speed under concurrent coverage instrumentation. Production still
+            // bounds the lsof result wait to one second and refuses on timeout.
+            let error = check_owner_with_timeout(&pty.path, Duration::from_secs(10))
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        })
+        .await;
     }
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn ownership_timeout_refuses_and_reaps_the_owned_process() {
-        use std::process::Stdio;
-        let child = tokio::process::Command::new("/bin/sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let pid = child.id().unwrap() as libc::pid_t;
-        let start = Instant::now();
-        let error = ownership_result(child, Duration::from_millis(50))
-            .await
-            .unwrap_err();
+        crate::test_support::manual_time(async {
+            use std::process::Stdio;
+            let child = tokio::process::Command::new("/bin/sh")
+                .args(["-c", "read value"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let pid = child.id().unwrap() as libc::pid_t;
+            let (witness, mut events) = crate::test_support::TimerWitness::channel();
+            let task = tokio::spawn(ownership_result_inner(
+                child,
+                Duration::from_millis(50),
+                Some(witness),
+            ));
+            crate::test_support::advance_registered_timer(&mut events).await;
+            let error = task.await.unwrap().unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            // Already reaped, rather than merely signalled or left as a zombie.
+            let mut status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+        })
+        .await;
+    }
+    #[test]
+    fn readiness_deadline_is_checked_before_each_poll_at_exact_virtual_boundary() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = calls.clone();
+        let clock = TestClock::new(move |_, _, remaining, time| {
+            let call = observed.fetch_add(1, Ordering::SeqCst);
+            let step = if call == 0 {
+                remaining - Duration::from_nanos(1)
+            } else {
+                assert_eq!(call, 1, "must not poll again at expired deadline");
+                assert_eq!(remaining, Duration::from_nanos(1));
+                remaining
+            };
+            *time.lock().unwrap() += step;
+            0
+        });
+        let deadline = clock.now() + DEADLINE;
+        let error = ready(-1, libc::POLLIN, deadline, &AtomicBool::new(false), &clock).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(start.elapsed() < Duration::from_secs(5));
-        // Already reaped, rather than merely signalled or left as a zombie.
-        let mut status = 0;
-        assert_eq!(
-            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
-            -1
-        );
-        assert_eq!(
-            io::Error::last_os_error().raw_os_error(),
-            Some(libc::ECHILD)
-        );
+        assert_eq!(clock.now(), deadline);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }
