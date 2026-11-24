@@ -464,6 +464,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rayhunter_raw_and_cells_survive_pause_resume_finish_and_history() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new();
+        let helper = fixture.0.join("decoder");
+        let raw = b"diagnostic fixture";
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(raw)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let records = json!([
+            {"ipc_version":1,"kind":"hello","stream":{"version":1,"replay":false,"format":"u32le_json_length+json+exact_device_read","stream_epoch":"fixture","next_sequence":0}},
+            {"ipc_version":1,"kind":"raw","frame":{"sequence":0,"raw_length":raw.len(),"read_monotonic_ns":12,"read_system_unix_ns":null,"recording_id":null},"offset":0,"hex":raw.iter().map(|b|format!("{b:02x}")).collect::<String>(),"sha256":hash},
+            {"ipc_version":1,"kind":"cell","sequence":0,"message_index":0,"modem_timestamp":123,"observation":{"rat":"lte","kind":"cell_identity","earfcn":70000,"pci":42,"mcc":"001","mnc":"01","tac":123,"eci":456}}
+        ]);
+        // JSON is quoted as a JSON string literal: no shell is involved.
+        let input = serde_json::to_string(&records.to_string()).unwrap();
+        std::fs::write(&helper,format!("#!/usr/bin/env python3\nimport json,time\nfor r in json.loads({input}): print(json.dumps(r),flush=True)\nwhile True:\n print(json.dumps({{'ipc_version':1,'kind':'status'}}),flush=True)\n time.sleep(.1)\n")).unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (handle, actor) = spawn(fixture.path());
+        let config = json!({"version":1,"receivers":[{"id":"orbic","source":{"kind":"rayhunter","endpoint":"ws://127.0.0.1:9/raw-diag","decoder":helper}}]});
+        let start = handle
+            .request(Action::Start {
+                request_id: "cellular-fixture".into(),
+                config,
+            })
+            .await
+            .unwrap();
+        let id = start["run_id"].as_str().unwrap().to_owned();
+        for expected in [1, 2] {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let records = storage::Reader::open(&fixture.path())
+                        .unwrap()
+                        .records(&id, 0, 500)
+                        .unwrap()
+                        .records;
+                    if records
+                        .iter()
+                        .filter(|r| r.kind == "cellular_observation")
+                        .count()
+                        >= expected
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            if expected == 1 {
+                handle.request(Action::Pause(id.clone())).await.unwrap();
+                handle.request(Action::Resume(id.clone())).await.unwrap();
+            }
+        }
+        handle.request(Action::Finish(id.clone())).await.unwrap();
+        handle.request(Action::Shutdown).await.unwrap();
+        actor.await.unwrap().unwrap();
+        let records = storage::Reader::open(&fixture.path())
+            .unwrap()
+            .records(&id, 0, 500)
+            .unwrap()
+            .records;
+        let cells = records
+            .iter()
+            .filter(|r| r.kind == "cellular_observation")
+            .collect::<Vec<_>>();
+        assert_eq!(cells.len(), 2);
+        for (i, cell) in cells.iter().enumerate() {
+            assert_eq!(cell.payload["session_source"]["receiver_id"], "orbic");
+            assert_eq!(cell.payload["observation"]["mnc"], "01");
+            assert_eq!(cell.payload["observation"]["earfcn"], 70000);
+            assert_eq!(cell.payload["connection_generation"], i + 1);
+            assert!(cell.payload["capture_time"].is_null());
+            assert!(cell.payload["receiver_location"].is_null());
+            let before = records
+                .iter()
+                .take_while(|r| r.cursor != cell.cursor)
+                .filter(|r| r.kind == "cellular_raw_chunk")
+                .last()
+                .unwrap();
+            assert_eq!(
+                before.payload["sha256"],
+                cell.payload["raw_reference"]["sha256"]
+            );
+            assert_eq!(before.payload["frame_complete"], true);
+        }
+    }
+
+    #[tokio::test]
     async fn marauder_replay_reaches_durable_records_with_boot_clock_and_unknown_radio_fields() {
         for format in ["pcap", "serial"] {
             let fixture = Fixture::new();

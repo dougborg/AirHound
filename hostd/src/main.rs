@@ -23,6 +23,7 @@ use health::{Phase, Scanner};
 mod ble_packet;
 mod ble_source;
 mod external_scanner;
+mod rayhunter_source;
 mod serial_source;
 use airhound_hostd::external_wifi;
 mod observation;
@@ -985,6 +986,11 @@ async fn filter_task<W: Write, O: Write>(
         }
 
         match event {
+            ScanEvent::Cellular { record, generation } => {
+                if generation == control.subscribe().borrow().generation {
+                    observation::write_json(&mut output, &record)?;
+                }
+            }
             ScanEvent::Sourced { .. } => return Err(io::Error::other("nested receiver envelope")),
             ScanEvent::BleSourceStatus(_)
             | ScanEvent::WifiReplayStatus(_)

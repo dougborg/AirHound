@@ -4,6 +4,10 @@ use airhound::scanner::{BleEvent, WiFiEvent};
 
 #[derive(Clone)]
 pub enum ScanEvent {
+    Cellular {
+        record: serde_json::Value,
+        generation: u64,
+    },
     Sourced {
         identity: crate::session_runtime::EventSource,
         control: crate::control::ScanControl,

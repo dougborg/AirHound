@@ -13,14 +13,16 @@ public struct ReceiverStatus: Identifiable {
     guard case .array(let receivers) = capture?["receiver_health"]?["receivers"] else { return [] }
     return receivers.compactMap { receiver in
       guard let id = receiver["id"]?.string else { return nil }
-      let scanners = ["wifi", "ble"].compactMap { name -> String? in
+      let scanners = ["wifi", "ble", "cellular"].compactMap { name -> String? in
         guard let state = receiver["scanners"]?[name]?["state"]?.string, state != "disabled" else {
           return nil
         }
         return
-          "\(name == "wifi" ? "Wi-Fi" : "Bluetooth"): \(state.replacingOccurrences(of: "_", with: " "))"
+          "\(name == "wifi" ? "Wi-Fi" : (name == "cellular" ? "Cellular" : "Bluetooth")): \(state.replacingOccurrences(of: "_", with: " "))"
       }
-      let reasons = ["wifi", "ble"].compactMap { receiver["scanners"]?[$0]?["reason"]?.string }
+      let reasons = ["wifi", "ble", "cellular"].compactMap {
+        receiver["scanners"]?[$0]?["reason"]?.string
+      }
       // Flipper health carries the latest backend-owned cumulative counters,
       // even when its bounded observation queue cannot publish a status event.
       // Do not combine this snapshot with a cached event from an older generation.
