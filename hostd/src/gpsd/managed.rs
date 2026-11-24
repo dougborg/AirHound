@@ -13,7 +13,7 @@ pub(super) struct TestHooks {
     listener: std::sync::Arc<tokio::net::UnixListener>,
     controls: tokio::sync::mpsc::Sender<tokio::io::BufReader<tokio::net::UnixStream>>,
 }
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 struct ProbeWitness {
     consumed: tokio::sync::oneshot::Sender<()>,
     timer: crate::test_support::TimerWitness,
