@@ -1,5 +1,38 @@
 # Testing, analysis and performance
 
+## Deterministic correctness tests
+
+[Issue #329](https://github.com/dougborg/AirHound/issues/329) tracks this policy
+across the repository, not just one receiver or language. Correctness must not
+depend on machine speed, scheduling luck, wall-clock timestamps, or a short real
+sleep. Use fixed fixture timestamps, injected clocks and explicit virtual-time
+advancement for freshness, timeout, retry and grace-period behavior. Assert the
+boundary before, at and after expiration, including cancellation and cleanup.
+
+Coordinate asynchronous work with the actual readiness or completion event:
+channel messages, continuations, publisher notifications, process pipe handshakes,
+or filesystem events. Subscribe before rechecking the condition so an event cannot
+be lost. Do not replace sleeps with arbitrary yield counts, busy loops, or larger
+production deadlines. Virtual time must not outrun an actual subprocess before its
+readiness barrier; test-owned children still need real ownership and reaping checks.
+
+A generous outer test/job hang limit is an infrastructure safeguard. It may stop a
+broken test, but elapsed time is not a correctness assertion. Keep bounded cleanup
+of real owned children and resource ownership checks. Runtime timers still use the
+production clock; tests inject scheduling only where they exercise clock behavior.
+For example, the subprocess collector's public initializer retains monotonic time,
+while its deadline test advances a controlled clock after the child reports READY.
+
+Performance benchmarks and physical timing measurements are separate activities.
+They should report their method and measurements, never become correctness tests
+with fragile elapsed-time pass thresholds. Hardware acceptance is not a substitute
+for deterministic unit and synthetic integration coverage.
+
+The migration inventory and remaining work are in
+[test-timing-audit.md](test-timing-audit.md). A lexical audit is only a review aid:
+absence of a spelling such as `sleep` does not prove deterministic behavior.
+
+
 [Project home](../README.md) · [Documentation index](README.md) · [Developer setup](../CONTRIBUTING.md) · [Scripts](../scripts/README.md)
 
 Run commands from the repository root. Hardware-free checks use stable Rust unless a pinned coverage or fuzz toolchain is specified.

@@ -23,10 +23,7 @@ final class ServiceLauncherTests: XCTestCase {
     let model = SessionModel(preferences: defaults)
     model.socketPath = root.appendingPathComponent("control.sock").path
     model.startService(executable: executable)
-    for _ in 0..<100 {
-      if model.connected && !model.busy { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitModelState([model.objectWillChange]) { !model.busy }
     let client = BackendClient(
       executable: executable, socket: URL(fileURLWithPath: model.socketPath))
     let status = try JSONDecoder().decode(JSONValue.self, from: await client.request(["status"]))

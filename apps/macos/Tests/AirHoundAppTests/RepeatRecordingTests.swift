@@ -1,4 +1,5 @@
 import AirHoundCore
+import Combine
 import Darwin
 import XCTest
 
@@ -6,6 +7,7 @@ import XCTest
 
 @MainActor
 final class RepeatRecordingTests: XCTestCase {
+  private var changes: [ObservableObjectPublisher] = []
   func testSamePlanStartsAgainAfterFinishAndKeepsBothObservationHistories() async throws {
     guard let backend = ProcessInfo.processInfo.environment["AIRHOUND_TEST_BACKEND"] else {
       throw XCTSkip("Set AIRHOUND_TEST_BACKEND for private repeat-recording integration")
@@ -68,13 +70,12 @@ final class RepeatRecordingTests: XCTestCase {
     server.standardError = output
     try server.run()
     defer { XCTAssertTrue(stopOwned(server), "Private backend did not terminate/reap") }
-    try await eventually("Private service socket", log: log) {
-      FileManager.default.fileExists(atPath: socket.path)
-    }
+    try await awaitFixtureFile(socket)
     let suite = "AirHound-repeat-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { preferences.removePersistentDomain(forName: suite) }
     let model = SessionModel(preferences: preferences)
+    changes = [model.objectWillChange]
     model.socketPath = socket.path
     model.connect(executable: wrapper)
     defer { model.disconnect() }
@@ -96,6 +97,7 @@ final class RepeatRecordingTests: XCTestCase {
     ]).data()
     model.configText = String(decoding: plan, as: UTF8.self)
     let presentation = AppModel()
+    changes.append(presentation.objectWillChange)
     var runs: [String] = []
     for ordinal in 1...2 {
       XCTAssertNil(model.startUnavailableReason)
@@ -184,15 +186,12 @@ final class RepeatRecordingTests: XCTestCase {
   private func quote(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
-  private func eventually(_ label: String, log: URL, condition: () -> Bool) async throws {
-    let deadline = ProcessInfo.processInfo.systemUptime + 8
-    while ProcessInfo.processInfo.systemUptime < deadline {
-      if condition() { return }
-      try await Task.sleep(for: .milliseconds(25))
+  private func eventually(_ label: String, log: URL, condition: @escaping () -> Bool) async throws {
+    do { try await awaitModelState(changes, description: label, condition: condition) } catch {
+      let output = (try? String(contentsOf: log, encoding: .utf8)) ?? "No service log"
+      XCTFail("\(label) did not complete: \(output.suffix(4000))")
+      throw error
     }
-    let output = (try? String(contentsOf: log, encoding: .utf8)) ?? "No service log"
-    XCTFail("\(label) timed out: \(output.suffix(4000))")
-    throw ModelError.invalid(label + " exceeded its deadline")
   }
   private func stopOwned(_ process: Process) -> Bool {
     guard process.isRunning else { return true }

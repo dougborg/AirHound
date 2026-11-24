@@ -324,10 +324,7 @@ final class SetupPresentationTests: XCTestCase {
         server.waitUntilExit()
       }
     }
-    for _ in 0..<100 {
-      if FileManager.default.fileExists(atPath: socket.path) { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitFixtureFile(socket)
     let wrapper = root.appendingPathComponent("selected-backend.sh")
     let log = root.appendingPathComponent("client-arguments")
     func quote(_ value: String) -> String {
@@ -348,11 +345,7 @@ final class SetupPresentationTests: XCTestCase {
     session.connect(executable: wrapper)
     defer { session.disconnect() }
     func idle() async throws {
-      for _ in 0..<100 {
-        if !session.busy { return }
-        try await Task.sleep(for: .milliseconds(50))
-      }
-      XCTFail("Setup operation did not finish")
+      try await awaitModelState([session.objectWillChange]) { !session.busy }
     }
     try await idle()
     XCTAssertTrue(session.connected, session.error ?? session.message)

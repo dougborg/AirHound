@@ -26,10 +26,7 @@ final class SessionTests: XCTestCase {
         process.waitUntilExit()
       }
     }
-    for _ in 0..<100 {
-      if model.connected && !model.busy { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitModelState([model.objectWillChange]) { !model.busy }
     XCTAssertTrue(model.connected, model.error ?? model.message)
     XCTAssertFalse(
       model.configText.isEmpty,
@@ -61,20 +58,14 @@ final class SessionTests: XCTestCase {
     XCTAssertEqual(replacement.socketPath, model.socketPath)
     replacement.connect(executable: URL(fileURLWithPath: path))
     defer { replacement.disconnect() }
-    for _ in 0..<100 {
-      if replacement.connected && !replacement.busy { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitModelState([replacement.objectWillChange]) { !replacement.busy }
     XCTAssertTrue(replacement.connected, replacement.error ?? replacement.message)
     XCTAssertTrue(replacement.hasPendingStart)
     XCTAssertEqual(replacement.configText, String(decoding: config, as: UTF8.self))
     // Remove replay input: idempotent recovery must not revalidate an already accepted run.
     try FileManager.default.removeItem(at: pcap)
     replacement.start()
-    for _ in 0..<100 {
-      if !replacement.busy { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitModelState([replacement.objectWillChange]) { !replacement.busy }
     XCTAssertNil(replacement.error)
     XCTAssertFalse(replacement.hasPendingStart)
     XCTAssertNil(try store.load())
@@ -247,10 +238,7 @@ final class SessionTests: XCTestCase {
         if fail { throw ModelError.invalid("late file failure") }
         return try Recording.decode(Data())
       }
-      for _ in 0..<100 {
-        if await gate.entered { break }
-        try await Task.sleep(for: .milliseconds(10))
-      }
+      await gate.waitUntilEntered()
       let entered = await gate.entered
       XCTAssertTrue(entered, "File load must be outstanding before service selection")
       replacement.showCurrentRecordingIfNeeded(app: filePresentation)
@@ -313,10 +301,7 @@ final class SessionTests: XCTestCase {
     try Data().write(to: armed)
     let latePresentation = AppModel()
     delayed.open(try XCTUnwrap(finishedRuns.runs.first), app: latePresentation)
-    for _ in 0..<100 {
-      if FileManager.default.fileExists(atPath: entered.path) { break }
-      try await Task.sleep(for: .milliseconds(50))
-    }
+    try await awaitFixtureFile(entered)
     XCTAssertTrue(
       FileManager.default.fileExists(atPath: entered.path), "Records request must be in flight")
     delayed.leaveRecording()
@@ -365,9 +350,7 @@ final class SessionTests: XCTestCase {
         service.waitUntilExit()
       }
     }
-    for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket.path) {
-      try await Task.sleep(for: .milliseconds(20))
-    }
+    try await awaitFixtureFile(socket)
     let suite = "AirHound-queued-setup-" + UUID().uuidString
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -402,11 +385,7 @@ final class SessionTests: XCTestCase {
   }
 
   private func waitIdle(_ model: SessionModel) async throws {
-    for _ in 0..<200 {
-      if !model.busy { return }
-      try await Task.sleep(for: .milliseconds(50))
-    }
-    XCTFail("Presentation operation did not finish in time")
+    try await awaitModelState([model.objectWillChange]) { !model.busy }
   }
 
 }
@@ -414,9 +393,18 @@ final class SessionTests: XCTestCase {
 private actor RecordingLoadGate {
   private(set) var entered = false
   private var continuation: CheckedContinuation<Void, Never>?
+  private var entrance: CheckedContinuation<Void, Never>?
   func wait() async {
-    entered = true
-    await withCheckedContinuation { continuation = $0 }
+    await withCheckedContinuation {
+      continuation = $0
+      entered = true
+      entrance?.resume()
+      entrance = nil
+    }
+  }
+  func waitUntilEntered() async {
+    if entered { return }
+    await withCheckedContinuation { entrance = $0 }
   }
   func release() {
     continuation?.resume()

@@ -44,9 +44,7 @@ final class FlipperPresentationTests: XCTestCase {
     server.standardError = FileHandle.nullDevice
     try server.run()
     defer { XCTAssertTrue(stopOwned(server), "Private service could not be reaped") }
-    for _ in 0..<100 where !FileManager.default.fileExists(atPath: socket.path) {
-      try await Task.sleep(for: .milliseconds(20))
-    }
+    try await awaitFixtureFile(socket)
     let suite = "flipper-integration-" + UUID().uuidString
     let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
     defer { preferences.removePersistentDomain(forName: suite) }
@@ -55,11 +53,7 @@ final class FlipperPresentationTests: XCTestCase {
     model.connect(executable: URL(fileURLWithPath: backend))
     defer { model.disconnect() }
     func idle() async throws {
-      for _ in 0..<100 {
-        if !model.busy { return }
-        try await Task.sleep(for: .milliseconds(50))
-      }
-      XCTFail("Private backend operation did not complete")
+      try await awaitModelState([model.objectWillChange]) { !model.busy }
     }
     try await idle()
     XCTAssertTrue(model.connected, model.error ?? model.message)

@@ -203,12 +203,8 @@ final class GPSVersionTests: XCTestCase {
       session.socketPath = root.appendingPathComponent("private.sock").path
       session.connect(executable: executable)
       defer { session.disconnect() }
-      func wait(_ predicate: () -> Bool) async throws {
-        for _ in 0..<200 {
-          if predicate() { return }
-          try await Task.sleep(for: .milliseconds(20))
-        }
-        throw ModelError.invalid("Private GPS fixture exceeded deadline")
+      func wait(_ predicate: @escaping () -> Bool) async throws {
+        try await awaitModelState([session.objectWillChange], condition: predicate)
       }
       try await wait { !session.busy }
       XCTAssertTrue(session.connected, session.error ?? "Not connected")
