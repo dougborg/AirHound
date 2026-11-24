@@ -484,50 +484,58 @@ mod tests {
 
     #[tokio::test]
     async fn pause_keeps_transport_open_and_discards_without_replaying() {
-        let (mut writer, mut reader) = tokio::io::duplex(8192);
-        let (tx, mut rx) = mpsc::channel(16);
-        let control = ScanControl::new(true);
-        let c = control.clone();
-        let task = tokio::spawn(async move {
-            let mut s = Stats::default();
-            let r = consume(&mut reader, "fixture", &tx, &c, &mut s).await;
-            (s, r)
-        });
-        writer.write_all(WIFI).await.unwrap();
-        loop {
-            if matches!(rx.recv().await, Some(ScanEvent::Firmware { .. })) {
-                break;
+        crate::test_support::manual_time(async {
+            async fn pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+                assert!(
+                    std::future::poll_fn(|cx| std::task::Poll::Ready(
+                        future.as_mut().poll(cx).is_pending()
+                    ))
+                    .await
+                );
             }
-        }
-        control.store(false, std::sync::atomic::Ordering::Relaxed);
-        loop {
-            if matches!(rx.recv().await,Some(ScanEvent::FirmwareStatus(v)) if v["state"]=="paused")
+            let (mut writer, mut input) = tokio::io::duplex(8192);
+            let (tx, mut rx) = mpsc::channel(16);
+            let control = ScanControl::new(true);
+            let mut stats = Stats::default();
             {
-                break;
+                let mut reader =
+                    Box::pin(consume(&mut input, "fixture", &tx, &control, &mut stats));
+                writer.write_all(WIFI).await.unwrap();
+                pending(reader.as_mut()).await;
+                assert!(std::iter::from_fn(|| rx.try_recv().ok())
+                    .any(|event| matches!(event, ScanEvent::Firmware { .. })));
+                control.store(false, std::sync::atomic::Ordering::Relaxed);
+                pending(reader.as_mut()).await;
+                assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(
+                    |event| matches!(event, ScanEvent::FirmwareStatus(v) if v["state"]=="paused")
+                ));
+                writer.write_all(b"\n").await.unwrap();
+                writer.write_all(WIFI).await.unwrap();
+                // This poll consumes the complete paused input and returns only
+                // at the next empty read. Resume cannot overtake the discard.
+                pending(reader.as_mut()).await;
+                assert!(!std::iter::from_fn(|| rx.try_recv().ok())
+                    .any(|event| matches!(event, ScanEvent::Firmware { .. })));
+                control.store(true, std::sync::atomic::Ordering::Relaxed);
+                pending(reader.as_mut()).await;
+                assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(
+                    |event| matches!(event, ScanEvent::FirmwareStatus(v) if v["state"]=="resuming")
+                ));
+                writer.write_all(b"\n").await.unwrap();
+                writer.write_all(WIFI).await.unwrap();
+                pending(reader.as_mut()).await;
+                let generation =
+                    std::iter::from_fn(|| rx.try_recv().ok()).find_map(|event| match event {
+                        ScanEvent::Firmware { generation, .. } => Some(generation),
+                        _ => None,
+                    });
+                assert_eq!(generation, Some(2));
+                control.shutdown();
+                reader.await.unwrap();
             }
-        }
-        writer.write_all(b"\n").await.unwrap();
-        writer.write_all(WIFI).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        control.store(true, std::sync::atomic::Ordering::Relaxed);
-        loop {
-            if matches!(rx.recv().await,Some(ScanEvent::FirmwareStatus(v)) if v["state"]=="resuming")
-            {
-                break;
-            }
-        }
-        writer.write_all(b"\n").await.unwrap();
-        writer.write_all(WIFI).await.unwrap();
-        loop {
-            if let Some(ScanEvent::Firmware { generation, .. }) = rx.recv().await {
-                assert_eq!(generation, 2);
-                break;
-            }
-        }
-        control.shutdown();
-        let (s, r) = task.await.unwrap();
-        assert!(r.is_ok());
-        assert_eq!(s.paused_discarded, 1);
-        assert_eq!(s.host_drops, 0);
+            assert_eq!(stats.paused_discarded, 1);
+            assert_eq!(stats.host_drops, 0);
+        })
+        .await;
     }
 }
