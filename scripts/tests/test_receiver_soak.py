@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
+import selectors
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -12,10 +14,17 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location('receiver_soak', Path(__file__).parents[1] / 'receiver-soak.py')
 soak = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(soak)
+SUPPORT_SPEC=importlib.util.spec_from_file_location('process_support',Path(__file__).parents[1]/'test-process-support.py')
+support=importlib.util.module_from_spec(SUPPORT_SPEC)
+SUPPORT_SPEC.loader.exec_module(support)
 
 CHILD = r'''
-import json, os, select, signal, sys, time
+import json, os, select, signal, sys
 mode = sys.argv[1]
+ready_path = sys.argv[2]
+wake_read,wake_write=os.pipe()
+os.set_blocking(wake_write,False)
+signal.set_wakeup_fd(wake_write)
 state = 'running'
 running = True
 counters = {key: 0 for key in ('dropped_observations', 'transfers', 'frames', 'beacons', 'malformed_transfers', 'reconnect_attempts')}
@@ -32,11 +41,13 @@ if mode == 'early':
 if mode == 'noisy':
     os.write(2, b'x' * 20000)
 while running:
-    if select.select([sys.stdin], [], [], .01)[0]:
+    if sys.stdin in select.select([sys.stdin,wake_read], [], [])[0]:
         line = sys.stdin.readline()
         if not line:
             break
         cmd = json.loads(line)
+        with open(ready_path,'w') as ready:
+            ready.write(json.dumps({'request_id':cmd['request_id']})+'\n');ready.flush()
         if mode == 'missing_ack':
             continue
         if cmd['cmd'] == 'pause':
@@ -50,6 +61,88 @@ if mode == 'final_drop':
     counters['dropped_observations'] = 1
 emit(dict(counters, type='stopped', cleanup_verified=mode != 'bad_cleanup'))
 '''
+
+
+class ControlledReceiverSchedule:
+    """Manual time advances only between witnessed protocol operations.
+
+    Child readiness, command receipt, ACK bytes and terminal exit remain actual
+    pipe/process events. The clock never races a not-yet-started interpreter.
+    """
+    def __init__(self,args,mode,ready):
+        self.args,self.mode,self.ready=args,mode,ready
+        self.now=0.0
+        self.protocol=None
+        self.process=None
+        self.stopping=None
+        self.timeout_boundaries=[]
+        self.selector=selectors.DefaultSelector()
+
+    def spawn(self,*args,**kwargs):
+        process=subprocess.Popen(*args,**kwargs)
+        self.process=process
+        original_signal=process.send_signal
+        original_poll=process.poll
+        def send_signal(sig):
+            self.stopping=self.now
+            return original_signal(sig)
+        def poll():
+            # Early-exit and pipe-closure are observable terminal contracts,
+            # rather than assumptions about how quickly poll() changes.
+            if self.protocol.ready_at is not None and (self.mode=='early' or not self.selector.get_map()):
+                return process.wait(timeout=30)
+            return original_poll()
+        process.send_signal=send_signal
+        process.poll=poll
+        return process
+
+    def register(self,*args): return self.selector.register(*args)
+    def unregister(self,*args): return self.selector.unregister(*args)
+    def get_map(self): return self.selector.get_map()
+    def close(self): self.selector.close()
+
+    def select(self,timeout):
+        protocol=self.protocol
+        if self.stopping is not None:
+            if self.mode=='ignore_term' and self.process.returncode is None:
+                offset=(-0.001,0.0,0.001)[len(self.timeout_boundaries)]
+                self.timeout_boundaries.append(offset)
+                self.now=self.stopping+self.args.shutdown_timeout+offset
+                return self.selector.select(0)
+            return self.event()
+        if protocol.ready_at is None:
+            return self.event()
+        if protocol.pending:
+            if self.mode=='missing_ack':
+                # command() already witnessed the child receive this exact ID.
+                offset=(-0.001,0.0,0.001)[len(self.timeout_boundaries)]
+                self.timeout_boundaries.append(offset)
+                self.now=protocol.pending['deadline']+offset
+                return self.selector.select(0)
+            return self.event()
+        # No child operation is in flight. Advance the explicit sampling timer;
+        # ACK and lifecycle paths above never advance time while awaiting IO.
+        self.now+=self.args.sample_seconds
+        return self.selector.select(0)
+
+    def event(self):
+        if not self.selector.get_map():
+            return []
+        events=self.selector.select(30)  # Outer hang guard, not correctness time.
+        if not events and self.selector.get_map():
+            raise AssertionError('Synthetic receiver failed to produce its causal event')
+        return events
+
+    def protocol_type(self):
+        schedule=self
+        class TestProtocol(soak.Protocol):
+            def __init__(self):
+                super().__init__()
+                schedule.protocol=self
+            def command(self,process,cmd,now,timeout):
+                super().command(process,cmd,now,timeout)
+                assert schedule.ready.receive()=={'request_id':self.pending['id']}
+        return TestProtocol
 
 
 class SoakTests(unittest.TestCase):
@@ -66,10 +159,26 @@ class SoakTests(unittest.TestCase):
             args = self.args(root / 'run')
             for key, value in changes.items():
                 setattr(args, key, value)
-            with patch.object(soak, 'sample_resources', return_value={'rss_bytes': 4096, 'cpu_seconds': 0, 'fds': 3}):
-                report = soak.run(args, [sys.executable, '-u', '-c', CHILD, mode])
+            ready=support.ReadyPipe(root)
+            self.addCleanup(ready.close)
+            schedule=ControlledReceiverSchedule(args,mode,ready)
+            def cleanup():
+                if schedule.process is not None:
+                    if schedule.process.returncode is None: schedule.process.kill()
+                    schedule.process.wait(timeout=30)
+            self.addCleanup(cleanup)
+            process_module=SimpleNamespace(**{**vars(subprocess),'Popen':schedule.spawn})
+            with patch.object(soak, 'sample_resources', return_value={'rss_bytes': 4096, 'cpu_seconds': 0, 'fds': 3}), \
+                 patch.object(soak,'time',SimpleNamespace(monotonic=lambda:schedule.now)), \
+                 patch.object(soak,'selectors',SimpleNamespace(DefaultSelector=lambda:schedule,EVENT_READ=selectors.EVENT_READ)), \
+                 patch.object(soak,'Protocol',schedule.protocol_type()), \
+                 patch.object(soak,'subprocess',process_module):
+                report = soak.run(args, [sys.executable, '-u', '-c', CHILD, mode,str(ready.path)])
             stored = json.loads((args.output / 'summary.json').read_text())
             self.assertEqual(report, stored)
+            if mode in ('missing_ack','ignore_term'):
+                self.assertEqual(schedule.timeout_boundaries,[-0.001,0.0,0.001],
+                                 'Timeout must occur after, not before or at, the explicit boundary')
             if os.name == 'posix':
                 self.assertEqual(args.output.stat().st_mode & 0o777, 0o700)
                 for path in args.output.iterdir():
