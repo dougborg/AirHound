@@ -55,7 +55,7 @@ board-host = []
 
 # Board-level features (constants + firmware deps)
 xiao = ["board-xiao", "esp32s3"]
-m5stickc = ["board-m5stickc", "esp32", "esp-hal/psram", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus", "esp-backtrace/custom-pre-backtrace"]
+m5stickc = ["dep:embedded-io", "board-m5stickc", "esp32", "esp-hal/psram", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus", "esp-backtrace/custom-pre-backtrace"]
 
 [dependencies]
 # ── Always available (host + firmware) ────────────────────────────────
@@ -106,6 +106,8 @@ esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", branch
 
 # BLE host stack — 0.6.0 now compatible with bt-hci 0.8 from esp-radio main
 bt-hci = { version = "~0.8.0", optional = true }
+# ErrorType for the M5-only cooperative HCI transport; already locked transitively.
+embedded-io = { version = "~0.7.1", optional = true }
 trouble-host = { version = "~0.6.0", features = [
     "peripheral", "central", "scan", "gatt", "derive",
     "default-packet-pool", "default-packet-pool-mtu-255", "log",
@@ -127,6 +129,7 @@ embedded-hal-bus = { version = "~0.3.0", optional = true }
 embedded-graphics = "~0.8.1"
 # Exercise the same encoded controller command on a host without ESP dependencies.
 bt-hci = "~0.8.0"
+embedded-io = "~0.7.1"
 # Exercise the real cooperative health publisher and bounded channel on host.
 embassy-futures = "~0.1.1"
 embassy-sync = "~0.7.0"

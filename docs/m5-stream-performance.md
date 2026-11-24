@@ -42,6 +42,28 @@ gate; this is not a runtime high-water measurement.
 UART configuration is applied once at 460800 baud. XIAO and ESP-IDF console
 rates remain unchanged. Flash/boot-ROM traffic remains 115200.
 
+## Cooperative M5 HCI receive candidate
+
+The M5-only HCI transport yields once before each packet read. The underlying
+connector can return queued packets immediately; the BLE host runner otherwise
+may consume an entire backlog in one executor poll. This can fill the shared
+20-slot parsed-event queue before its filter consumer runs and delay UART work.
+The new boundary gives other ready tasks an opportunity between packets without
+adding a timer, packet copy, scan-duty change, duplicate filtering, or UART-budget
+change. Cancellation at that boundary has not consumed the next packet. Command
+writes and XIAO transport behavior are unchanged.
+
+This is a source scheduling correction, not proof of the cause of an observed
+23,006-microsecond poll gap or hardware acceptance. One HCI event can contain
+multiple reports delivered by a synchronous callback; a single large batch can
+still exceed queue capacity. WiFi callbacks remain nonblocking, and sustained
+input above processing capacity can still drop events. Scan admission losses are
+separate from serialized-output loss and unknown RF loss. Existing thresholds
+and historical failed receipts remain unchanged. Portable tests cover the actual
+transport wrapper and packet decoding with a bounded queue, including the
+remaining single-packet burst limit. Exact target memory and live behavior must
+be checked independently.
+
 ## Bounded M5 UART output candidate (#320)
 
 An observed controller assertion in `lld_evt.c` stopped firmware while the host
