@@ -34,30 +34,6 @@ struct CommandProbe {
     consumed: oneshot::Sender<()>,
     timer: crate::test_support::TimerWitness,
 }
-#[cfg(test)]
-struct ReadWitness<R> {
-    inner: R,
-    consumed: Option<oneshot::Sender<()>>,
-}
-#[cfg(test)]
-impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for ReadWitness<R> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        let before = buf.filled().len();
-        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
-        if matches!(result, std::task::Poll::Ready(Ok(())))
-            && buf.filled()[before..].contains(&b'\n')
-        {
-            if let Some(witness) = self.consumed.take() {
-                let _ = witness.send(());
-            }
-        }
-        result
-    }
-}
 async fn command(config: &RayhunterAdb, args: &[&str], end: Instant) -> io::Result<Reply> {
     command_inner(
         config,
@@ -104,7 +80,7 @@ async fn command_inner(
         None => (None, None),
     };
     #[cfg(test)]
-    let mut stdout = ReadWitness {
+    let mut stdout = crate::test_support::ReadWitness {
         inner: stdout,
         consumed,
     };

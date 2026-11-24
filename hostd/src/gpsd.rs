@@ -60,6 +60,8 @@ struct Tracker {
     updates: Option<Arc<tokio::sync::Notify>>,
     #[cfg(test)]
     retry: Option<crate::test_support::TimerWitness>,
+    #[cfg(test)]
+    managed: Option<managed::TestHooks>,
 }
 impl Source {
     pub fn new(device: Option<String>) -> Self {
@@ -76,6 +78,8 @@ impl Source {
             updates: None,
             #[cfg(test)]
             retry: None,
+            #[cfg(test)]
+            managed: None,
         })))
     }
     fn now(&self) -> (DateTime<Utc>, Instant) {
@@ -142,6 +146,10 @@ impl Source {
         state.daemon = None;
         // Keep device binding and last fix time across reconnect: never switch
         // sources or refresh a replayed cached fix just because TCP restarted.
+        #[cfg(test)]
+        if let Some(updates) = &state.updates {
+            updates.notify_one();
+        }
     }
     fn line(&self, bytes: &[u8], now: DateTime<Utc>, received: Instant) -> io::Result<()> {
         let result = self.accept_line(bytes, now, received);
@@ -394,7 +402,7 @@ pub(crate) mod tests {
             .unwrap()
             .with_timezone(&Utc)
     }
-    fn controlled_source(device: Option<String>) -> Source {
+    pub(super) fn controlled_source(device: Option<String>) -> Source {
         let source = Source::new(device);
         // This instant is an opaque origin; tests advance their local pair
         // explicitly, never infer freshness from execution speed.

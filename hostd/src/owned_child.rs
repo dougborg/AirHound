@@ -44,13 +44,19 @@ impl OwnedChild {
         })
     }
 
-    pub async fn finish(mut self) -> io::Result<ExitStatus> {
-        self.stop.take();
-        self.worker
-            .take()
+    pub async fn wait(&mut self) -> io::Result<ExitStatus> {
+        let result = self
+            .worker
+            .as_mut()
             .expect("supervisor consumed once")
             .await
-            .map_err(|_| io::Error::other("child supervisor failed"))?
+            .map_err(|_| io::Error::other("child supervisor failed"))?;
+        self.worker.take();
+        result
+    }
+    pub async fn finish(mut self) -> io::Result<ExitStatus> {
+        self.stop.take();
+        self.wait().await
     }
 }
 

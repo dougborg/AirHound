@@ -7,6 +7,18 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 use tokio::sync::watch;
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct TestHooks {
+    listener: std::sync::Arc<tokio::net::UnixListener>,
+    controls: tokio::sync::mpsc::Sender<tokio::io::BufReader<tokio::net::UnixStream>>,
+}
+#[cfg(test)]
+struct ProbeWitness {
+    consumed: tokio::sync::oneshot::Sender<()>,
+    timer: crate::test_support::TimerWitness,
+    reaped: crate::owned_child::Reaped,
+}
 
 fn command(executable: &Path, device: &str, port: u16) -> Command {
     let mut command = Command::new(executable);
@@ -39,7 +51,13 @@ async fn owns_listener(pid: u32, port: u16, probe_timeout: Duration) -> io::Resu
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let output = ownership_output(command.output(), probe_timeout).await?;
+    let output = ownership_output(
+        command,
+        probe_timeout,
+        #[cfg(test)]
+        None,
+    )
+    .await?;
     let owns = output.stdout.len() <= 16_384
         && String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -57,17 +75,66 @@ async fn owns_listener(pid: u32, port: u16, probe_timeout: Duration) -> io::Resu
 // Keep the same owned-child timeout/drop path for production and fixture probes.
 #[cfg(target_os = "macos")]
 async fn ownership_output(
-    output: impl std::future::Future<Output = io::Result<std::process::Output>>,
+    mut command: Command,
     probe_timeout: Duration,
+    #[cfg(test)] witness: Option<ProbeWitness>,
 ) -> io::Result<std::process::Output> {
-    tokio::time::timeout(probe_timeout, output)
-        .await
-        .map_err(|_| {
-            io::Error::new(
+    use tokio::io::AsyncReadExt;
+    command.stdout(Stdio::piped()).kill_on_drop(true);
+    #[cfg(test)]
+    let (consumed, timer, reaped) = match witness {
+        Some(witness) => (
+            Some(witness.consumed),
+            Some(witness.timer),
+            Some(witness.reaped),
+        ),
+        None => (None, None, None),
+    };
+    let mut child = crate::owned_child::OwnedChild::new(
+        command.spawn()?,
+        #[cfg(test)]
+        reaped,
+    )?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("ownership probe stdout absent"))?;
+    #[cfg(not(test))]
+    let mut stdout = stdout;
+    #[cfg(test)]
+    let mut stdout = crate::test_support::ReadWitness {
+        inner: stdout,
+        consumed,
+    };
+    let deadline = tokio::time::Instant::now() + probe_timeout;
+    let waiting = tokio::time::timeout_at(deadline, async {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).await?;
+        let status = child.wait().await?;
+        Ok::<_, io::Error>(std::process::Output {
+            status,
+            stdout: output,
+            stderr: Vec::new(),
+        })
+    });
+    #[cfg(test)]
+    let waiting = async {
+        if let Some(timer) = timer {
+            timer.observe(deadline, waiting, Result::is_err).await
+        } else {
+            waiting.await
+        }
+    };
+    match waiting.await {
+        Ok(result) => result,
+        Err(_) => {
+            child.finish().await?;
+            Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "gpsd listener ownership check timed out",
-            )
-        })?
+            ))
+        }
+    }
 }
 #[cfg(target_os = "linux")]
 async fn owns_listener(pid: u32, port: u16, _probe_timeout: Duration) -> io::Result<bool> {
@@ -114,7 +181,53 @@ async fn stop(child: &mut Child) {
     }
 }
 
-async fn ready(child: &mut Child, port: u16, probe_timeout: Duration) -> io::Result<()> {
+async fn ready(
+    child: &mut Child,
+    port: u16,
+    probe_timeout: Duration,
+    #[cfg(test)] source: &Source,
+) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        use tokio::io::AsyncBufReadExt;
+        let hooks = source.0.lock().unwrap().managed.clone();
+        if let Some(hooks) = hooks {
+            let pid = child
+                .id()
+                .ok_or_else(|| io::Error::other("fixture child exited"))?;
+            let readiness = async {
+                let (socket, _) = hooks.listener.accept().await?;
+                let mut reader = tokio::io::BufReader::new(socket);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).await? == 0 {
+                        return Err(io::Error::other("fixture exited before listener readiness"));
+                    }
+                    let event: serde_json::Value = serde_json::from_str(&line)?;
+                    if event["pid"].as_u64() != Some(u64::from(pid)) {
+                        return Err(io::Error::other(
+                            "fixture readiness belongs to another child",
+                        ));
+                    }
+                    if event["stage"] == "listening" {
+                        break;
+                    }
+                }
+                hooks
+                    .controls
+                    .send(reader)
+                    .await
+                    .map_err(|_| io::Error::other("fixture control owner closed"))
+            };
+            tokio::select! {
+                result = readiness => result?,
+                status = child.wait() => {
+                    status?;
+                    return Err(io::Error::other("fixture exited before listener readiness"));
+                }
+            }
+        }
+    }
     for _ in 0..30 {
         if child.try_wait()?.is_some() {
             return Err(io::Error::other("managed gpsd exited during startup"));
@@ -229,7 +342,7 @@ async fn run_with_probe_timeout(
             }
         };
         let started = tokio::select! {
-            result = ready(&mut child, endpoint.port(), probe_timeout) => result,
+            result = ready(&mut child, endpoint.port(), probe_timeout, #[cfg(test)] &source) => result,
             _ = async { loop { if state.changed().await.is_err() || state.borrow().shutdown { break; } } } => {
                 stop(&mut child).await; source.disconnected("stopped"); return;
             }
@@ -255,8 +368,18 @@ async fn run_with_probe_timeout(
         // Reap/stop before releasing the serial lease or starting another child.
         stop(&mut child).await;
         source.disconnected("managed_child_exited");
+        let retry = tokio::time::sleep(Duration::from_secs(2));
+        #[cfg(test)]
+        let retry = async {
+            let witness = source.0.lock().unwrap().retry.clone();
+            if let Some(witness) = witness {
+                witness.observe(retry.deadline(), retry, |_| true).await;
+            } else {
+                retry.await;
+            }
+        };
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(2)) => (),
+            _ = retry => (),
             _ = async { loop { if state.changed().await.is_err() || state.borrow().shutdown { break; } } } => {
                 source.disconnected("stopped"); return;
             }
@@ -271,87 +394,103 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    struct Fixture(std::path::PathBuf);
+    struct Fixture {
+        root: std::path::PathBuf,
+        hooks: TestHooks,
+        controls: tokio::sync::Mutex<
+            tokio::sync::mpsc::Receiver<tokio::io::BufReader<tokio::net::UnixStream>>,
+        >,
+        retry: crate::test_support::TimerWitness,
+        retry_events: tokio::sync::Mutex<
+            tokio::sync::mpsc::UnboundedReceiver<crate::test_support::TimerEvent>,
+        >,
+    }
     impl Fixture {
-        async fn new(exit: bool) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "ah-gpsd-test-{}-{}-{}",
+        async fn new() -> Self {
+            let root = std::path::PathBuf::from("/tmp").join(format!(
+                "ah-gpsd-test-{}-{}",
                 std::process::id(),
                 NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
             ));
             std::fs::create_dir(&root).unwrap();
-            // Resolve and initialize the test interpreter before measuring the
-            // native daemon's production readiness budget. On macOS /usr/bin/python3
-            // is an Xcode launcher, not necessarily the interpreter used by CI.
-            let began = std::time::Instant::now();
-            let output = tokio::time::timeout(
-                Duration::from_secs(10),
-                Command::new("python3")
-                    .args([
-                        "-I",
-                        "-c",
-                        "import sys,socket,json,datetime,pathlib; print(json.dumps({'executable':sys.executable,'version':sys.version}))",
-                    ])
-                    .stdin(Stdio::null())
-                    .kill_on_drop(true)
-                    .output(),
-            )
-            .await
-            .expect("fixture Python initialization exceeded 10 seconds")
-            .expect("fixture requires a working python3 on PATH");
-            assert!(output.status.success(), "fixture Python failed: {output:?}");
+            let listener =
+                std::sync::Arc::new(tokio::net::UnixListener::bind(root.join("events")).unwrap());
+            let (controls, received) = tokio::sync::mpsc::channel(8);
+            let (retry, retry_events) = crate::test_support::TimerWitness::channel();
+            let output = Command::new("python3").args([
+                "-I", "-c", "import sys,json; print(json.dumps({'executable':sys.executable,'version':sys.version}))",
+            ]).stdin(Stdio::null()).kill_on_drop(true).output().await.unwrap();
+            assert!(output.status.success());
             let interpreter: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
             let executable = interpreter["executable"].as_str().unwrap();
             assert!(Path::new(executable).is_absolute());
-            assert!(
-                !executable.chars().any(char::is_whitespace),
-                "fixture interpreter path must fit an unambiguous shebang"
-            );
-            eprintln!(
-                "managed gpsd fixture interpreter {interpreter}; initialization {:?}",
-                began.elapsed()
-            );
-            std::fs::write(root.join("interpreter"), output.stdout.as_slice()).unwrap();
-            let script = format!(
-                r#"#!{executable} -I
-import sys,time,os
-root_path=os.path.dirname(__file__)
-sys.stderr=open(os.path.join(root_path,'stderr'),'a',buffering=1)
-def trace(stage):
-    with open(os.path.join(root_path,'trace'),'a') as f:
-        f.write(str(time.monotonic())+' '+stage+' pid='+str(os.getpid())+' executable='+sys.executable+'\n')
-trace('python_entered')
-import socket,json,datetime
+            assert!(!executable.chars().any(char::is_whitespace));
+            std::fs::write(root.join("interpreter"), &output.stdout).unwrap();
+            let body = r#"import sys,os,socket,json,signal
 from pathlib import Path
+from datetime import datetime,timedelta,timezone
 root=Path(__file__).parent
-trace('imports_complete')
-with (root/'args').open('a') as f: f.write(json.dumps(sys.argv[1:])+'\n')
-with (root/'pids').open('a') as f: f.write(str(os.getpid())+'\n')
-s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+sys.stderr=open(root/'stderr','a',buffering=1)
+events=socket.socket(socket.AF_UNIX);events.connect(str(root/'events'))
+def trace(stage):
+ with (root/'trace').open('a') as f:f.write(stage+' pid='+str(os.getpid())+'\n')
+ events.sendall((json.dumps({'pid':os.getpid(),'stage':stage})+'\n').encode())
+trace('python_entered')
+with (root/'args').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\n')
+with (root/'pids').open('a') as f:f.write(str(os.getpid())+'\n')
+generation=len((root/'pids').read_text().splitlines())-1
+fix_time=(datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(seconds=generation)).isoformat()
+s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 trace('before_bind')
-s.bind(('127.0.0.1',int(sys.argv[sys.argv.index('-S')+1]))); s.listen()
+s.bind(('127.0.0.1',int(sys.argv[sys.argv.index('-S')+1])));s.listen()
 trace('listening')
-c,_=s.accept(); c.recv(4096)
-c.sendall((json.dumps({{'class':'VERSION','proto_major':16,'release':'fixture'}})+'\n').encode())
-c.sendall((json.dumps({{'class':'TPV','device':sys.argv[-1],'mode':3,'time':datetime.datetime.now(datetime.timezone.utc).isoformat(),'lat':10,'lon':20}})+'\n').encode())
-time.sleep({})
-"#,
-                if exit { "0.3" } else { "30" }
-            );
-            std::fs::write(root.join("gpsd"), script).unwrap();
+c,_=s.accept()
+watch=c.makefile('rb').readline(4097)
+assert watch==b'?WATCH={"enable":true,"json":true};\n',watch
+c.sendall((json.dumps({'class':'VERSION','proto_major':16,'release':'fixture'})+'\n').encode())
+c.sendall((json.dumps({'class':'TPV','device':sys.argv[-1],'mode':3,'time':fix_time,'lat':10,'lon':20})+'\n').encode())
+commands=events.makefile('r')
+command=commands.readline().strip()
+if command=='exit':
+ c.close();sys.exit(0)
+assert command=='release_listener',command
+s.close();trace('listener_released')
+assert commands.readline().strip()=='release_stream'
+c.close();signal.pause()
+"#;
+            std::fs::write(root.join("gpsd"), format!("#!{executable} -I\n{body}")).unwrap();
             std::fs::set_permissions(root.join("gpsd"), std::fs::Permissions::from_mode(0o700))
                 .unwrap();
-            Self(root)
+            Self {
+                root,
+                hooks: TestHooks { listener, controls },
+                controls: tokio::sync::Mutex::new(received),
+                retry,
+                retry_events: tokio::sync::Mutex::new(retry_events),
+            }
+        }
+        fn source(&self) -> Source {
+            let source = super::super::tests::controlled_source(Some("/dev/null".into()));
+            {
+                let mut state = source.0.lock().unwrap();
+                state.updates = Some(std::sync::Arc::new(tokio::sync::Notify::new()));
+                state.managed = Some(self.hooks.clone());
+                state.retry = Some(self.retry.clone());
+            }
+            source
+        }
+        async fn child_control(&self) -> tokio::io::BufReader<tokio::net::UnixStream> {
+            self.controls.lock().await.recv().await.unwrap()
+        }
+        async fn advance_retry(&self) {
+            crate::test_support::advance_registered_timer(&mut *self.retry_events.lock().await)
+                .await;
         }
         fn options(&self, port: u16, device: &str) -> Options {
             Options {
                 endpoint: format!("127.0.0.1:{port}"),
                 device: Some(device.into()),
-                managed_executable: Some(self.0.join("gpsd")),
+                managed_executable: Some(self.root.join("gpsd")),
             }
         }
     }
@@ -359,12 +498,12 @@ time.sleep({})
         fn drop(&mut self) {
             if std::thread::panicking() {
                 for name in ["args", "pids", "stderr"] {
-                    if let Ok(text) = std::fs::read_to_string(self.0.join(name)) {
+                    if let Ok(text) = std::fs::read_to_string(self.root.join(name)) {
                         eprintln!("managed gpsd fixture {name}: {text}");
                     }
                 }
             }
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_dir_all(&self.root);
         }
     }
     fn port() -> u16 {
@@ -392,7 +531,7 @@ time.sleep({})
         for attempt in 1..=3 {
             let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let port = reservation.local_addr().unwrap().port();
-            let source = Source::new(Some("/dev/null".into()));
+            let source = fixture.source();
             let control = crate::control::ScanControl::new(true);
             let options = fixture.options(port, "/dev/null");
             let owned_source = source.clone();
@@ -407,18 +546,17 @@ time.sleep({})
                 run_with_probe_timeout(options, owned_source, state, Duration::from_secs(10)).await;
                 drop(conflict);
             });
-            let outcome = tokio::time::timeout(Duration::from_secs(12), async {
-                loop {
-                    if task.is_finished() {
-                        return false;
-                    }
-                    if source.health()["state"] == "fix" {
-                        return true;
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+            let updates = source.0.lock().unwrap().updates.clone().unwrap();
+            let mut joined_early = false;
+            let outcome: Result<bool, ()> = Ok(loop {
+                if source.health()["state"] == "fix" {
+                    break true;
                 }
-            })
-            .await;
+                tokio::select! {
+                    _ = updates.notified() => {},
+                    result = &mut task => { result.unwrap(); joined_early = true; break false; },
+                }
+            });
             if matches!(outcome, Ok(true)) {
                 return Ok(Started {
                     port,
@@ -432,15 +570,10 @@ time.sleep({})
                 && source.health()["state"] == "managed_endpoint_busy"
                 && ["args", "pids", "trace"]
                     .iter()
-                    .all(|name| !fixture.0.join(name).exists());
+                    .all(|name| !fixture.root.join(name).exists());
             control.shutdown();
-            let joined = tokio::time::timeout(Duration::from_secs(4), &mut task).await;
-            if joined.is_err() {
-                task.abort();
-                let _ = task.await;
-                return Err(format!("attempt {attempt}: fixture task failed to stop"));
-            }
-            if !matches!(joined, Ok(Ok(()))) || !pre_spawn_busy || attempt == 3 {
+            let joined = if joined_early { Ok(()) } else { task.await };
+            if joined.is_err() || !pre_spawn_busy || attempt == 3 {
                 return Err(format!(
                     "attempt {attempt}: expected fix, got {}; pre-spawn busy={pre_spawn_busy}",
                     source.health()
@@ -450,261 +583,279 @@ time.sleep({})
         unreachable!()
     }
 
-    async fn until(source: &Source, expected: &str, fixture: &Fixture) {
-        tokio::time::timeout(Duration::from_secs(12), async {
-            while source.health()["state"] != expected {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+    async fn until(source: &Source, expected: &str, _fixture: &Fixture) {
+        let updates = source.0.lock().unwrap().updates.clone().unwrap();
+        while source.health()["state"] != expected {
+            updates.notified().await;
+        }
+    }
+    async fn send_control(
+        reader: &mut tokio::io::BufReader<tokio::net::UnixStream>,
+        command: &str,
+    ) {
+        use tokio::io::AsyncWriteExt;
+        reader
+            .get_mut()
+            .write_all(format!("{command}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+    async fn control_event(
+        reader: &mut tokio::io::BufReader<tokio::net::UnixStream>,
+        expected: &str,
+    ) {
+        use tokio::io::AsyncBufReadExt;
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).await.unwrap(), 0);
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(event["stage"], expected);
+    }
+    #[tokio::test]
+    async fn readiness_observes_exit_before_fixture_connection() {
+        crate::test_support::manual_time(async {
+            let fixture = Fixture::new().await;
+            let source = fixture.source();
+            let mut child = Command::new("python3")
+                .args(["-c", "raise SystemExit(2)"])
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let pid = child.id().unwrap();
+            let error = ready(&mut child, port(), Duration::from_secs(1), &source)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("before listener readiness"));
+            assert_eq!(child.wait().await.unwrap().code(), Some(2));
+            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
         })
-        .await
-        .unwrap_or_else(|_| {
-            let files: Vec<_> = ["interpreter", "args", "pids", "stderr", "trace"]
-                .into_iter()
-                .map(|name| (name, std::fs::read_to_string(fixture.0.join(name))))
-                .collect();
-            panic!(
-                "expected {expected}, got {}; fixture evidence: {files:?}",
-                source.health()
-            );
-        });
+        .await;
     }
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn ownership_probe_timeout_refuses_and_reaps_its_child() {
-        // Spawn first so interpreter/scheduler startup cannot be confused with
-        // the deliberately short probe-output deadline. wait_with_output uses
-        // the same Child ownership/drop path as Command::output in production.
-        let child = Command::new("/bin/sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let pid = child.id().unwrap() as libc::pid_t;
-        let began = std::time::Instant::now();
-        let error = ownership_output(child.wait_with_output(), Duration::from_millis(50))
-            .await
-            .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        // Tokio's kill-on-drop path reaps asynchronously. Do not reap the child
-        // from this test: ESRCH establishes that the runtime already did so.
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if unsafe { libc::kill(pid, 0) } == -1 {
-                    assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        crate::test_support::manual_time(async {
+            let mut command = Command::new("python3");
+            command
+                .args([
+                    "-c",
+                    "import os,signal;print(os.getpid(),flush=True);signal.pause()",
+                ])
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true);
+            let (consumed, seen) = tokio::sync::oneshot::channel();
+            let (timer, mut timers) = crate::test_support::TimerWitness::channel();
+            let (reaped, mut completions) = tokio::sync::mpsc::channel(1);
+            let task = tokio::spawn(ownership_output(
+                command,
+                Duration::from_secs(1),
+                Some(ProbeWitness {
+                    consumed,
+                    timer,
+                    reaped,
+                }),
+            ));
+            seen.await.unwrap();
+            crate::test_support::advance_registered_timer(&mut timers).await;
+            let error = task.await.unwrap().unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            let (pid, confirmed) = completions.recv().await.unwrap();
+            assert!(confirmed);
+            assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
         })
-        .await
-        .expect("timed-out probe child must be killed and reaped");
-        assert!(began.elapsed() < Duration::from_secs(6));
-        assert_eq!(
-            unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
-            -1
-        );
-        assert_eq!(
-            io::Error::last_os_error().raw_os_error(),
-            Some(libc::ECHILD)
-        );
+        .await;
     }
 
     // One test serializes /dev/null leases; no real serial device is opened.
     #[tokio::test]
     async fn owned_helper_lifecycle_refuses_conflicts_and_clears_fixes() {
-        let _ = env_logger::Builder::new()
-            .filter_level(log::LevelFilter::Warn)
-            .is_test(true)
-            .try_init();
-        let fixture = Fixture::new(false).await;
-        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let control = crate::control::ScanControl::new(true);
-        let source = Source::new(Some("/dev/null".into()));
-        run(
-            fixture.options(occupied.local_addr().unwrap().port(), "/dev/null"),
-            source.clone(),
-            control.subscribe(),
-        )
-        .await;
-        assert_eq!(source.health()["state"], "managed_endpoint_busy");
-        assert!(!fixture.0.join("args").exists());
-        assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
-        let held = lease("/dev/null").unwrap();
-        run(
-            fixture.options(port(), "/dev/null"),
-            source.clone(),
-            control.subscribe(),
-        )
-        .await;
-        assert_eq!(source.health()["state"], "managed_device_busy");
-        assert!(!fixture.0.join("args").exists());
-        drop(held);
-        let Started {
-            port: listen_port,
-            source,
-            control,
-            task,
-            ..
-        } = start_fixture(&fixture, 0).await.unwrap();
-        assert_eq!(source.health()["state"], "fix");
-        let args: serde_json::Value = serde_json::from_str(
-            std::fs::read_to_string(fixture.0.join("args"))
-                .unwrap()
-                .trim(),
-        )
-        .unwrap();
-        assert_eq!(
-            args,
-            serde_json::json!(["-N", "-b", "-n", "-S", listen_port.to_string(), "/dev/null"])
-        );
-        assert_eq!(source.health()["daemon"]["version"], "fixture");
-        assert!(source.health()["daemon"]["receiver_firmware_version"].is_null());
-        control.shutdown();
-        tokio::time::timeout(Duration::from_secs(4), task)
-            .await
-            .unwrap()
+        crate::test_support::manual_time(async {
+            let _ = env_logger::Builder::new()
+                .filter_level(log::LevelFilter::Warn)
+                .is_test(true)
+                .try_init();
+            let fixture = Fixture::new().await;
+            let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let control = crate::control::ScanControl::new(true);
+            let source = fixture.source();
+            run(
+                fixture.options(occupied.local_addr().unwrap().port(), "/dev/null"),
+                source.clone(),
+                control.subscribe(),
+            )
+            .await;
+            assert_eq!(source.health()["state"], "managed_endpoint_busy");
+            assert!(!fixture.root.join("args").exists());
+            assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
+            let held = lease("/dev/null").unwrap();
+            run(
+                fixture.options(port(), "/dev/null"),
+                source.clone(),
+                control.subscribe(),
+            )
+            .await;
+            assert_eq!(source.health()["state"], "managed_device_busy");
+            assert!(!fixture.root.join("args").exists());
+            drop(held);
+            let Started {
+                port: listen_port,
+                source,
+                control,
+                task,
+                ..
+            } = start_fixture(&fixture, 0).await.unwrap();
+            assert_eq!(source.health()["state"], "fix");
+            let args: serde_json::Value = serde_json::from_str(
+                std::fs::read_to_string(fixture.root.join("args"))
+                    .unwrap()
+                    .trim(),
+            )
             .unwrap();
-        assert!(source.location().is_none());
-        assert_eq!(source.health()["state"], "stopped");
-        assert!(
-            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, listen_port)).is_err()
-        );
-        assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
-
-        let fixture = Fixture::new(false).await;
-        // Keep the established stream alive until the replacement listener is
-        // bound. Closing it first lets the supervisor reap this child before it
-        // writes its marker, or restart before the test can claim the endpoint.
-        let takeover = r#"s.close()
-(root/'listener_released').write_text('yes')
-deadline=time.monotonic()+5
-while not (root/'release_stream').exists():
-    if time.monotonic() >= deadline: raise TimeoutError('test did not bind replacement')
-    time.sleep(0.01)
-c.close()
-time.sleep(30)"#;
-        let script = std::fs::read_to_string(fixture.0.join("gpsd"))
-            .unwrap()
-            .replace("time.sleep(30)", takeover);
-        std::fs::write(fixture.0.join("gpsd"), script).unwrap();
-        let Started {
-            port: listen_port,
-            source,
-            control: _takeover_control,
-            task,
-            ..
-        } = start_fixture(&fixture, 0).await.unwrap();
-        assert_eq!(source.health()["state"], "fix");
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while !fixture.0.join("listener_released").exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let replacement =
-            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, listen_port))
-                .await
-                .unwrap();
-        std::fs::write(fixture.0.join("release_stream"), "yes").unwrap();
-        tokio::time::timeout(Duration::from_secs(5), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(source.health()["state"], "managed_endpoint_busy");
-        assert!(source.location().is_none());
-        assert!(source.health()["daemon"].is_null());
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), replacement.accept())
-                .await
-                .is_err(),
-            "replacement daemon must receive no connection or WATCH"
-        );
-        drop(replacement);
-
-        let fixture = Fixture::new(true).await;
-        let Started {
-            source,
-            control: _control,
-            task,
-            ..
-        } = start_fixture(&fixture, 0).await.unwrap();
-        assert_eq!(source.health()["state"], "fix");
-        until(&source, "managed_child_exited", &fixture).await;
-        assert!(source.location().is_none());
-        assert!(source.health()["daemon"].is_null());
-        tokio::time::timeout(Duration::from_secs(12), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(source.health()["state"], "managed_restart_limit_reached");
-        assert_eq!(
-            std::fs::read_to_string(fixture.0.join("args"))
-                .unwrap()
-                .lines()
-                .count(),
-            3
-        );
-        for pid in std::fs::read_to_string(fixture.0.join("pids"))
-            .unwrap()
-            .lines()
-        {
-            assert_eq!(unsafe { libc::kill(pid.parse::<i32>().unwrap(), 0) }, -1);
-        }
-
-        // A competing listener before spawn is the only retryable precondition.
-        let fixture = Fixture::new(false).await;
-        let started = start_fixture(&fixture, 1).await.unwrap();
-        assert_eq!(started.attempts, 2);
-        assert_eq!(started.source.health()["state"], "fix");
-        assert_eq!(
-            std::fs::read_to_string(fixture.0.join("pids"))
-                .unwrap()
-                .lines()
-                .count(),
-            1
-        );
-        started.control.shutdown();
-        tokio::time::timeout(Duration::from_secs(4), started.task)
-            .await
-            .unwrap()
-            .unwrap();
-        // Real helper evidence from the preceding run prevents a blind retry,
-        // even when a subsequent attempt returns endpoint busy before spawning.
-        let error = start_fixture(&fixture, 1)
-            .await
-            .err()
-            .expect("started helper must not retry");
-        assert!(error.contains("attempt 1:") && error.contains("pre-spawn busy=false"));
-        let fixture = Fixture::new(false).await;
-        let error = start_fixture(&fixture, 3)
-            .await
-            .err()
-            .expect("three conflicts must fail");
-        assert!(error.contains("attempt 3:") && error.contains("pre-spawn busy=true"));
-        assert!(!fixture.0.join("args").exists());
-        let fixture = Fixture::new(false).await;
-        let script = std::fs::read_to_string(fixture.0.join("gpsd"))
-            .unwrap()
-            .replace(
-                "trace('before_bind')",
-                "raise SystemExit(2)\ntrace('before_bind')",
+            assert_eq!(
+                args,
+                serde_json::json!(["-N", "-b", "-n", "-S", listen_port.to_string(), "/dev/null"])
             );
-        std::fs::write(fixture.0.join("gpsd"), script).unwrap();
-        let error = start_fixture(&fixture, 0)
-            .await
-            .err()
-            .expect("helper startup failure must not retry");
-        assert!(error.contains("attempt 1:") && error.contains("managed_start_failed"));
-        assert_eq!(
-            std::fs::read_to_string(fixture.0.join("pids"))
+            assert_eq!(source.health()["daemon"]["version"], "fixture");
+            assert!(source.health()["daemon"]["receiver_firmware_version"].is_null());
+            control.shutdown();
+            task.await.unwrap();
+            assert!(source.location().is_none());
+            assert_eq!(source.health()["state"], "stopped");
+            assert!(
+                std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, listen_port)).is_err()
+            );
+            assert!(std::net::TcpStream::connect(occupied.local_addr().unwrap()).is_ok());
+
+            let fixture = Fixture::new().await;
+            // The fixture releases its listener and stream only on explicit
+            // commands; the replacement is bound before EOF is delivered.
+            let Started {
+                port: listen_port,
+                source,
+                control: _takeover_control,
+                task,
+                ..
+            } = start_fixture(&fixture, 0).await.unwrap();
+            assert_eq!(source.health()["state"], "fix");
+            let mut child_control = fixture.child_control().await;
+            send_control(&mut child_control, "release_listener").await;
+            control_event(&mut child_control, "listener_released").await;
+            let replacement =
+                tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, listen_port))
+                    .await
+                    .unwrap();
+            send_control(&mut child_control, "release_stream").await;
+            until(&source, "managed_child_exited", &fixture).await;
+            fixture.advance_retry().await;
+            task.await.unwrap();
+            assert_eq!(source.health()["state"], "managed_endpoint_busy");
+            assert!(source.location().is_none());
+            assert!(source.health()["daemon"].is_null());
+            // The source task has completed: one actual accept poll proves no
+            // queued connection, without waiting an arbitrary quiet interval.
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(
+                    replacement.poll_accept(cx).is_pending()
+                ))
+                .await,
+                "replacement daemon must receive no connection or WATCH"
+            );
+            drop(replacement);
+
+            let fixture = Fixture::new().await;
+            let Started {
+                source,
+                control: _control,
+                task,
+                ..
+            } = start_fixture(&fixture, 0).await.unwrap();
+            assert_eq!(source.health()["state"], "fix");
+            for attempt in 0..3 {
+                let mut child_control = fixture.child_control().await;
+                send_control(&mut child_control, "exit").await;
+                until(&source, "managed_child_exited", &fixture).await;
+                assert!(source.location().is_none());
+                assert!(source.health()["daemon"].is_null());
+                // The next child emits this explicit fixture generation time;
+                // cached timestamps remain rejected by the unchanged tracker.
+                let (wall, monotonic) = source.now();
+                super::super::tests::set_clock(
+                    &source,
+                    wall + chrono::Duration::seconds(1),
+                    monotonic + Duration::from_secs(1),
+                );
+                fixture.advance_retry().await;
+                if attempt < 2 {
+                    until(&source, "fix", &fixture).await;
+                }
+            }
+            task.await.unwrap();
+            assert_eq!(source.health()["state"], "managed_restart_limit_reached");
+            assert_eq!(
+                std::fs::read_to_string(fixture.root.join("args"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                3
+            );
+            for pid in std::fs::read_to_string(fixture.root.join("pids"))
                 .unwrap()
                 .lines()
-                .count(),
-            1
-        );
+            {
+                assert_eq!(unsafe { libc::kill(pid.parse::<i32>().unwrap(), 0) }, -1);
+            }
+
+            // A competing listener before spawn is the only retryable precondition.
+            let fixture = Fixture::new().await;
+            let started = start_fixture(&fixture, 1).await.unwrap();
+            assert_eq!(started.attempts, 2);
+            assert_eq!(started.source.health()["state"], "fix");
+            assert_eq!(
+                std::fs::read_to_string(fixture.root.join("pids"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                1
+            );
+            started.control.shutdown();
+            started.task.await.unwrap();
+            // Real helper evidence from the preceding run prevents a blind retry,
+            // even when a subsequent attempt returns endpoint busy before spawning.
+            let error = start_fixture(&fixture, 1)
+                .await
+                .err()
+                .expect("started helper must not retry");
+            assert!(error.contains("attempt 1:") && error.contains("pre-spawn busy=false"));
+            let fixture = Fixture::new().await;
+            let error = start_fixture(&fixture, 3)
+                .await
+                .err()
+                .expect("three conflicts must fail");
+            assert!(error.contains("attempt 3:") && error.contains("pre-spawn busy=true"));
+            assert!(!fixture.root.join("args").exists());
+            let fixture = Fixture::new().await;
+            let script = std::fs::read_to_string(fixture.root.join("gpsd"))
+                .unwrap()
+                .replace(
+                    "trace('before_bind')",
+                    "raise SystemExit(2)\ntrace('before_bind')",
+                );
+            std::fs::write(fixture.root.join("gpsd"), script).unwrap();
+            let error = start_fixture(&fixture, 0)
+                .await
+                .err()
+                .expect("helper startup failure must not retry");
+            assert!(error.contains("attempt 1:") && error.contains("managed_start_failed"));
+            assert_eq!(
+                std::fs::read_to_string(fixture.root.join("pids"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                1
+            );
+        })
+        .await;
     }
 }
