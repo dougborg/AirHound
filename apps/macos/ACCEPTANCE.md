@@ -5,18 +5,33 @@ The preview is under acceptance, not a signed-off production release.
 
 ## Current installed preview — 2026-11-26
 
-A read-only inspection identified GUI `c3cbcd60` and nested backend `b2e2a423`
-in `~/Applications/AirHound.app`; strict deep signature verification passed.
-The GUI includes the saved-recording paging correction. These artifact checks
-do not establish that this app is open, that its service is idle, or that current
-hardware permissions and reception work. Process inspection was unavailable
-during this check. No recording or installed application was changed.
+The installed `~/Applications/AirHound.app` now pairs GUI and nested backend built
+from `17a279162517bde46e431f0b2910ceddefa79e2c`. Both report modified
+tracked source: the build included only the three documentation changes later
+committed as `7b157fe` (`apps/macos/ACCEPTANCE.md`, `docs/test-timing-audit.md` and
+`docs/test-timing-guard.md`). Strict deep signature verification and independent
+binary hash checks passed. The previous GUI `c3cbcd60` / backend `b2e2a423` bundle
+is retained for rollback.
 
-The reviewed source now includes the MCU deadline correction in
-[#355](https://github.com/dougborg/AirHound/pull/355), merged as `17a2791`.
-That merge does not update the installed preview. A replacement must preserve
-the existing experimental Rayhunter decoder resources, pass isolated service
-handshake checks, and establish that the installed service is idle before rollout.
+Before installation, the staged backend completed authenticated Hello/Status and
+reported the expected source identity against a private socket and database.
+Capture was idle; owned shutdown exited successfully and removed the socket
+without forced termination. This was backend-only readiness evidence, not an
+app-launched permission or capture check.
+
+The rollout held the existing writer ownership lock, used SQLite's backup API
+to include committed WAL data, and verified preservation of all 26 recordings
+(19 finished, 7 failed), 1,186,297 records, saved setups and desktop preferences.
+The old app, consistent database snapshot and settings are retained for rollback.
+The experimental Rayhunter decoder and accompanying source/license resources
+were preserved exactly. Managed receiver helpers were unchanged; the MCU deadline
+fix in [#355](https://github.com/dougborg/AirHound/pull/355) being in the source
+tree does not establish that the installed ALFA helper contains it.
+
+One GUI was launched from the stable installed path without starting capture.
+The Mac was locked during the window check, so actual controls and visible
+recordings could not be accepted. The post-rollout process check found no backend
+or capture helpers running. Service startup through the app remains to be checked.
 
 Current manual saved-page navigation, live-selection preservation and full-rig
 capture controls remain open. The [hardware ledger](../../docs/attached-hardware-validation.md)
