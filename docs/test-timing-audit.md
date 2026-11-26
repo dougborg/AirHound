@@ -4,6 +4,26 @@ Tracking: [#329](https://github.com/dougborg/AirHound/issues/329). This is an on
 classified audit, not a statement that the entire suite is already deterministic.
 Production deadlines and bounded process cleanup remain in force.
 
+## Current source checkpoint — 2026-11-26
+
+At `17a2791`, the strict timing guard reports 454 classified sites and no
+unclassified or unresolved findings, scan errors, or stale dispositions. The
+17 guard/helper-registration tests pass. The original migration inventory is
+unchanged; see [the guard policy](test-timing-guard.md) for its scope and limits.
+
+The authenticated Hello/Status startup path is implemented in the shared Rust
+client and used by the Swift app. All seven focused Rust readiness tests passed
+in this checkpoint, including controlled deadline boundaries, cancellation and
+actual private-socket cleanup. The socket test required permission to bind its
+temporary Unix socket; its initial sandbox denial is not a protocol failure.
+This check did not exercise the installed GUI, rerun the complete platform suites,
+or establish repository-wide indirect-helper completeness.
+
+The sections below preserve the migration findings and earlier checkpoints.
+Their descriptions of the guard and startup handshake as pending are historical;
+the current source status above supersedes those descriptions, without closing
+the remaining integration and behavioral acceptance requirements.
+
 ## Swift, Python and frontend scope
 
 | Paths | Finding / disposition |

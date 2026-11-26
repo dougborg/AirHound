@@ -65,11 +65,14 @@ failure or describe its entries as reviewed exceptions.
 
 ## Reviewed composition checkpoint
 
-The reviewed source composition classifies all 443 detected sites with exact
-context identities: controlled clocks, causal events, fixed inputs, fixture hang
-guards, measurements, and identified production scopes. Superseded dispositions
-were removed; the original 766-entry migration inventory remains unchanged.
-Disappearing fingerprints do not establish correctness by themselves.
+At source `17a2791`, the 2026-11-26 strict scan reports 454 detected sites with
+exact context dispositions: controlled clocks, causal events, fixed inputs,
+fixture hang guards, measurements, detector fixtures, and identified production
+scopes. It reports no unclassified or unresolved findings, stale dispositions,
+or scan errors. All 17 guard and registered-helper regression tests pass. The
+original 766-entry migration inventory remains unchanged. These results establish
+the guard's current status, not repository-wide behavioral completion;
+disappearing fingerprints do not establish correctness by themselves.
 
 This policy depends on the source migrations in #332, #338 and #340, the firmware
 idle-wait change in #341, and the guard in #339. It must travel with those source
