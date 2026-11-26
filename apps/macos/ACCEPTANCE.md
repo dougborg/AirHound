@@ -3,9 +3,28 @@
 This checklist is intentionally separate from compilation and model coverage.
 The preview is under acceptance, not a signed-off production release.
 
-## Current scope
+## Current installed preview — 2026-11-26
 
-The installed canonical preview now pairs backend `041c215` with GUI `b7a7c7a`,
+A read-only inspection identified GUI `c3cbcd60` and nested backend `b2e2a423`
+in `~/Applications/AirHound.app`; strict deep signature verification passed.
+The GUI includes the saved-recording paging correction. These artifact checks
+do not establish that this app is open, that its service is idle, or that current
+hardware permissions and reception work. Process inspection was unavailable
+during this check. No recording or installed application was changed.
+
+The reviewed source now includes the MCU deadline correction in
+[#355](https://github.com/dougborg/AirHound/pull/355), merged as `17a2791`.
+That merge does not update the installed preview. A replacement must preserve
+the existing experimental Rayhunter decoder resources, pass isolated service
+handshake checks, and establish that the installed service is idle before rollout.
+
+Current manual saved-page navigation, live-selection preservation and full-rig
+capture controls remain open. The [hardware ledger](../../docs/attached-hardware-validation.md)
+records backend-only reception and its limitations separately.
+
+## Earlier preview scope
+
+An earlier canonical preview paired backend `041c215` with GUI `b7a7c7a`,
 including the reviewed storage recovery, experimental cellular source and stable
 live-selection changes. The rollout preserved recordings and settings, retained
 rollback copies, and launched one GUI with an idle backend without starting capture.
