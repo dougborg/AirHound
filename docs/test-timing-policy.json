@@ -4525,7 +4525,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "251ef8e3ca4042ff82a6e499093cb44d8fa14a7f527c1c15f31e809b9c5ab2a2": {
       "path": "hostd/src/external_scanner.rs",
@@ -4535,7 +4535,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "5e5d01c8bfca8c50ff3bb1d34559090ad44dbd80a50e4dd48fd02b859b27bffe": {
       "path": "hostd/src/external_scanner.rs",
@@ -4545,7 +4545,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "6b20f0b1e8c737af350f0dcf305005d6bf8daef616dd8534486517b266cecd5a": {
       "path": "hostd/src/external_scanner.rs",
@@ -4555,7 +4555,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "73a7f296cc9ecdb3a126c6df19eebea92c9dd3352a0af4fb872cf5504e48a61f": {
       "path": "hostd/src/external_scanner.rs",
@@ -4565,7 +4565,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "80f5d128a0164be045b0ea4d71a7520a93abd5b3671c059cee27754c30066482": {
       "path": "hostd/src/external_scanner.rs",
@@ -4575,13 +4575,13 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "9a1fe601ba2642413a81f943bf8e1f0f4842202eeb2b069407d0064fd026214f": {
       "category": "virtual-time",
       "reason": "This test runs inside manual_time. The frozen Instant only supplies filter-task elapsed-time origin; channel closure and writer completion establish completion, and assertions compare retained diagnostics and source identity rather than elapsed wall time.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Inspected saved-diagnostics test in diagnostics integration on main 17a2791; final independent composition review remains required.",
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline.",
       "path": "hostd/src/session_runtime/tests.rs",
       "scope": "external_failure_diagnostics_reach_source_attributed_saved_records",
       "rule": "clock-read",
@@ -4595,7 +4595,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "c87f5f70df2386a8735006f45b7f92632c0bc22052ae6789c1ec191623b40baa": {
       "path": "hostd/src/external_scanner.rs",
@@ -4605,7 +4605,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "ce3d5c2c6323419c68e5ba26cd349b9d1548e086a6dc5bd9fbfbb1286b508411": {
       "path": "hostd/src/external_scanner.rs",
@@ -4615,13 +4615,13 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     },
     "dd6f2508b1963349d3b05f92aa1feb7b0950ae5b131eccbb94465db81332dff6": {
       "category": "virtual-time",
       "reason": "This test runs inside manual_time. The frozen Instant only supplies filter-task elapsed-time origin; channel closure and writer completion establish completion, and assertions compare retained diagnostics and source identity rather than elapsed wall time.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Inspected saved-diagnostics test in diagnostics integration on main 17a2791; final independent composition review remains required.",
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline.",
       "path": "hostd/src/session_runtime/tests.rs",
       "scope": "external_failure_diagnostics_reach_source_attributed_saved_records",
       "rule": "clock-reference",
@@ -4635,7 +4635,7 @@
       "category": "virtual-time",
       "reason": "External scanner lifecycle tests use manual_time. Actual child hello/ACK/output/exit events drive successful paths; registered hello/stop TimerWitness deadlines are explicitly advanced for failure. Other state/cleanup bounds remain frozen during real child work, bounded by the separate wall hang watchdog. No real-time successful admission or shutdown criterion.",
       "tracking": "https://github.com/dougborg/AirHound/issues/329",
-      "review": "Diagnostics integration on main 17a2791: inspected unchanged causal child lifecycle and frozen ManualTime deadlines; only typed diagnostic retention was added to this scope. Final independent composition review remains required."
+      "review": "Independent composition review of dd4a2ec on main 17a2791 by deterministic_audit: preserved exclusive MCU deadline and causal/frozen-time test semantics; reviewed exact 10-remove/12-add policy delta with unchanged baseline."
     }
   },
   "migration_baseline": {
