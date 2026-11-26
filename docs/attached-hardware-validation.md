@@ -1,11 +1,34 @@
-# Attached hardware validation — 2026-11-24
+# Attached hardware validation — 2026-11-26
 
 This is bounded acceptance evidence for the local macOS setup, not a release-wide
 hardware certification. Supported sources still need permissions and correct
 firmware. USB product names alone establish neither firmware nor working reception.
 The remaining integration work is tracked in [#269](https://github.com/dougborg/AirHound/issues/269).
 
-## Current preview receiver checkpoint
+## Current preview delivery checkpoint — 2026-11-26
+
+GUI and nested backend from `17a279162517bde46e431f0b2910ceddefa79e2c` are now
+installed at the stable application path. Their modified-source metadata records
+the three documentation-only changes subsequently committed as `7b157fe`.
+Independent binary hashes and strict deep signatures passed. A private
+authenticated Hello/Status check verified that backend identity, idle capture,
+successful owned shutdown and socket removal without forced termination.
+
+The reviewed rollout preserved 26 recordings (19 finished, 7 failed) containing
+1,186,297 records, along with saved setups and desktop preferences. SQLite's
+backup API retained committed WAL contents; the previous app and verified data
+and settings backups remain available. The experimental Rayhunter decoder and
+its source/license resources were preserved exactly. Managed receiver helpers
+were unchanged, so source-level driver improvements are not new hardware evidence.
+
+One GUI was launched, with no capture started. The Mac was locked during the
+window check; app controls and recordings were not manually accepted. The
+post-rollout process check found no backend or capture helpers running. Native
+permissions, app-launched startup, individual and combined reception, live/saved
+observations, Pause/Resume, repeat recording and recovery remain to be validated
+on this installation. See [the app checklist](../apps/macos/ACCEPTANCE.md).
+
+## Latest receiver evidence — 2026-11-24
 
 The latest backend-only checks used installed backend `b2e2a42`; the preview also
 contains the saved-recording paging correction from `c3cbcd6`. These checks did
