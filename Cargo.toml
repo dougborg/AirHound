@@ -67,7 +67,7 @@ ieee80211 = { version = "~0.5.9", default-features = false }
 heapless = { version = "~0.9.4", features = ["serde"] }
 
 # Open Drone ID (ASTM F3411) framing: BLE service data, Wi-Fi beacon/NAN, message packs (no_std, no deps)
-remoteid = { version = "~0.2.3", default-features = false }
+remoteid = { version = "~0.4.0", default-features = false }
 
 # JSON serialization
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }

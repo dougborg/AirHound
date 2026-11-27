@@ -414,9 +414,9 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
 name = "remoteid"
-version = "0.2.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d6ae1d0567d5dd2d0810f0f18282663cd9671e4fe87dcb14612ba7a37d295a"
+checksum = "ace3b39cb3084118745a149b6e3ccdf15ab920da4f80ebf3cc459880fe76342b"
 
 [[package]]
 name = "ryu"
